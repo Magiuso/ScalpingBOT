@@ -1,0 +1,34 @@
+# File Python temporanei
+__pycache__/
+*.py[cod]
+
+# Ambiente virtuale Python
+env/
+venv/
+.venv/
+
+# Ambiente virtuale specifico del progetto
+analyzer_env/
+
+# File compilati MT5
+*.ex5
+
+# File con password e chiavi
+.env
+*_private.json
+*_secret*
+
+# Log
+*.log
+logs/
+
+# File di sistema
+.DS_Store
+Thumbs.db
+
+# VSCode
+.vscode/
+
+# Backup
+*.bak
+*.backup
