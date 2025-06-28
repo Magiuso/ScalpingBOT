@@ -10,6 +10,12 @@ venv/
 # Ambiente virtuale specifico del progetto
 analyzer_env/
 
+# Backup
+Backup_Project_Analyzer*
+
+# File wheel (meglio installare da pip)
+*.whl
+
 # File compilati MT5
 *.ex5
 
