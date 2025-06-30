@@ -2488,13 +2488,57 @@ class EmergencyStopSystem:
             f.write(json.dumps(stop_event) + '\n')
     
     def reset_emergency_stop(self, algorithm_key: str):
-        """Reset emergency stop dopo retraining"""
+        """Reset emergency stop dopo retraining - VERSIONE PULITA"""
         if algorithm_key in self.stopped_algorithms:
             self.stopped_algorithms.remove(algorithm_key)
-            self.logger.loggers['system'].info(f"Emergency stop reset for {algorithm_key}")
+            
+            # 🧹 PULITO: Sostituito logger con event storage
+            self._store_emergency_event('emergency_stop_reset', {
+                'algorithm_key': algorithm_key,
+                'status': 'reset_successful',
+                'timestamp': datetime.now()
+            })
 
+    def _store_emergency_event(self, event_type: str, event_data: Dict) -> None:
+        """Store emergency system events in memory for future processing by slave module"""
+        if not hasattr(self, '_emergency_events_buffer'):
+            self._emergency_events_buffer = []
+        
+        event_entry = {
+            'timestamp': datetime.now(),
+            'event_type': event_type,
+            'data': event_data
+        }
+        
+        self._emergency_events_buffer.append(event_entry)
+        
+        # Keep buffer size manageable
+        if len(self._emergency_events_buffer) > 100:
+            self._emergency_events_buffer = self._emergency_events_buffer[-50:]
+
+    def get_all_events_for_slave(self) -> Dict[str, List[Dict]]:
+        """Get all accumulated events for slave module processing"""
+        events = {}
+        
+        # Emergency events
+        if hasattr(self, '_emergency_events_buffer'):
+            events['emergency_events'] = self._emergency_events_buffer.copy()
+        
+        return events
+
+    def clear_events_buffer(self, event_types: Optional[List[str]] = None) -> None:
+        """Clear event buffers after slave module processing"""
+        if event_types is None:
+            # Clear all buffers
+            if hasattr(self, '_emergency_events_buffer'):
+                self._emergency_events_buffer.clear()
+        else:
+            # Clear specific buffers
+            for event_type in event_types:
+                if event_type == 'emergency_events' and hasattr(self, '_emergency_events_buffer'):
+                    self._emergency_events_buffer.clear()
 class MT5Interface:
-    """Interfaccia per comunicazione con MetaTrader 5"""
+    """Interfaccia per comunicazione con MetaTrader 5 - VERSIONE PULITA"""
     
     def __init__(self, logger: AnalyzerLogger):
         self.logger = logger
@@ -2502,25 +2546,42 @@ class MT5Interface:
         self.account_info = None
         
     def connect(self) -> bool:
-        """Connetti a MT5"""
+        """Connetti a MT5 - VERSIONE PULITA"""
         try:
             if not mt5.initialize(): # type: ignore
-                self.logger.loggers['system'].error("MT5 initialization failed")
+                # 🧹 PULITO: Sostituito logger con event storage
+                self._store_mt5_event('connection_failed', {
+                    'status': 'initialization_failed',
+                    'error': 'MT5 initialization failed',
+                    'timestamp': datetime.now(),
+                    'severity': 'error'
+                })
                 return False
             
             self.connected = True
             self.account_info = mt5.account_info() # type: ignore
-            self.logger.loggers['system'].info(
-                f"Connected to MT5 - Account: {self.account_info.login}"
-            )
+            
+            # 🧹 PULITO: Sostituito logger con event storage
+            self._store_mt5_event('connected', {
+                'status': 'success',
+                'account_login': self.account_info.login if self.account_info else 'unknown',
+                'timestamp': datetime.now()
+            })
             return True
             
         except Exception as e:
-            self.logger.loggers['errors'].error(f"MT5 connection error: {e}")
+            # 🧹 PULITO: Sostituito logger con event storage
+            self._store_mt5_event('connection_error', {
+                'status': 'error',
+                'error_message': str(e),
+                'error_type': type(e).__name__,
+                'timestamp': datetime.now(),
+                'severity': 'error'
+            })
             return False
     
     def get_tick_data(self, symbol: str) -> Optional[Dict]:
-        """Ottieni l'ultimo tick per un simbolo"""
+        """Ottieni l'ultimo tick per un simbolo - VERSIONE PULITA"""
         if not self.connected:
             return None
         
@@ -2539,11 +2600,19 @@ class MT5Interface:
             }
             
         except Exception as e:
-            self.logger.loggers['errors'].error(f"Error getting tick data: {e}")
+            # 🧹 PULITO: Sostituito logger con event storage
+            self._store_mt5_event('tick_data_error', {
+                'status': 'error',
+                'symbol': symbol,
+                'error_message': str(e),
+                'error_type': type(e).__name__,
+                'timestamp': datetime.now(),
+                'severity': 'warning'
+            })
             return None
     
     def get_historical_data(self, symbol: str, timeframe: int, count: int) -> Optional[pd.DataFrame]:
-        """Ottieni dati storici"""
+        """Ottieni dati storici - VERSIONE PULITA"""
         if not self.connected:
             return None
         
@@ -2557,11 +2626,21 @@ class MT5Interface:
             return df
             
         except Exception as e:
-            self.logger.loggers['errors'].error(f"Error getting historical data: {e}")
+            # 🧹 PULITO: Sostituito logger con event storage
+            self._store_mt5_event('historical_data_error', {
+                'status': 'error',
+                'symbol': symbol,
+                'timeframe': timeframe,
+                'count': count,
+                'error_message': str(e),
+                'error_type': type(e).__name__,
+                'timestamp': datetime.now(),
+                'severity': 'warning'
+            })
             return None
     
     def prepare_analysis_output(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
-        """Prepara output analisi per MT5/Observer"""
+        """Prepara output analisi per MT5/Observer - VERSIONE PULITA"""
         mt5_output = {
             'timestamp': analysis['timestamp'].isoformat() if isinstance(analysis['timestamp'], datetime) else analysis['timestamp'],
             'asset': analysis['asset'],
@@ -2613,17 +2692,61 @@ class MT5Interface:
                         'confidence': state.get('confidence')
                     })
         
-        # Log comunicazione
+        # 🧹 PULITO: Log comunicazione (usa metodo esistente del logger)
         self.logger.log_mt5_communication('out', 'analysis', analysis['asset'], mt5_output)
         
         return mt5_output
     
     def disconnect(self):
-        """Disconnetti da MT5"""
+        """Disconnetti da MT5 - VERSIONE PULITA"""
         if self.connected:
             mt5.shutdown() # type: ignore
             self.connected = False
-            self.logger.loggers['system'].info("Disconnected from MT5")
+            
+            # 🧹 PULITO: Sostituito logger con event storage
+            self._store_mt5_event('disconnected', {
+                'status': 'success',
+                'timestamp': datetime.now()
+            })
+    
+    def _store_mt5_event(self, event_type: str, event_data: Dict) -> None:
+        """Store MT5 events in memory for future processing by slave module"""
+        if not hasattr(self, '_mt5_events_buffer'):
+            self._mt5_events_buffer = []
+        
+        event_entry = {
+            'timestamp': datetime.now(),
+            'event_type': event_type,
+            'data': event_data
+        }
+        
+        self._mt5_events_buffer.append(event_entry)
+        
+        # Keep buffer size manageable
+        if len(self._mt5_events_buffer) > 100:
+            self._mt5_events_buffer = self._mt5_events_buffer[-50:]
+    
+    def get_all_events_for_slave(self) -> Dict[str, List[Dict]]:
+        """Get all accumulated events for slave module processing"""
+        events = {}
+        
+        # MT5 events
+        if hasattr(self, '_mt5_events_buffer'):
+            events['mt5_events'] = self._mt5_events_buffer.copy()
+        
+        return events
+    
+    def clear_events_buffer(self, event_types: Optional[List[str]] = None) -> None:
+        """Clear event buffers after slave module processing"""
+        if event_types is None:
+            # Clear all buffers
+            if hasattr(self, '_mt5_events_buffer'):
+                self._mt5_events_buffer.clear()
+        else:
+            # Clear specific buffers
+            for event_type in event_types:
+                if event_type == 'mt5_events' and hasattr(self, '_mt5_events_buffer'):
+                    self._mt5_events_buffer.clear()
 
 # ================== MODELLI NEURALI ==================
 
@@ -6436,7 +6559,7 @@ class AssetAnalyzer:
         
         # 🔧 NUOVO: Sistema diagnostico avanzato
         self.diagnostics = LearningDiagnostics(asset, self.logger)
-    
+
         # Sistemi di supporto
         self.champion_preserver = ChampionPreserver(f"{self.data_path}/champions")
         self.reality_checker = RealityChecker()
@@ -6486,58 +6609,27 @@ class AssetAnalyzer:
         
         # Load previous state if exists
         self.load_analyzer_state()
-   
-        # Log initialization
-        self.logger.loggers['system'].info(
-            f"AssetAnalyzer initialized for {asset} - Learning phase: {self.learning_phase} - Config loaded: {type(self.config).__name__}"
-        )
-    
-        def load_analyzer_state(self) -> bool:
-            """Carica lo stato dell'Analyzer se esiste"""
-            
-            state_file = f"{self.data_path}/analyzer_state.pkl"
-            
-            try:
-                if not os.path.exists(state_file):
-                    self.logger.loggers['system'].info(f"No saved state found for {self.asset}")
-                    return False
-                
-                with open(state_file, 'rb') as f:
-                    state = pickle.load(f)
-                
-                # Restore basic state
-                self.learning_phase = state.get('learning_phase', True)
-                self.learning_start_time = state.get('learning_start_time', datetime.now())
-                self.learning_progress = state.get('learning_progress', 0.0)
-                self.analysis_count = state.get('analysis_count', 0)
-                self.last_analysis_time = state.get('last_analysis_time')
-                
-                # Log restoration info
-                self.logger.loggers['system'].info(
-                    f"Loaded analyzer state for {self.asset} - "
-                    f"Learning phase: {self.learning_phase}, "
-                    f"Analysis count: {self.analysis_count}"
-                )
-                
-                # Load ML models
-                self._load_ml_models()
-                
-                # Load recent predictions
-                self._load_recent_predictions()
-                
-                return True
-                
-            except Exception as e:
-                self.logger.loggers['errors'].error(f"Error loading analyzer state: {e}")
-                return False
+
+        # 🧹 PULITO: Sostituito logger con event storage
+        self._store_system_event('analyzer_initialized', {
+            'asset': asset,
+            'learning_phase': self.learning_phase,
+            'config_type': type(self.config).__name__,
+            'competitions_count': len(self.competitions),
+            'data_path': self.data_path,
+            'timestamp': datetime.now()
+        })
 
         def _load_ml_models(self) -> None:
-            """Carica i modelli ML salvati"""
+            """Carica i modelli ML salvati - VERSIONE PULITA"""
             
             models_dir = f"{self.data_path}/models"
             
             if not os.path.exists(models_dir):
                 return
+            
+            models_loaded = 0
+            models_failed = 0
             
             # Load PyTorch models
             for model_name, model in self.ml_models.items():
@@ -6549,10 +6641,29 @@ class AssetAnalyzer:
                             model.load_state_dict(checkpoint['model_state_dict'])
                             model.eval()
                             
-                            self.logger.loggers['system'].info(f"Loaded PyTorch model: {model_name}")
+                            # 🧹 PULITO: Sostituito logger con event storage
+                            self._store_system_event('ml_model_loaded', {
+                                'model_name': model_name,
+                                'model_type': 'pytorch',
+                                'status': 'success',
+                                'model_path': model_path,
+                                'timestamp': datetime.now()
+                            })
+                            models_loaded += 1
                             
                         except Exception as e:
-                            self.logger.loggers['errors'].error(f"Failed to load {model_name}: {e}")
+                            # 🧹 PULITO: Sostituito logger con event storage
+                            self._store_system_event('ml_model_load_failed', {
+                                'model_name': model_name,
+                                'model_type': 'pytorch',
+                                'status': 'error',
+                                'error_message': str(e),
+                                'error_type': type(e).__name__,
+                                'model_path': model_path,
+                                'timestamp': datetime.now(),
+                                'severity': 'error'
+                            })
+                            models_failed += 1
                 
                 else:
                     # Load scikit-learn models
@@ -6562,10 +6673,29 @@ class AssetAnalyzer:
                             with open(model_path, 'rb') as f:
                                 self.ml_models[model_name] = pickle.load(f)
                             
-                            self.logger.loggers['system'].info(f"Loaded sklearn model: {model_name}")
+                            # 🧹 PULITO: Sostituito logger con event storage
+                            self._store_system_event('ml_model_loaded', {
+                                'model_name': model_name,
+                                'model_type': 'sklearn',
+                                'status': 'success',
+                                'model_path': model_path,
+                                'timestamp': datetime.now()
+                            })
+                            models_loaded += 1
                             
                         except Exception as e:
-                            self.logger.loggers['errors'].error(f"Failed to load {model_name}: {e}")
+                            # 🧹 PULITO: Sostituito logger con event storage
+                            self._store_system_event('ml_model_load_failed', {
+                                'model_name': model_name,
+                                'model_type': 'sklearn',
+                                'status': 'error',
+                                'error_message': str(e),
+                                'error_type': type(e).__name__,
+                                'model_path': model_path,
+                                'timestamp': datetime.now(),
+                                'severity': 'error'
+                            })
+                            models_failed += 1
             
             # Load scalers
             scalers_path = f"{models_dir}/scalers.pkl"
@@ -6574,18 +6704,44 @@ class AssetAnalyzer:
                     with open(scalers_path, 'rb') as f:
                         self.scalers = pickle.load(f)
                     
-                    self.logger.loggers['system'].info("Loaded feature scalers")
+                    # 🧹 PULITO: Sostituito logger con event storage
+                    self._store_system_event('scalers_loaded', {
+                        'status': 'success',
+                        'scalers_count': len(self.scalers),
+                        'scalers_path': scalers_path,
+                        'timestamp': datetime.now()
+                    })
                     
                 except Exception as e:
-                    self.logger.loggers['errors'].error(f"Failed to load scalers: {e}")
+                    # 🧹 PULITO: Sostituito logger con event storage
+                    self._store_system_event('scalers_load_failed', {
+                        'status': 'error',
+                        'error_message': str(e),
+                        'error_type': type(e).__name__,
+                        'scalers_path': scalers_path,
+                        'timestamp': datetime.now(),
+                        'severity': 'error'
+                    })
+            
+            # Summary event
+            self._store_system_event('models_loading_complete', {
+                'models_loaded': models_loaded,
+                'models_failed': models_failed,
+                'scalers_loaded': len(self.scalers),
+                'total_models': len(self.ml_models),
+                'timestamp': datetime.now()
+            })
 
         def _load_recent_predictions(self):
-            """Carica predizioni recenti salvate"""
+            """Carica predizioni recenti salvate - VERSIONE PULITA"""
             
             predictions_dir = f"{self.data_path}/predictions"
             
             if not os.path.exists(predictions_dir):
                 return
+            
+            predictions_loaded = 0
+            predictions_failed = 0
             
             for model_type, competition in self.competitions.items():
                 predictions_file = f"{predictions_dir}/{model_type.value}_recent.pkl"
@@ -6598,14 +6754,38 @@ class AssetAnalyzer:
                         # Add to competition history
                         competition.predictions_history.extend(recent_predictions[-100:])  # Last 100
                         
-                        self.logger.loggers['system'].info(
-                            f"Loaded {len(recent_predictions)} predictions for {model_type.value}"
-                        )
+                        # 🧹 PULITO: Sostituito logger con event storage
+                        self._store_system_event('predictions_loaded', {
+                            'model_type': model_type.value,
+                            'status': 'success',
+                            'predictions_count': len(recent_predictions),
+                            'predictions_added': len(recent_predictions[-100:]),
+                            'predictions_file': predictions_file,
+                            'timestamp': datetime.now()
+                        })
+                        predictions_loaded += 1
                         
                     except Exception as e:
-                        self.logger.loggers['errors'].error(
-                            f"Failed to load predictions for {model_type.value}: {e}"
-                        )
+                        # 🧹 PULITO: Sostituito logger con event storage
+                        self._store_system_event('predictions_load_failed', {
+                            'model_type': model_type.value,
+                            'status': 'error',
+                            'error_message': str(e),
+                            'error_type': type(e).__name__,
+                            'predictions_file': predictions_file,
+                            'timestamp': datetime.now(),
+                            'severity': 'error'
+                        })
+                        predictions_failed += 1
+            
+            # Summary event
+            if predictions_loaded > 0 or predictions_failed > 0:
+                self._store_system_event('predictions_loading_complete', {
+                    'model_types_loaded': predictions_loaded,
+                    'model_types_failed': predictions_failed,
+                    'total_model_types': len(self.competitions),
+                    'timestamp': datetime.now()
+                })
 
     def _initialize_algorithms(self) -> None:
         """Inizializza tutti gli algoritmi per ogni modello"""
@@ -13238,13 +13418,19 @@ class AssetAnalyzer:
                     )
     
     def load_analyzer_state(self) -> bool:
-        """Carica lo stato dell'Analyzer se esiste"""
+        """Carica lo stato dell'Analyzer se esiste - VERSIONE PULITA"""
         
         state_file = f"{self.data_path}/analyzer_state.pkl"
         
         try:
             if not os.path.exists(state_file):
-                self.logger.loggers['system'].info(f"No saved state found for {self.asset}")
+                # 🧹 PULITO: Sostituito logger con event storage
+                self._store_system_event('analyzer_state_load', {
+                    'status': 'no_saved_state',
+                    'asset': self.asset,
+                    'state_file': state_file,
+                    'timestamp': datetime.now()
+                })
                 return False
             
             with open(state_file, 'rb') as f:
@@ -13257,23 +13443,37 @@ class AssetAnalyzer:
             self.analysis_count = state.get('analysis_count', 0)
             self.last_analysis_time = state.get('last_analysis_time')
             
-            # Log restoration info
-            self.logger.loggers['system'].info(
-                f"Loaded analyzer state for {self.asset} - "
-                f"Learning phase: {self.learning_phase}, "
-                f"Analysis count: {self.analysis_count}"
-            )
+            # 🧹 PULITO: Sostituito logger con event storage
+            self._store_system_event('analyzer_state_load', {
+                'status': 'loaded_successfully',
+                'asset': self.asset,
+                'learning_phase': self.learning_phase,
+                'analysis_count': self.analysis_count,
+                'learning_progress': self.learning_progress,
+                'timestamp': datetime.now()
+            })
             
-            # Load ML models
-            self._load_ml_models()
+            # Load ML models (se esistono i metodi)
+            if hasattr(self, '_load_ml_models'):
+                self._load_ml_models()
             
-            # Load recent predictions
-            self._load_recent_predictions()
+            # Load recent predictions (se esiste il metodo)
+            if hasattr(self, '_load_recent_predictions'):
+                self._load_recent_predictions()
             
             return True
             
         except Exception as e:
-            self.logger.loggers['errors'].error(f"Error loading analyzer state: {e}")
+            # 🧹 PULITO: Sostituito logger con event storage
+            self._store_system_event('analyzer_state_load', {
+                'status': 'error',
+                'asset': self.asset,
+                'error_message': str(e),
+                'error_type': type(e).__name__,
+                'state_file': state_file,
+                'timestamp': datetime.now(),
+                'severity': 'error'
+            })
             return False
     
     def _load_ml_models(self) -> None:
@@ -13689,9 +13889,15 @@ class AssetAnalyzer:
         return stall_info, structure_analysis
 
     def shutdown(self):
-        """Shutdown pulito dell'analyzer con diagnostica"""
+        """Shutdown pulito dell'analyzer con diagnostica - VERSIONE PULITA"""
         
-        self.logger.loggers['system'].info(f"Shutting down analyzer for {self.asset}")
+        # 🧹 PULITO: Sostituito logger con event storage
+        self._store_system_event('analyzer_shutdown', {
+            'status': 'started',
+            'asset': self.asset,
+            'analysis_count': self.analysis_count,
+            'timestamp': datetime.now()
+        })
         
         # 🔧 NUOVO: Genera report finale
         try:
@@ -13702,12 +13908,28 @@ class AssetAnalyzer:
             with open(report_path, 'w') as f:
                 json.dump(final_report, f, indent=2, default=str)
             
-            self.logger.loggers['system'].info(f"Diagnostics report saved: {report_path}")
+            # 🧹 PULITO: Sostituito logger con event storage
+            self._store_system_event('diagnostics_report_saved', {
+                'status': 'success',
+                'asset': self.asset,
+                'report_path': report_path,
+                'report_size_kb': os.path.getsize(report_path) / 1024 if os.path.exists(report_path) else 0,
+                'timestamp': datetime.now()
+            })
             
             # Shutdown diagnostics
             self.diagnostics.shutdown()
+            
         except Exception as e:
-            self.logger.loggers['errors'].error(f"Error during diagnostics shutdown: {e}")
+            # 🧹 PULITO: Sostituito logger con event storage
+            self._store_system_event('diagnostics_shutdown_error', {
+                'status': 'error',
+                'asset': self.asset,
+                'error_message': str(e),
+                'error_type': type(e).__name__,
+                'timestamp': datetime.now(),
+                'severity': 'error'
+            })
         
         # Save current state
         self.save_analyzer_state()
@@ -13716,14 +13938,60 @@ class AssetAnalyzer:
         if self.mt5_interface.connected:
             self.mt5_interface.disconnect()
         
-        # Final log
-        self.logger.loggers['system'].info(
-            f"Analyzer shutdown complete - Processed {self.analysis_count} analyses"
-        )
+        # 🧹 PULITO: Sostituito logger con event storage
+        self._store_system_event('analyzer_shutdown', {
+            'status': 'completed',
+            'asset': self.asset,
+            'analysis_count': self.analysis_count,
+            'mt5_disconnected': not self.mt5_interface.connected,
+            'timestamp': datetime.now()
+        })
 
         # Shutdown async I/O
         if hasattr(self.logger, 'shutdown'):
             self.logger.shutdown()
+
+    def _store_system_event(self, event_type: str, event_data: Dict) -> None:
+        """Store system events in memory for future processing by slave module"""
+        if not hasattr(self, '_system_events_buffer'):
+            self._system_events_buffer = []
+        
+        event_entry = {
+            'timestamp': datetime.now(),
+            'event_type': event_type,
+            'data': event_data
+        }
+        
+        self._system_events_buffer.append(event_entry)
+        
+        # Keep buffer size manageable
+        if len(self._system_events_buffer) > 200:
+            self._system_events_buffer = self._system_events_buffer[-100:]
+
+    def get_all_events_for_slave(self) -> Dict[str, List[Dict]]:
+        """Get all accumulated events for slave module processing"""
+        events = {}
+        
+        # System events
+        if hasattr(self, '_system_events_buffer'):
+            events['system_events'] = self._system_events_buffer.copy()
+        
+        # Add other event buffers if they exist
+        # Note: Altri buffer potrebbero essere aggiunti qui in futuro
+        
+        return events
+
+    def clear_events_buffer(self, event_types: Optional[List[str]] = None) -> None:
+        """Clear event buffers after slave module processing"""
+        if event_types is None:
+            # Clear all buffers
+            if hasattr(self, '_system_events_buffer'):
+                self._system_events_buffer.clear()
+        else:
+            # Clear specific buffers
+            for event_type in event_types:
+                if event_type == 'system_events' and hasattr(self, '_system_events_buffer'):
+                    self._system_events_buffer.clear()
 
 # ================== MAIN ANALYZER SYSTEM ==================
 
@@ -13781,11 +14049,16 @@ class AdvancedMarketAnalyzer:
                     self.logger.loggers['errors'].error(f"Failed to load analyzer for {item}: {e}")
     
     def add_asset(self, asset: str) -> AssetAnalyzer:
-        """Aggiunge un nuovo asset per l'analisi"""
+        """Aggiunge un nuovo asset per l'analisi - VERSIONE PULITA"""
         
         if asset not in self.asset_analyzers:
             self.asset_analyzers[asset] = AssetAnalyzer(asset, self.data_path)
-            self.logger.loggers['system'].info(f"Added new asset: {asset}")
+            # 🧹 PULITO: Sostituito logger con event storage (usa metodo esistente)
+            self._store_global_event('asset_added', {
+                'asset': asset,
+                'total_assets': len(self.asset_analyzers),
+                'timestamp': datetime.now()
+            })
         
         return self.asset_analyzers[asset]
     
