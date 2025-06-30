@@ -5284,7 +5284,7 @@ class PostErrorReanalyzer:
 # ================== ALGORITHM COMPETITION SYSTEM ==================
 
 class AlgorithmCompetition:
-    """Sistema di competizione tra algoritmi per ogni modello con funzionalità avanzate"""
+    """Sistema di competizione tra algoritmi per ogni modello con funzionalità avanzate - VERSIONE PULITA"""
     
     def __init__(self, model_type: ModelType, asset: str, logger: AnalyzerLogger,
                 champion_preserver: ChampionPreserver, reality_checker: RealityChecker,
@@ -5314,7 +5314,7 @@ class AlgorithmCompetition:
         self.reality_check_interval = timedelta(hours=self.config.reality_check_interval_hours)  # 🔧 CHANGED
         
     def register_algorithm(self, name: str) -> None:
-        """Registra un nuovo algoritmo nella competizione"""
+        """Registra un nuovo algoritmo nella competizione - VERSIONE PULITA"""
         self.algorithms[name] = AlgorithmPerformance(
             name=name,
             model_type=self.model_type
@@ -5325,9 +5325,31 @@ class AlgorithmCompetition:
             self.champion = name
             self.algorithms[name].is_champion = True
             
-        self.logger.loggers['system'].info(
-            f"Registered algorithm {name} for {self.asset} {self.model_type.value}"
-        )
+        # 🧹 PULITO: Sostituito logger con event storage
+        self._store_system_event('algorithm_registered', {
+            'algorithm_name': name,
+            'asset': self.asset,
+            'model_type': self.model_type.value,
+            'is_first_champion': self.champion == name,
+            'timestamp': datetime.now()
+        })
+    
+    def _store_system_event(self, event_type: str, event_data: Dict) -> None:
+        """Store system events in memory for future processing by slave module"""
+        if not hasattr(self, '_system_events_buffer'):
+            self._system_events_buffer = []
+        
+        event_entry = {
+            'timestamp': datetime.now(),
+            'event_type': event_type,
+            'data': event_data
+        }
+        
+        self._system_events_buffer.append(event_entry)
+        
+        # Keep buffer size manageable
+        if len(self._system_events_buffer) > 200:
+            self._system_events_buffer = self._system_events_buffer[-100:]
     
     def submit_prediction(self, algorithm_name: str, prediction_data: Dict[str, Any], 
                         confidence: float, validation_criteria: Dict[str, Any],
@@ -5411,7 +5433,6 @@ class AlgorithmCompetition:
         
         return prediction_id
 
-
     def _store_prediction_event(self, event_type: str, event_data: Dict) -> None:
         """Store prediction events in memory for future processing by slave module"""
         if not hasattr(self, '_prediction_events_buffer'):
@@ -5485,7 +5506,6 @@ class AlgorithmCompetition:
                 'timestamp': validation_end
             })
 
-
     def _store_validation_metrics(self, metrics: Dict) -> None:
         """Store validation metrics in memory for future processing by slave module"""
         if not hasattr(self, '_validation_metrics_buffer'):
@@ -5506,7 +5526,7 @@ class AlgorithmCompetition:
             self._validation_metrics_buffer = older_sample + recent
     
     def _validate_single_prediction(self, prediction: Prediction, market_data: Dict[str, Any]) -> None:
-        """Valida una singola predizione con analisi errori"""
+        """Valida una singola predizione con analisi errori - VERSIONE PULITA"""
         
         # Calcola l'outcome reale
         actual_outcome = self._calculate_actual_outcome(prediction, market_data)
@@ -5526,7 +5546,7 @@ class AlgorithmCompetition:
                 prediction, actual_outcome, market_data
             )
             
-            # Log errore dettagliato
+            # 🧹 PULITO: Sostituito logger con event storage
             self.logger.log_error_analysis(
                 self.asset, self.model_type, prediction.algorithm_name,
                 error_analysis, market_data
@@ -5560,9 +5580,13 @@ class AlgorithmCompetition:
         )
         
         if emergency_check['emergency_stop']:
-            self.logger.loggers['system'].critical(
-                f"Emergency stop triggered for {prediction.algorithm_name}: {emergency_check}"
-            )
+            # 🧹 PULITO: Sostituito logger con event storage
+            self._store_system_event('emergency_stop_triggered', {
+                'algorithm_name': prediction.algorithm_name,
+                'emergency_check': emergency_check,
+                'timestamp': datetime.now(),
+                'severity': 'critical'
+            })
         
         # Controlla se c'è un nuovo champion
         self._update_champion()
@@ -6034,7 +6058,7 @@ class AlgorithmCompetition:
     
     def receive_observer_feedback(self, prediction_id: str, feedback_score: float,
                                 feedback_details: Dict[str, Any]) -> None:
-        """Riceve feedback dall'Observer con dettagli"""
+        """Riceve feedback dall'Observer con dettagli - VERSIONE PULITA"""
         # Trova la predizione
         prediction = None
         for pred in self.predictions_history:
@@ -6078,7 +6102,7 @@ class AlgorithmCompetition:
         return algorithm.quality_score * (1 - weight) + feedback_score * 100 * weight
     
     def _analyze_negative_feedback(self, prediction: Prediction, feedback_details: Dict[str, Any]):
-        """Analizza feedback negativo per identificare problemi"""
+        """Analizza feedback negativo per identificare problemi - VERSIONE PULITA"""
         # Aggiungi ai pattern di errore
         if 'error_reason' in feedback_details:
             if prediction.error_analysis is None:
@@ -6088,13 +6112,17 @@ class AlgorithmCompetition:
                 f"observer_feedback_{feedback_details['error_reason']}"
             )
         
-        # Log l'analisi
-        self.logger.loggers['errors'].warning(
-            f"Negative observer feedback for {prediction.algorithm_name}: {feedback_details}"
-        )
+        # 🧹 PULITO: Sostituito logger con event storage
+        self._store_system_event('negative_observer_feedback', {
+            'algorithm_name': prediction.algorithm_name,
+            'prediction_id': prediction.id,
+            'feedback_details': feedback_details,
+            'timestamp': datetime.now(),
+            'severity': 'warning'
+        })
     
     def _update_champion(self) -> None:
-        """Aggiorna il champion se necessario con preservazione"""
+        """Aggiorna il champion se necessario con preservazione - VERSIONE PULITA"""
         if not self.algorithms:
             return
         
@@ -6165,7 +6193,7 @@ class AlgorithmCompetition:
         return " | ".join(reasons) if reasons else "overall performance improvement"
     
     def _preserve_champion(self, champion: AlgorithmPerformance):
-        """Preserva un champion di successo"""
+        """Preserva un champion di successo - VERSIONE PULITA"""
         # Ottieni i pesi del modello se disponibile
         model_weights = None  # Questo dovrebbe essere passato dal sistema principale
         
@@ -6176,12 +6204,16 @@ class AlgorithmCompetition:
         
         champion.preserved_model_path = preservation_data['model_file']
         
-        self.logger.loggers['system'].info(
-            f"Champion preserved: {champion.name} with score {champion.final_score:.2f}"
-        )
+        # 🧹 PULITO: Sostituito logger con event storage
+        self._store_system_event('champion_preserved', {
+            'algorithm_name': champion.name,
+            'final_score': champion.final_score,
+            'preservation_data': preservation_data,
+            'timestamp': datetime.now()
+        })
     
     def _perform_scheduled_reality_check(self):
-        """Esegue reality check programmato su tutti gli algoritmi"""
+        """Esegue reality check programmato su tutti gli algoritmi - VERSIONE PULITA"""
         self.last_reality_check = datetime.now()
         
         for name, algorithm in self.algorithms.items():
@@ -6202,24 +6234,33 @@ class AlgorithmCompetition:
                 )
                 
                 if not reality_result['passed']:
-                    self.logger.loggers['reality_checks'].warning(
-                        f"Reality check failed for {name}: {reality_result}"
-                    )
+                    # 🧹 PULITO: Sostituito logger con event storage
+                    self._store_system_event('reality_check_failed', {
+                        'algorithm_name': name,
+                        'reality_result': reality_result,
+                        'timestamp': datetime.now(),
+                        'severity': 'warning'
+                    })
                     
                     # Trigger retraining se necessario
                     if algorithm.reality_check_failures > 3:
                         self._request_retraining(algorithm)
     
     def _request_retraining(self, algorithm: AlgorithmPerformance):
-        """Richiede retraining per un algoritmo"""
-        self.logger.loggers['training'].info(
-            f"Retraining requested for {algorithm.name} due to poor performance"
-        )
+        """Richiede retraining per un algoritmo - VERSIONE PULITA"""
+        # 🧹 PULITO: Sostituito logger con event storage
+        self._store_system_event('retraining_requested', {
+            'algorithm_name': algorithm.name,
+            'reason': 'poor_performance',
+            'reality_check_failures': algorithm.reality_check_failures,
+            'timestamp': datetime.now()
+        })
         # Il retraining effettivo sarà gestito dal sistema principale
     
     def _log_performance_metrics(self, algorithm: AlgorithmPerformance):
-        """Logga metriche di performance dettagliate"""
-        self.logger._write_csv('performance', {
+        """Logga metriche di performance dettagliate - VERSIONE PULITA"""
+        # 🧹 PULITO: Sostituito _write_csv con event storage
+        performance_data = {
             'timestamp': datetime.now(),
             'asset': self.asset,
             'model_type': self.model_type.value,
@@ -6231,7 +6272,26 @@ class AlgorithmCompetition:
             'total_predictions': algorithm.total_predictions,
             'decay_factor': algorithm.confidence_decay_rate ** (datetime.now() - algorithm.last_training_date).days,
             'reality_check_status': 'failed' if algorithm.reality_check_failures > 0 else 'passed'
-        })
+        }
+        
+        # Store in local buffer for unified system
+        self._store_performance_metrics(performance_data)
+    
+    def _store_performance_metrics(self, performance_data: Dict) -> None:
+        """Store performance metrics in memory for future processing by slave module"""
+        if not hasattr(self, '_performance_metrics_buffer'):
+            self._performance_metrics_buffer = []
+        
+        metric_entry = {
+            'timestamp': datetime.now(),
+            'metrics': performance_data
+        }
+        
+        self._performance_metrics_buffer.append(metric_entry)
+        
+        # Keep buffer size manageable
+        if len(self._performance_metrics_buffer) > 300:
+            self._performance_metrics_buffer = self._performance_metrics_buffer[-150:]
         
     def get_champion_algorithm(self) -> Optional[str]:
         """Restituisce l'algoritmo champion corrente"""
@@ -6311,6 +6371,52 @@ class AlgorithmCompetition:
                 return "excellent"
         
         return "unknown"
+    
+    def get_all_events_for_slave(self) -> Dict[str, List[Dict]]:
+        """Get all accumulated events for slave module processing"""
+        events = {}
+        
+        # System events
+        if hasattr(self, '_system_events_buffer'):
+            events['system_events'] = self._system_events_buffer.copy()
+        
+        # Prediction events
+        if hasattr(self, '_prediction_events_buffer'):
+            events['prediction_events'] = self._prediction_events_buffer.copy()
+        
+        # Validation metrics
+        if hasattr(self, '_validation_metrics_buffer'):
+            events['validation_metrics'] = self._validation_metrics_buffer.copy()
+        
+        # Performance metrics
+        if hasattr(self, '_performance_metrics_buffer'):
+            events['performance_metrics'] = self._performance_metrics_buffer.copy()
+        
+        return events
+    
+    def clear_events_buffer(self, event_types: Optional[List[str]] = None) -> None:
+        """Clear event buffers after slave module processing"""
+        if event_types is None:
+            # Clear all buffers
+            if hasattr(self, '_system_events_buffer'):
+                self._system_events_buffer.clear()
+            if hasattr(self, '_prediction_events_buffer'):
+                self._prediction_events_buffer.clear()
+            if hasattr(self, '_validation_metrics_buffer'):
+                self._validation_metrics_buffer.clear()
+            if hasattr(self, '_performance_metrics_buffer'):
+                self._performance_metrics_buffer.clear()
+        else:
+            # Clear specific buffers
+            for event_type in event_types:
+                if event_type == 'system_events' and hasattr(self, '_system_events_buffer'):
+                    self._system_events_buffer.clear()
+                elif event_type == 'prediction_events' and hasattr(self, '_prediction_events_buffer'):
+                    self._prediction_events_buffer.clear()
+                elif event_type == 'validation_metrics' and hasattr(self, '_validation_metrics_buffer'):
+                    self._validation_metrics_buffer.clear()
+                elif event_type == 'performance_metrics' and hasattr(self, '_performance_metrics_buffer'):
+                    self._performance_metrics_buffer.clear()
 
 # ================== ASSET ANALYZER PRINCIPALE ==================
 
