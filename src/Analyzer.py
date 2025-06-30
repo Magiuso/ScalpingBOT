@@ -13643,10 +13643,19 @@ class AdvancedMarketAnalyzer:
         # Load existing analyzers
         self._load_existing_analyzers()
         
-        # Log system start
-        self.logger.loggers['system'].info(
-            f"AdvancedMarketAnalyzer initialized with {len(self.asset_analyzers)} assets"
-        )
+        # Log system start - con accesso sicuro
+        try:
+            if (hasattr(self.logger, 'loggers') and 
+                self.logger.loggers and 
+                isinstance(self.logger.loggers, dict) and
+                'system' in self.logger.loggers):
+                self.logger.loggers['system'].info(
+                    f"AdvancedMarketAnalyzer initialized with {len(self.asset_analyzers)} assets"
+                )
+            else:
+                print(f"⚠️ AdvancedMarketAnalyzer initialized with {len(self.asset_analyzers)} assets (system logger not available)")
+        except Exception as e:
+            print(f"⚠️ AdvancedMarketAnalyzer initialized with {len(self.asset_analyzers)} assets (logger error: {e})")
     
     def _load_existing_analyzers(self) -> None:
         """Carica gli analyzer esistenti"""
