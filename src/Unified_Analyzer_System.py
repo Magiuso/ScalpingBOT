@@ -67,7 +67,7 @@ class UnifiedConfig:
     performance_profile: PerformanceProfile = PerformanceProfile.NORMAL
     
     # === ANALYZER SETTINGS ===
-    asset_symbol: str = "EURUSD"
+    asset_symbol: str = "USTEC"
     max_tick_buffer_size: int = 100000
     learning_phase_enabled: bool = True
     min_learning_days: int = 7
@@ -831,16 +831,29 @@ class UnifiedAnalyzerSystem:
         
         # Setup signal handlers for graceful shutdown
         self._setup_signal_handlers()
-    
+
     def _setup_signal_handlers(self):
-        """Setup signal handlers for graceful shutdown"""
-        def signal_handler(signum, frame):
-            print(f"\n🛑 Received signal {signum}, shutting down gracefully...")
-            if self.is_running:
-                asyncio.create_task(self.stop())
+        """Setup signal handlers for graceful shutdown - THREAD SAFE VERSION"""
         
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+        # Verifica se siamo nel thread principale
+        import threading
+        if threading.current_thread() is not threading.main_thread():
+            # Non siamo nel main thread - i segnali non funzionano
+            # Questo è normale durante i test di backtest
+            return
+        
+        try:
+            def signal_handler(signum, frame):
+                print(f"\n🛑 Received signal {signum}, shutting down gracefully...")
+                if self.is_running:
+                    asyncio.create_task(self.stop())
+            
+            signal.signal(signal.SIGINT, signal_handler)
+            signal.signal(signal.SIGTERM, signal_handler)
+            
+        except (ValueError, OSError) as e:
+            # signal.signal() può fallire in alcuni ambienti
+            pass  # Ignora silenziosamente - il sistema funzionerà ugualmente
     
     async def start(self):
         """Avvia tutto il sistema"""
@@ -1180,53 +1193,3 @@ def create_custom_config(**kwargs) -> UnifiedConfig:
     """Create custom configuration"""
     return UnifiedConfig(**kwargs)
 
-
-# ================================
-# EXAMPLE USAGE
-# ================================
-
-if __name__ == "__main__":
-    
-    async def main():
-        # Example 1: Production system
-        print("Example 1: Production System")
-        system = await create_production_system("EURUSD")
-        
-        # Process some ticks
-        for i in range(10):
-            await system.process_tick(
-                timestamp=datetime.now(),
-                price=1.1000 + i * 0.0001,
-                volume=1000 + i * 100
-            )
-            await asyncio.sleep(0.1)
-        
-        await system.stop()
-        print()
-        
-        # Example 2: Demo system
-        print("Example 2: Demo System")
-        await run_demo_system("GBPUSD", duration=30)
-        print()
-        
-        # Example 3: Custom configuration
-        print("Example 3: Custom Configuration")
-        custom_config = create_custom_config(
-            system_mode=SystemMode.DEVELOPMENT,
-            asset_symbol="USDJPY", 
-            log_level="VERBOSE",
-            rate_limits={'tick_processing': 5, 'predictions': 1}
-        )
-        
-        system = UnifiedAnalyzerSystem(custom_config)
-        await system.start()
-        
-        # Check status
-        status = system.get_system_status()
-        print(f"System running: {status['system']['running']}")
-        print(f"Mode: {status['system']['mode']}")
-        
-        await system.stop()
-    
-    # Run example
-    asyncio.run(main())
