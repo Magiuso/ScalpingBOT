@@ -328,26 +328,27 @@ class MT5BacktestRunner:
             except Exception as e:
                 self.logger.error(f"⚠️ Error stopping unified system: {e}")
     
-    def run_backtest_thread_safe(self, config: BacktestConfig) -> bool:
-        """Versione thread-safe che evita completamente i problemi di event loop"""
+    def run_backtest(self, config: BacktestConfig) -> bool:
+        """Esegue backtest completo - VERSIONE THREAD-SAFE"""
         
         import asyncio
         import threading
         import queue
         
-        self.logger.info("🔄 Using thread-safe execution approach")
+        self.logger.info("🔄 Starting backtest with thread-safe execution")
         
-        # Usa sempre un thread separato per evitare conflitti
+        # Usa sempre un thread separato per evitare conflitti event loop
         result_queue = queue.Queue()
         exception_queue = queue.Queue()
         
         def run_async_in_thread():
             try:
-                # Nuovo loop nel thread
+                # Crea nuovo event loop nel thread
                 new_loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(new_loop)
                 
                 try:
+                    # Esegui il backtest asincrono
                     result = new_loop.run_until_complete(self._run_backtest_async(config))
                     result_queue.put(result)
                 finally:
@@ -361,17 +362,21 @@ class MT5BacktestRunner:
         thread.start()
         thread.join()
         
-        # Controlla se ci sono stati errori
+        # Controlla errori
         if not exception_queue.empty():
             error = exception_queue.get()
-            self.logger.error(f"❌ Error in async execution: {error}")
+            self.logger.error(f"❌ Error in backtest execution: {error}")
+            import traceback
+            traceback.print_exc()
             return False
         
         # Ottieni risultato
         if not result_queue.empty():
-            return result_queue.get()
+            result = result_queue.get()
+            self.logger.info(f"✅ Backtest completed with result: {result}")
+            return result
         else:
-            self.logger.error("❌ No result from async execution")
+            self.logger.error("❌ No result from backtest execution")
             return False
     
     async def _run_backtest_async(self, config: BacktestConfig) -> bool:
