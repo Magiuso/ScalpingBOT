@@ -445,7 +445,7 @@ class MT5BacktestRunner:
             return []
     
     async def _execute_backtest_unified(self, config: BacktestConfig, ticks: List[MT5TickData]) -> bool:
-        """Esegue il backtest con sistema unificato"""
+        """Esegue il backtest con sistema unificato - ENHANCED PROGRESS VERSION"""
         
         if not self.unified_system:
             self.logger.error("❌ Unified system not available")
@@ -454,17 +454,39 @@ class MT5BacktestRunner:
         total_ticks = len(ticks)
         self.logger.info(f"🚀 Starting unified backtest with {total_ticks:,} ticks")
         
+        # ENHANCED: Progress configuration
+        if total_ticks > 5_000_000:
+            # Per volumi molto grandi (>5M): report ogni 250k ticks  
+            progress_interval = 250_000
+            console_interval = 50_000  # Console più frequente
+        elif total_ticks > 1_000_000:
+            # Per volumi grandi (>1M): report ogni 100k ticks
+            progress_interval = 100_000
+            console_interval = 25_000
+        elif total_ticks > 100_000:
+            # Per volumi medi: report ogni 10k ticks
+            progress_interval = 10_000
+            console_interval = 5_000
+        else:
+            # Per volumi piccoli: report ogni 1k ticks
+            progress_interval = 1_000
+            console_interval = 500
+        
         start_time = time.time()
         processed_ticks = 0
         error_count = 0
+        last_progress_time = start_time
         
-        # Progress reporting
-        checkpoint_interval = min(10000, max(1, total_ticks // 100))  # Ogni 1% o 10k ticks
+        # ENHANCED: Progress banner iniziale
+        print("\n" + "="*90)
+        print(f"🚀 UNIFIED BACKTEST STARTING")
+        print(f"📊 Symbol: {config.symbol} | Total Ticks: {total_ticks:,} | Speed: {config.speed_multiplier}x")
+        print("="*90)
         
         try:
             for i, tick in enumerate(ticks):
                 try:
-                    # ✅ NUOVO: Usa UnifiedAnalyzerSystem.process_tick()
+                    # Processa tick con UnifiedAnalyzerSystem
                     result = await self.unified_system.process_tick(
                         timestamp=tick.timestamp,
                         price=(tick.bid + tick.ask) / 2.0,
@@ -488,49 +510,152 @@ class MT5BacktestRunner:
                         self.logger.error("❌ Too many errors, stopping backtest")
                         return False
                 
-                # Progress report
-                if i > 0 and i % checkpoint_interval == 0:
+                # ENHANCED: Console progress (più frequente)
+                if i > 0 and (i % console_interval == 0 or i == total_ticks - 1):
+                    current_time = time.time()
+                    elapsed = current_time - start_time
                     progress = (i / total_ticks) * 100
-                    elapsed = time.time() - start_time
                     speed = processed_ticks / elapsed if elapsed > 0 else 0
-                    eta = (total_ticks - i) / speed if speed > 0 else 0
+                    eta_seconds = (total_ticks - i) / speed if speed > 0 else 0
                     
-                    self.logger.info(f"📊 Progress: {progress:.1f}% | "
-                                   f"Speed: {speed:.0f} ticks/sec | "
-                                   f"Processed: {processed_ticks:,} | "
-                                   f"Errors: {error_count} | "
-                                   f"ETA: {eta/60:.1f}min")
+                    # Calcola velocità istantanea
+                    time_since_last = current_time - last_progress_time
+                    ticks_since_last = console_interval if i % console_interval == 0 else (i % console_interval)
+                    instant_speed = ticks_since_last / time_since_last if time_since_last > 0 else 0
+                    
+                    # Progress bar visuale
+                    bar_length = 40
+                    filled_length = int(bar_length * progress / 100)
+                    bar = '█' * filled_length + '░' * (bar_length - filled_length)
+                    
+                    # ENHANCED: Output console dettagliato con colori
+                    print(f"\r🔄 {progress:5.1f}% |{bar}| " +
+                        f"{processed_ticks:,}/{total_ticks:,} | " +
+                        f"⚡{speed:,.0f} t/s | " +
+                        f"📊{instant_speed:,.0f} inst | " +
+                        f"❌{error_count} err | " +
+                        f"⏱️{eta_seconds/60:.1f}min", end='', flush=True)
+                    
+                    last_progress_time = current_time
+                
+                # ENHANCED: Detailed log progress (meno frequente ma più dettagliato)
+                if i > 0 and (i % progress_interval == 0 or i == total_ticks - 1):
+                    current_time = time.time()
+                    elapsed = current_time - start_time
+                    progress = (i / total_ticks) * 100
+                    speed = processed_ticks / elapsed if elapsed > 0 else 0
+                    eta_seconds = (total_ticks - i) / speed if speed > 0 else 0
+                    
+                    # Memory usage (se disponibile)
+                    memory_mb = 0
+                    try:
+                        import psutil
+                        memory_mb = psutil.Process().memory_info().rss / 1024 / 1024
+                    except:
+                        pass
+                    
+                    # Log dettagliato
+                    self.logger.info(f"📊 PROGRESS MILESTONE")
+                    self.logger.info(f"   ➤ Completion: {progress:.1f}% ({processed_ticks:,}/{total_ticks:,} ticks)")
+                    self.logger.info(f"   ➤ Speed: {speed:,.0f} ticks/sec (avg) | {instant_speed:,.0f} ticks/sec (inst)")
+                    self.logger.info(f"   ➤ Time: {elapsed:.1f}s elapsed | {eta_seconds/60:.1f}min remaining")
+                    self.logger.info(f"   ➤ Errors: {error_count} ({(error_count/(processed_ticks+error_count)*100):.2f}%)")
+                    if memory_mb > 0:
+                        self.logger.info(f"   ➤ Memory: {memory_mb:.1f} MB")
+                    
+                    # ENHANCED: Performance warnings
+                    if speed < 10000 and total_ticks > 1000000:
+                        self.logger.warning(f"⚠️ Low processing speed detected: {speed:.0f} ticks/sec")
+                    
+                    if error_count > processed_ticks * 0.05:  # >5% error rate
+                        self.logger.warning(f"⚠️ High error rate: {(error_count/(processed_ticks+error_count)*100):.1f}%")
+                    
+                # ENHANCED: Checkpoint saves con notifica
+                if hasattr(config, 'save_progress') and config.save_progress:
+                    checkpoint_interval = max(50_000, total_ticks // 20)  # Ogni 5%
+                    if i > 0 and i % checkpoint_interval == 0:
+                        try:
+                            # Salva stato del sistema unificato
+                            if hasattr(self.unified_system, 'get_system_status'):
+                                status = self.unified_system.get_system_status()
+                                checkpoint_data = {
+                                    'progress': progress,
+                                    'processed_ticks': processed_ticks,
+                                    'timestamp': datetime.now().isoformat(),
+                                    'system_status': status
+                                }
+                                
+                                # Salva checkpoint
+                                checkpoint_file = f"{self.analyzer_data_path}/checkpoint_{config.symbol}_{i}.json"
+                                with open(checkpoint_file, 'w') as f:
+                                    json.dump(checkpoint_data, f, indent=2, default=str)
+                                
+                                print(f"\n💾 Checkpoint saved: {progress:.1f}% -> {checkpoint_file}")
+                                self.logger.info(f"💾 Checkpoint saved at {progress:.1f}%: {checkpoint_file}")
+                        except Exception as e:
+                            self.logger.warning(f"⚠️ Could not save checkpoint: {e}")
                 
                 # Speed control (opzionale)
                 if config.speed_multiplier < 1000:
                     await asyncio.sleep(0.001 / config.speed_multiplier)
             
-            # Final stats
+            # ENHANCED: Final newline dopo la progress bar
+            print("\n")
+            
+            # ENHANCED: Final stats dettagliate
             elapsed = time.time() - start_time
             speed = processed_ticks / elapsed if elapsed > 0 else 0
+            success_rate = (processed_ticks/(processed_ticks+error_count))*100 if (processed_ticks+error_count) > 0 else 0
             
+            print("=" * 90)
+            print("✅ UNIFIED BACKTEST COMPLETED SUCCESSFULLY")
+            print("=" * 90)
+            print(f"📊 Results Summary:")
+            print(f"   ➤ Total processed: {processed_ticks:,} ticks")
+            print(f"   ➤ Processing time: {elapsed:.1f}s ({elapsed/60:.1f} minutes)")
+            print(f"   ➤ Average speed: {speed:,.0f} ticks/sec")
+            print(f"   ➤ Speed achievement: {speed:.0f}x real-time")
+            print(f"   ➤ Error count: {error_count} ({100-success_rate:.2f}%)")
+            print(f"   ➤ Success rate: {success_rate:.1f}%")
+            print("=" * 90)
+            
+            # Log finale dettagliato
             self.logger.info("="*60)
             self.logger.info("✅ UNIFIED BACKTEST COMPLETED")
             self.logger.info("="*60)
-            self.logger.info(f"Total ticks processed: {processed_ticks:,}")
-            self.logger.info(f"Processing time: {elapsed:.1f} seconds")
-            self.logger.info(f"Average speed: {speed:.0f} ticks/sec")
-            self.logger.info(f"Speed multiplier achieved: {speed:.0f}x real-time")
-            self.logger.info(f"Error count: {error_count}")
-            self.logger.info(f"Success rate: {(processed_ticks/(processed_ticks+error_count))*100:.1f}%")
+            self.logger.info(f"📊 FINAL STATISTICS:")
+            self.logger.info(f"   Total ticks processed: {processed_ticks:,}")
+            self.logger.info(f"   Processing time: {elapsed:.1f} seconds ({elapsed/60:.1f} minutes)")
+            self.logger.info(f"   Average speed: {speed:,.0f} ticks/sec")
+            self.logger.info(f"   Speed multiplier achieved: {speed:.0f}x real-time")
+            self.logger.info(f"   Error count: {error_count}")
+            self.logger.info(f"   Success rate: {success_rate:.1f}%")
             
-            # System status finale
+            # ENHANCED: System status finale
             if hasattr(self.unified_system, 'get_system_status'):
                 try:
                     status = self.unified_system.get_system_status()
                     self.logger.info("📊 FINAL SYSTEM STATUS:")
-                    self.logger.info(f"   System running: {status.get('system', {}).get('running', 'unknown')}")
-                    self.logger.info(f"   Total events: {status.get('system', {}).get('stats', {}).get('total_events_logged', 0)}")
+                    self.logger.info(f"   ➤ System running: {status.get('system', {}).get('running', 'unknown')}")
+                    self.logger.info(f"   ➤ Total events logged: {status.get('system', {}).get('stats', {}).get('total_events_logged', 0):,}")
+                    self.logger.info(f"   ➤ Uptime: {status.get('system', {}).get('uptime_seconds', 0):.1f}s")
                     
                     if 'analyzer' in status:
                         analyzer_stats = status['analyzer']
-                        self.logger.info(f"   Predictions: {analyzer_stats.get('predictions_generated', 0)}")
-                        self.logger.info(f"   Buffer utilization: {analyzer_stats.get('buffer_utilization', 0):.1f}%")
+                        self.logger.info(f"   ➤ Predictions generated: {analyzer_stats.get('predictions_generated', 0):,}")
+                        self.logger.info(f"   ➤ Buffer utilization: {analyzer_stats.get('buffer_utilization', 0):.1f}%")
+                        self.logger.info(f"   ➤ Events pending: {analyzer_stats.get('events_pending', 0)}")
+                    
+                    if 'performance' in status:
+                        perf_stats = status['performance']
+                        self.logger.info(f"   ➤ Memory usage: {perf_stats.get('memory_mb', 0):.1f}MB")
+                        self.logger.info(f"   ➤ CPU usage: {perf_stats.get('cpu_percent', 0):.1f}%")
+                    
+                    # Salva status finale
+                    final_status_file = f"{self.analyzer_data_path}/final_status_{config.symbol}_{datetime.now():%Y%m%d_%H%M%S}.json"
+                    with open(final_status_file, 'w') as f:
+                        json.dump(status, f, indent=2, default=str)
+                    self.logger.info(f"   ➤ Final status saved: {final_status_file}")
                     
                 except Exception as e:
                     self.logger.warning(f"⚠️ Could not get final system status: {e}")
@@ -538,13 +663,72 @@ class MT5BacktestRunner:
             return True
             
         except KeyboardInterrupt:
+            print("\n🛑 Backtest interrupted by user")
             self.logger.info("\n🛑 Backtest interrupted by user")
+            
+            # Salva stato parziale
+            try:
+                partial_status = {
+                    'interrupted_at': datetime.now().isoformat(),
+                    'progress': (processed_ticks / total_ticks) * 100,
+                    'processed_ticks': processed_ticks,
+                    'error_count': error_count,
+                    'elapsed_time': time.time() - start_time
+                }
+                
+                partial_file = f"{self.analyzer_data_path}/interrupted_status_{config.symbol}_{datetime.now():%Y%m%d_%H%M%S}.json"
+                with open(partial_file, 'w') as f:
+                    json.dump(partial_status, f, indent=2, default=str)
+                
+                print(f"💾 Partial status saved: {partial_file}")
+                self.logger.info(f"💾 Partial status saved: {partial_file}")
+            except Exception as e:
+                self.logger.warning(f"⚠️ Could not save partial status: {e}")
+            
             return False
+            
         except Exception as e:
+            print(f"\n❌ Backtest error: {e}")
             self.logger.error(f"❌ Backtest execution error: {e}")
             import traceback
             traceback.print_exc()
             return False
+
+
+    # ================================
+    # UTILITY: METODO HELPER PER MEMORY MONITORING  
+    # ================================
+
+    def _get_memory_usage(self) -> float:
+        """Ottieni uso memoria corrente in MB"""
+        try:
+            import psutil
+            process = psutil.Process()
+            return process.memory_info().rss / 1024 / 1024  # MB
+        except Exception:
+            return 0.0
+
+
+    # ================================
+    # ENHANCED: PROGRESS ESTIMATION UTILITY
+    # ================================
+
+    def _estimate_completion_time(self, processed: int, total: int, elapsed_time: float) -> str:
+        """Stima tempo di completamento con formattazione user-friendly"""
+        if processed == 0:
+            return "calculating..."
+        
+        rate = processed / elapsed_time
+        remaining = total - processed
+        eta_seconds = remaining / rate
+        
+        if eta_seconds < 60:
+            return f"{eta_seconds:.0f}s"
+        elif eta_seconds < 3600:
+            return f"{eta_seconds/60:.1f}min"
+        else:
+            hours = eta_seconds / 3600
+            return f"{hours:.1f}h"
 
 def create_backtest_config(symbol: str, months_back: int = 6) -> BacktestConfig:
     """Crea configurazione backtest per N mesi indietro"""

@@ -1869,34 +1869,36 @@ class LearningDiagnostics:
             self._log_performance_bottleneck('processing_degradation', stats)
     
     def _log_performance_bottleneck(self, bottleneck_type: str, details: Dict[str, Any]) -> None:
-        """Logga bottleneck di performance"""
+        """Logga bottlenecks performance - THREAD SAFE VERSION"""
         
         bottleneck_record = {
             'timestamp': datetime.now(),
             'type': bottleneck_type,
-            'tick_count': self.total_ticks_processed,
             'details': details,
-            'severity': self._calculate_severity(bottleneck_type, details)
+            'tick_count': getattr(self, 'total_ticks_processed', 0)
         }
         
-        self.diagnostics_data['bottlenecks'].append(bottleneck_record)
-        
-        # Log in base alla severity
-        if bottleneck_record['severity'] == 'critical':
-            self.logger.loggers['emergency'].critical(
-                f"🚨 CRITICAL BOTTLENECK | {self.asset} | "
-                f"Type: {bottleneck_type} | Details: {details}"
-            )
-        elif bottleneck_record['severity'] == 'high':
-            self.logger.loggers['errors'].error(
-                f"⚠️ HIGH SEVERITY BOTTLENECK | {self.asset} | "
-                f"Type: {bottleneck_type} | Details: {details}"
-            )
-        else:
-            self.logger.loggers['system'].warning(
-                f"⚠️ BOTTLENECK DETECTED | {self.asset} | "
-                f"Type: {bottleneck_type} | Details: {details}"
-            )
+        # FIX: Controlla se il logger esiste prima di usarlo
+        try:
+            if hasattr(self, 'logger') and hasattr(self.logger, 'loggers'):
+                if 'emergency' in self.logger.loggers:
+                    self.logger.loggers['emergency'].critical(
+                        f"Performance bottleneck detected: {bottleneck_type}", 
+                        extra={'details': details}
+                    )
+                elif 'errors' in self.logger.loggers:
+                    self.logger.loggers['errors'].error(
+                        f"Performance bottleneck: {bottleneck_type} - {details}"
+                    )
+                else:
+                    # Fallback: usa print se non ci sono logger disponibili
+                    print(f"⚠️ Performance bottleneck: {bottleneck_type} - {details}")
+            else:
+                # Logger non disponibile, usa print
+                print(f"⚠️ Performance bottleneck: {bottleneck_type} - {details}")
+        except Exception:
+            # Catch-all per evitare che il monitoring thread si blocchi
+            pass
     
     def _calculate_severity(self, bottleneck_type: str, details: Dict[str, Any]) -> str:
         """Calcola la severità del bottleneck"""
@@ -1928,36 +1930,42 @@ class LearningDiagnostics:
         return 'medium'
     
     def _continuous_monitor(self) -> None:
-        """Monitoraggio continuo in background"""
+        """Monitor continuo delle performance - SAFE VERSION"""
         
         while self.monitoring_active:
             try:
-                # Sample memory e sistema ogni 30 secondi
-                memory_usage = self._get_memory_usage()
-                system_load = self._get_system_load()
-                
-                self.memory_samples.append({
-                    'timestamp': datetime.now(),
-                    'memory_usage': memory_usage,
-                    'system_load': system_load
-                })
-                
-                # Mantieni solo ultimi 1000 samples
-                if len(self.memory_samples) > 1000:
-                    self.memory_samples = self.memory_samples[-1000:]
-                
-                # Controlla condizioni critiche
-                if memory_usage > 90:
-                    self._log_performance_bottleneck('memory_pressure', {
-                        'memory_usage': memory_usage,
-                        'system_load': system_load
-                    })
-                
                 time.sleep(30)  # Check ogni 30 secondi
                 
+                # Memoria
+                memory_usage = self._get_memory_usage()
+                if memory_usage > self.max_memory_usage:
+                    self._log_performance_bottleneck('memory_pressure', {
+                        'usage_percent': memory_usage,
+                        'threshold': self.max_memory_usage
+                    })
+                
+                # Tick rate
+                if len(self.tick_intervals) > 10:
+                    avg_interval = np.mean(self.tick_intervals[-10:])
+                    tick_rate = 1.0 / avg_interval if avg_interval > 0 else 0
+                    
+                    if tick_rate < self.min_tick_rate:
+                        self._log_performance_bottleneck('low_tick_rate', {
+                            'current_rate': tick_rate,
+                            'min_expected': self.min_tick_rate
+                        })
+            
             except Exception as e:
-                self.logger.loggers['errors'].error(f"Monitor thread error: {e}")
-                time.sleep(60)  # Wait longer on error
+                # FIX: Gestione sicura delle eccezioni nel monitoring thread
+                try:
+                    if (hasattr(self, 'logger') and hasattr(self.logger, 'loggers') 
+                        and 'errors' in self.logger.loggers):
+                        self.logger.loggers['errors'].error(f"Monitor thread error: {e}")
+                    else:
+                        print(f"⚠️ Monitor thread error: {e}")
+                except Exception:
+                    # Ultimo fallback per evitare crash del thread
+                    print(f"⚠️ Monitor error (fallback): {e}")
     
     def _get_memory_usage(self) -> float:
         """Ottieni utilizzo memoria corrente"""
