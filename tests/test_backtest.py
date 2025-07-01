@@ -159,7 +159,7 @@ class MLLearningTestSuite:
         
         # Test config
         self.symbol = 'USTEC'
-        self.learning_days = 7  # Start with 2 days
+        self.learning_days = 180  # Start with 2 days
         
         safe_print(f"🧪 ML Learning Test Suite initialized")
         safe_print(f"📊 Symbol: {self.symbol}")
