@@ -328,11 +328,51 @@ class MT5BacktestRunner:
             except Exception as e:
                 self.logger.error(f"⚠️ Error stopping unified system: {e}")
     
-    def run_backtest(self, config: BacktestConfig) -> bool:
-        """Esegue backtest completo - WRAPPER SINCRONO"""
+    def run_backtest_thread_safe(self, config: BacktestConfig) -> bool:
+        """Versione thread-safe che evita completamente i problemi di event loop"""
         
-        # Wrapper sincrono per mantenere compatibilità API
-        return asyncio.run(self._run_backtest_async(config))
+        import asyncio
+        import threading
+        import queue
+        
+        self.logger.info("🔄 Using thread-safe execution approach")
+        
+        # Usa sempre un thread separato per evitare conflitti
+        result_queue = queue.Queue()
+        exception_queue = queue.Queue()
+        
+        def run_async_in_thread():
+            try:
+                # Nuovo loop nel thread
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                
+                try:
+                    result = new_loop.run_until_complete(self._run_backtest_async(config))
+                    result_queue.put(result)
+                finally:
+                    new_loop.close()
+                    
+            except Exception as e:
+                exception_queue.put(e)
+        
+        # Esegui in thread separato
+        thread = threading.Thread(target=run_async_in_thread, daemon=False)
+        thread.start()
+        thread.join()
+        
+        # Controlla se ci sono stati errori
+        if not exception_queue.empty():
+            error = exception_queue.get()
+            self.logger.error(f"❌ Error in async execution: {error}")
+            return False
+        
+        # Ottieni risultato
+        if not result_queue.empty():
+            return result_queue.get()
+        else:
+            self.logger.error("❌ No result from async execution")
+            return False
     
     async def _run_backtest_async(self, config: BacktestConfig) -> bool:
         """Esegue backtest completo - VERSIONE ASINCRONA"""
