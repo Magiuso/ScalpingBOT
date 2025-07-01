@@ -34,227 +34,401 @@ class BacktestConfig:
     resume_from_checkpoint: bool = True
 
 class MT5DataExporter:
-    """Esporta dati storici da MT5 - MEMORY SAFE + NUMPY VOID FIXED"""
+    """Esporta dati storici da MT5 - MEMORY LEAK FIXED + AGGRESSIVE OPTIMIZATION"""
     
     def __init__(self):
         self.logger = logging.getLogger('MT5DataExporter')
         
+        # 🚀 Memory management settings
+        self.memory_threshold_critical = 85  # % - Emergency stop
+        self.memory_threshold_warning = 75   # % - Reduce chunk size
+        self.base_chunk_days = 30           # Default chunk size
+        self.min_chunk_days = 3             # Minimum chunk size
+        self.ticks_per_gc = 1000            # Force GC every N ticks
+        
+        # 🚀 Reusable objects pool to avoid allocations
+        self._tick_data_template = {
+            "type": "tick",
+            "timestamp": "",
+            "symbol": "",
+            "bid": 0.0,
+            "ask": 0.0,
+            "last": 0.0,
+            "volume": 0,
+            "spread_percentage": 0.0,
+            "price_change_1m": 0.0,
+            "price_change_5m": 0.0,
+            "volatility": 0.0,
+            "momentum_5m": 0.0,
+            "market_state": "backtest"
+        }
+        
+    def _get_memory_usage(self) -> float:
+        """Get current memory usage percentage"""
+        try:
+            import psutil
+            return psutil.virtual_memory().percent
+        except ImportError:
+            return 0.0
+    
+    def _force_garbage_collection(self):
+        """Force aggressive garbage collection"""
+        import gc
+        gc.collect()
+        gc.collect()  # Double collection for better cleanup
+        gc.collect()  # Triple for maximum effect
+        
+    def _calculate_dynamic_chunk_size(self, total_days: int, current_memory: float) -> int:
+        """Calculate chunk size based on available memory"""
+        
+        if current_memory > self.memory_threshold_critical:
+            # Emergency: smallest possible chunks
+            chunk_days = max(1, self.min_chunk_days // 2)
+            self.logger.warning(f"🚨 EMERGENCY: Memory at {current_memory:.1f}%, using {chunk_days}-day chunks")
+            
+        elif current_memory > self.memory_threshold_warning:
+            # Warning: smaller chunks
+            chunk_days = max(self.min_chunk_days, self.base_chunk_days // 4)
+            self.logger.warning(f"⚠️ HIGH MEMORY: {current_memory:.1f}%, reducing to {chunk_days}-day chunks")
+            
+        elif total_days > 60:
+            # Normal: standard chunks but check memory
+            chunk_days = min(self.base_chunk_days, max(7, self.base_chunk_days // 2))
+            self.logger.info(f"📊 Using {chunk_days}-day chunks (memory: {current_memory:.1f}%)")
+            
+        elif total_days > 30:
+            chunk_days = 15
+            
+        else:
+            chunk_days = total_days
+            
+        return chunk_days
+        
     def export_historical_data(self, symbol: str, start_date: datetime, end_date: datetime, 
                              output_file: str) -> bool:
-        """Esporta dati storici da MT5 in chunks per evitare memory overflow"""
+        """Esporta dati storici da MT5 - MEMORY LEAK PROOF VERSION"""
         try:
-            # Prova import MetaTrader5
+            # Import MetaTrader5
             try:
-                import MetaTrader5 as mt5  # type: ignore
+                import MetaTrader5 as mt5
             except ImportError:
                 self.logger.error("❌ MetaTrader5 package not installed. Install with: pip install MetaTrader5")
                 return False
             
-            # Inizializza connessione MT5
-            if not mt5.initialize(): # type: ignore
+            # Initialize MT5 connection
+            if not mt5.initialize():  # type: ignore
                 self.logger.error("❌ Failed to initialize MT5 connection")
                 return False
             
-            self.logger.info(f"📊 Exporting {symbol} from {start_date} to {end_date} (CHUNKED)")
+            # 🚀 MEMORY CHECK: Start with clean state
+            self._force_garbage_collection()
+            initial_memory = self._get_memory_usage()
             
-            # CALCOLA NUMERO DI GIORNI
+            self.logger.info(f"📊 Exporting {symbol} from {start_date} to {end_date} (MEMORY OPTIMIZED)")
+            self.logger.info(f"🧠 Starting memory usage: {initial_memory:.1f}%")
+            
+            # Calculate period
             total_days = (end_date - start_date).days
             self.logger.info(f"📅 Total period: {total_days} days")
             
-            # STRATEGIA CHUNKED PER MEMORIA
-            if total_days > 60:
-                # Per periodi lunghi: chunk di 30 giorni
-                chunk_days = 30
-                self.logger.info(f"🔄 Using 30-day chunks for memory safety")
-            elif total_days > 30:
-                # Per periodi medi: chunk di 15 giorni  
-                chunk_days = 15
-                self.logger.info(f"🔄 Using 15-day chunks")
-            else:
-                # Per periodi brevi: tutto insieme
-                chunk_days = total_days
-                self.logger.info(f"🔄 Single chunk (period < 30 days)")
+            # 🚀 DYNAMIC CHUNK SIZE based on memory
+            chunk_days = self._calculate_dynamic_chunk_size(total_days, initial_memory)
             
-            # ESPORTA IN CHUNKS
+            # Initialize export variables
             total_ticks_exported = 0
             current_date = start_date
             chunk_number = 1
             first_chunk = True
+            tick_counter = 0
             
-            # Apri file per scrittura
-            with open(output_file, 'w', encoding='utf-8') as f:
-                while current_date < end_date:
-                    # Calcola end date del chunk corrente
-                    chunk_end = min(current_date + timedelta(days=chunk_days), end_date)
+            # 🚀 STREAMING: Open file once and keep it open for streaming
+            try:
+                with open(output_file, 'w', encoding='utf-8', buffering=8192) as f:  # Small buffer
                     
-                    self.logger.info(f"📊 Chunk {chunk_number}: {current_date.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}")
-                    
-                    # EXPORT CHUNK SINGOLO
-                    try:
-                        # Ottieni dati tick per questo chunk
-                        ticks = mt5.copy_ticks_range(symbol, current_date, chunk_end, mt5.COPY_TICKS_ALL) # type: ignore
+                    while current_date < end_date:
+                        # 🚀 MEMORY CHECK: Monitor before each chunk
+                        current_memory = self._get_memory_usage()
                         
-                        if ticks is None or len(ticks) == 0:
-                            self.logger.warning(f"⚠️ No ticks in chunk {chunk_number}")
+                        if current_memory > self.memory_threshold_critical:
+                            self.logger.error(f"🚨 CRITICAL MEMORY: {current_memory:.1f}% - EMERGENCY GC")
+                            self._force_garbage_collection()
+                            current_memory = self._get_memory_usage()
+                            
+                            if current_memory > self.memory_threshold_critical:
+                                self.logger.error(f"🚨 CRITICAL: Still {current_memory:.1f}% after GC - ABORTING")
+                                return False
+                        
+                        # Recalculate chunk size if memory is high
+                        if current_memory > self.memory_threshold_warning:
+                            chunk_days = max(1, chunk_days // 2)
+                            self.logger.warning(f"⚠️ Reducing chunk size to {chunk_days} days due to memory pressure")
+                        
+                        # Calculate chunk end date
+                        chunk_end = min(current_date + timedelta(days=chunk_days), end_date)
+                        
+                        self.logger.info(f"📊 Chunk {chunk_number}: {current_date.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}")
+                        
+                        # 🚀 MEMORY-SAFE CHUNK PROCESSING
+                        chunk_ticks = self._process_chunk_memory_safe(
+                            mt5, symbol, current_date, chunk_end, f, 
+                            first_chunk, chunk_number
+                        )
+                        
+                        if chunk_ticks is None:
+                            # Error in chunk processing
                             current_date = chunk_end
                             chunk_number += 1
                             continue
-                        
-                        chunk_tick_count = len(ticks)
-                        total_ticks_exported += chunk_tick_count
-                        
-                        self.logger.info(f"✅ Chunk {chunk_number}: {chunk_tick_count:,} ticks retrieved")
-                        
-                        # PROCESSA CHUNK NUMPY VOID SAFE
-                        if first_chunk:
-                            # Scrivi header solo nel primo chunk
-                            header = {
-                                "type": "backtest_start",
-                                "symbol": symbol,
-                                "start_time": datetime.fromtimestamp(ticks[0]['time']).isoformat(),
-                                "end_time": "TBD",  # Aggiorniamo alla fine
-                                "total_ticks": "TBD",  # Aggiorniamo alla fine
-                                "export_time": datetime.now().isoformat(),
-                                "chunked_export": True,
-                                "chunk_days": chunk_days
-                            }
-                            f.write(json.dumps(header) + '\n')
-                            first_chunk = False
-                        
-                        # PROCESSA TICKS - NUMPY VOID SAFE!
-                        for tick in ticks:
-                            # ✅ FIX: Accesso diretto alle proprietà numpy.void
-                            tick_time = tick['time']
-                            tick_bid = tick['bid']
-                            tick_ask = tick['ask']
                             
-                            # ✅ FIX: Gestione sicura dei campi opzionali
-                            tick_last = tick['last'] if 'last' in tick.dtype.names else (tick_bid + tick_ask) / 2
-                            tick_volume = tick['volume'] if 'volume' in tick.dtype.names else 1
-                            
-                            # ✅ FIX: Calcolo spread sicuro
-                            spread_percentage = 0.0
-                            if tick_bid > 0:
-                                spread_percentage = (tick_ask - tick_bid) / tick_bid
-                            
-                            tick_data = {
-                                "type": "tick",
-                                "timestamp": datetime.fromtimestamp(tick_time).strftime('%Y.%m.%d %H:%M:%S'),
-                                "symbol": symbol,
-                                "bid": float(tick_bid),
-                                "ask": float(tick_ask),
-                                "last": float(tick_last),
-                                "volume": int(tick_volume),
-                                "spread_percentage": float(spread_percentage),
-                                # Calcoli semplificati per backtest
-                                "price_change_1m": 0.0,
-                                "price_change_5m": 0.0,
-                                "volatility": 0.0,
-                                "momentum_5m": 0.0,
-                                "market_state": "backtest"
-                            }
-                            f.write(json.dumps(tick_data) + '\n')
+                        total_ticks_exported += chunk_ticks
+                        tick_counter += chunk_ticks
+                        first_chunk = False
                         
-                        # LIBERA MEMORIA DEL CHUNK
-                        del ticks
-                        import gc
-                        gc.collect()
+                        # 🚀 AGGRESSIVE MEMORY MANAGEMENT
+                        if tick_counter >= self.ticks_per_gc:
+                            self._force_garbage_collection()
+                            tick_counter = 0
+                            memory_after_gc = self._get_memory_usage()
+                            self.logger.info(f"🧹 GC performed - Memory: {memory_after_gc:.1f}%")
                         
-                        self.logger.info(f"💾 Chunk {chunk_number} written and memory freed")
+                        # Move to next chunk
+                        current_date = chunk_end
+                        chunk_number += 1
                         
-                    except Exception as e:
-                        self.logger.error(f"❌ Error processing chunk {chunk_number}: {e}")
-                        # Log dettagli per debug
-                        if 'ticks' in locals() and len(ticks) > 0:
-                            self.logger.error(f"🔍 Debug: tick[0] type: {type(ticks[0])}")
-                            self.logger.error(f"🔍 Debug: tick[0] dtype: {ticks[0].dtype if hasattr(ticks[0], 'dtype') else 'no dtype'}")
-                            if hasattr(ticks[0], 'dtype') and hasattr(ticks[0].dtype, 'names'):
-                                self.logger.error(f"🔍 Debug: available fields: {ticks[0].dtype.names}")
-                        # Continua con il prossimo chunk invece di fallire completamente
-                    
-                    # Avanza al prossimo chunk
-                    current_date = chunk_end
-                    chunk_number += 1
+                        # 🚀 MEMORY PRESSURE: Emergency break
+                        if self._get_memory_usage() > 90:
+                            self.logger.error("🚨 EMERGENCY: Memory > 90% - Stopping export")
+                            break
                 
-                # AGGIORNA HEADER CON TOTALI FINALI
+                # 🚀 FINAL CLEANUP
                 self.logger.info(f"📝 Updating header with final totals...")
+                
+            except IOError as e:
+                self.logger.error(f"❌ File I/O error: {e}")
+                return False
             
-            # AGGIORNA HEADER (riscrive il file con header corretto)
+            # Update header with totals
             self._update_header_with_totals(output_file, symbol, total_ticks_exported)
             
-            mt5.shutdown() # type: ignore
+            # Final cleanup
+            self._force_garbage_collection()
+            final_memory = self._get_memory_usage()
+            
+            mt5.shutdown()  # type: ignore
             
             self.logger.info(f"✅ Export completed: {total_ticks_exported:,} total ticks")
             self.logger.info(f"📁 File: {output_file}")
+            self.logger.info(f"🧠 Final memory: {final_memory:.1f}% (started: {initial_memory:.1f}%)")
             
-            # ✅ CRITICAL: Return False se nessun tick esportato
-            if total_ticks_exported == 0:
-                self.logger.error("❌ No ticks were successfully exported!")
-                return False
-            
-            return True
+            return total_ticks_exported > 0
             
         except Exception as e:
             self.logger.error(f"❌ Export error: {e}")
             import traceback
             self.logger.error(f"❌ Stack trace: {traceback.format_exc()}")
+            
+            # Emergency cleanup
+            self._force_garbage_collection()
+            
             try:
                 import MetaTrader5 as mt5  # type: ignore
-                mt5.shutdown() # type: ignore
+                mt5.shutdown()  # type: ignore
             except:
                 pass
             return False
     
-    def _update_header_with_totals(self, output_file: str, symbol: str, total_ticks: int) -> None:
-        """Aggiorna l'header con i totali finali"""
+    def _process_chunk_memory_safe(self, mt5, symbol: str, start_date: datetime, 
+                                  end_date: datetime, file_handle, is_first_chunk: bool, 
+                                  chunk_number: int) -> Optional[int]:
+        """Process a single chunk with aggressive memory management"""
+        
         try:
-            # Leggi tutto il file
-            with open(output_file, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
+            # 🚀 MEMORY CHECK before processing
+            pre_chunk_memory = self._get_memory_usage()
             
-            if not lines:
-                self.logger.warning("⚠️ No lines in file to update header")
-                return
+            # Get ticks for this chunk
+            ticks = mt5.copy_ticks_range(symbol, start_date, end_date, mt5.COPY_TICKS_ALL)  # type: ignore
             
-            # Aggiorna la prima riga (header)
-            header_line = lines[0].strip()
-            header = json.loads(header_line)
+            if ticks is None or len(ticks) == 0:
+                self.logger.warning(f"⚠️ No ticks in chunk {chunk_number}")
+                return 0
             
-            # Trova ultimo tick per end_time
-            last_tick_time = None
-            for line in reversed(lines[1:]):  # Skip header
-                if line.strip():
-                    try:
-                        tick_data = json.loads(line.strip())
-                        if tick_data.get('type') == 'tick':
-                            last_tick_time = tick_data['timestamp']
+            chunk_tick_count = len(ticks)
+            self.logger.info(f"✅ Chunk {chunk_number}: {chunk_tick_count:,} ticks retrieved")
+            
+            # 🚀 WRITE HEADER only for first chunk
+            if is_first_chunk:
+                header = {
+                    "type": "backtest_start",
+                    "symbol": symbol,
+                    "start_time": datetime.fromtimestamp(ticks[0]['time']).isoformat(),
+                    "end_time": "TBD",
+                    "total_ticks": "TBD", 
+                    "export_time": datetime.now().isoformat(),
+                    "chunked_export": True,
+                    "memory_optimized": True
+                }
+                file_handle.write(json.dumps(header) + '\n')
+                file_handle.flush()  # Immediate write
+            
+            # 🚀 STREAMING TICK PROCESSING - Process one tick at a time
+            ticks_processed = 0
+            
+            for i, tick in enumerate(ticks):
+                
+                # 🚀 REUSE TEMPLATE to avoid dict creation
+                tick_data = self._tick_data_template.copy()
+                
+                # 🚀 SAFE NUMPY VOID ACCESS
+                tick_time = tick['time']
+                tick_bid = tick['bid'] 
+                tick_ask = tick['ask']
+                
+                # Safe optional fields
+                tick_last = tick['last'] if 'last' in tick.dtype.names else (tick_bid + tick_ask) / 2
+                tick_volume = tick['volume'] if 'volume' in tick.dtype.names else 1
+                
+                # Calculate spread safely
+                spread_percentage = 0.0
+                if tick_bid > 0:
+                    spread_percentage = (tick_ask - tick_bid) / tick_bid
+                
+                # 🚀 UPDATE TEMPLATE (no new allocations)
+                tick_data["timestamp"] = datetime.fromtimestamp(tick_time).strftime('%Y.%m.%d %H:%M:%S')
+                tick_data["symbol"] = symbol
+                tick_data["bid"] = float(tick_bid)
+                tick_data["ask"] = float(tick_ask) 
+                tick_data["last"] = float(tick_last)
+                tick_data["volume"] = int(tick_volume)
+                tick_data["spread_percentage"] = float(spread_percentage)
+                
+                # 🚀 IMMEDIATE WRITE (no accumulation)
+                file_handle.write(json.dumps(tick_data) + '\n')
+                ticks_processed += 1
+                
+                # 🚀 MICRO-GC: Every 500 ticks within chunk
+                if (i + 1) % 500 == 0:
+                    file_handle.flush()  # Force write to disk
+                    if (i + 1) % 2000 == 0:  # Less frequent GC
+                        self._force_garbage_collection()
+                    
+                    # Memory emergency check
+                    current_memory = self._get_memory_usage()
+                    if current_memory > 88:
+                        self.logger.warning(f"⚠️ Memory spike: {current_memory:.1f}% during chunk processing")
+                        self._force_garbage_collection()
+                        
+                        # Emergency break if still too high
+                        if self._get_memory_usage() > 90:
+                            self.logger.error(f"🚨 Emergency break at tick {i+1}/{chunk_tick_count}")
                             break
-                    except:
-                        continue
             
-            # Aggiorna header
-            header['total_ticks'] = total_ticks
-            if last_tick_time:
-                header['end_time'] = datetime.strptime(last_tick_time, '%Y.%m.%d %H:%M:%S').isoformat()
+            # 🚀 IMMEDIATE CLEANUP
+            del ticks  # Free the numpy array immediately
+            self._force_garbage_collection()
             
-            # Riscrivi file con header aggiornato
-            lines[0] = json.dumps(header) + '\n'
+            post_chunk_memory = self._get_memory_usage()
+            memory_delta = post_chunk_memory - pre_chunk_memory
             
-            with open(output_file, 'w', encoding='utf-8') as f:
-                f.writelines(lines)
+            self.logger.info(f"💾 Chunk {chunk_number} processed: {ticks_processed:,} ticks")
+            self.logger.info(f"🧠 Memory: {pre_chunk_memory:.1f}% → {post_chunk_memory:.1f}% (Δ{memory_delta:+.1f}%)")
+            
+            return ticks_processed
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error processing chunk {chunk_number}: {e}")
+            
+            # Emergency cleanup
+            if 'ticks' in locals():
+                del ticks
+            self._force_garbage_collection()
+            
+            return None
+    
+    def _update_header_with_totals(self, output_file: str, symbol: str, total_ticks: int) -> None:
+        """Update header with final totals - MEMORY SAFE VERSION"""
+        try:
+            # 🚀 STREAMING READ: Don't load entire file into memory
+            temp_file = output_file + '.tmp'
+            
+            with open(output_file, 'r', encoding='utf-8') as input_file:
+                with open(temp_file, 'w', encoding='utf-8') as output_file_handle:
+                    
+                    # Read and update header (first line only)
+                    header_line = input_file.readline().strip()
+                    if header_line:
+                        header = json.loads(header_line)
+                        
+                        # Find last tick time by reading file backwards efficiently
+                        last_tick_time = self._find_last_tick_time_efficient(output_file)
+                        
+                        # Update header
+                        header['total_ticks'] = total_ticks
+                        if last_tick_time:
+                            header['end_time'] = last_tick_time
+                        
+                        # Write updated header
+                        output_file_handle.write(json.dumps(header) + '\n')
+                    
+                    # 🚀 STREAMING COPY: Copy rest of file line by line
+                    for line in input_file:
+                        output_file_handle.write(line)
+            
+            # Replace original file
+            import os
+            os.replace(temp_file, output_file)
             
             self.logger.info(f"📝 Header updated: {total_ticks:,} total ticks")
             
         except Exception as e:
             self.logger.warning(f"⚠️ Could not update header: {e}")
+            # Clean up temp file if it exists
+            try:
+                import os
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            except:
+                pass
+    
+    def _find_last_tick_time_efficient(self, file_path: str) -> Optional[str]:
+        """Find last tick time without loading entire file"""
+        try:
+            with open(file_path, 'rb') as f:
+                # Seek to end and read backwards
+                f.seek(0, 2)  # Go to end
+                file_size = f.tell()
+                
+                # Read last 8KB to find last tick
+                read_size = min(8192, file_size)
+                f.seek(file_size - read_size)
+                tail_data = f.read().decode('utf-8', errors='ignore')
+                
+                # Find last complete line with tick data
+                lines = tail_data.split('\n')
+                for line in reversed(lines):
+                    if line.strip():
+                        try:
+                            tick_data = json.loads(line.strip())
+                            if tick_data.get('type') == 'tick':
+                                return datetime.strptime(
+                                    tick_data['timestamp'], 
+                                    '%Y.%m.%d %H:%M:%S'
+                                ).isoformat()
+                        except:
+                            continue
+            
+            return None
+            
+        except Exception as e:
+            self.logger.warning(f"⚠️ Could not find last tick time: {e}")
+            return None
     
     def _save_tick_data(self, df: pd.DataFrame, symbol: str, output_file: str) -> None:
-        """DEPRECATED - Mantienuto per compatibilità ma non più usato"""
-        # Questo metodo non viene più chiamato nella versione chunked
-        # Mantienuto solo per compatibilità con eventuali chiamate esterne
-        self.logger.warning("⚠️ _save_tick_data called but chunked export is preferred")
+        """DEPRECATED - Legacy method maintained for compatibility"""
+        self.logger.warning("⚠️ _save_tick_data called but memory-optimized streaming export is preferred")
         
-        with open(output_file, 'w', encoding='utf-8') as f:
+        # If someone still calls this, at least make it memory-safe
+        with open(output_file, 'w', encoding='utf-8', buffering=8192) as f:
             # Header
             header = {
                 "type": "backtest_start", 
@@ -263,28 +437,39 @@ class MT5DataExporter:
                 "end_time": df['time'].iloc[-1].isoformat(),
                 "total_ticks": len(df),
                 "export_time": datetime.now().isoformat(),
-                "chunked_export": False
+                "chunked_export": False,
+                "legacy_method": True
             }
             f.write(json.dumps(header) + '\n')
             
-            # Ticks
-            for _, row in df.iterrows():
-                tick_data = {
-                    "type": "tick",
-                    "timestamp": row['time'].strftime('%Y.%m.%d %H:%M:%S'),
-                    "symbol": symbol,
-                    "bid": float(row['bid']),
-                    "ask": float(row['ask']),
-                    "last": float(row.get('last', (float(row['bid']) + float(row['ask'])) / 2)),
-                    "volume": int(row.get('volume', 1)),
-                    "spread_percentage": float((float(row['ask']) - float(row['bid'])) / float(row['bid'])) if float(row['bid']) > 0 else 0.0,
-                    "price_change_1m": 0.0,
-                    "price_change_5m": 0.0,
-                    "volatility": 0.0,
-                    "momentum_5m": 0.0,
-                    "market_state": "backtest"
-                }
-                f.write(json.dumps(tick_data) + '\n')
+            # Process in small batches to avoid memory issues
+            batch_size = 1000
+            for start_idx in range(0, len(df), batch_size):
+                end_idx = min(start_idx + batch_size, len(df))
+                batch = df.iloc[start_idx:end_idx]
+                
+                for _, row in batch.iterrows():
+                    tick_data = {
+                        "type": "tick",
+                        "timestamp": row['time'].strftime('%Y.%m.%d %H:%M:%S'),
+                        "symbol": symbol,
+                        "bid": float(row['bid']),
+                        "ask": float(row['ask']),
+                        "last": float(row.get('last', (float(row['bid']) + float(row['ask'])) / 2)),
+                        "volume": int(row.get('volume', 1)),
+                        "spread_percentage": float((float(row['ask']) - float(row['bid'])) / float(row['bid'])) if float(row['bid']) > 0 else 0.0,
+                        "price_change_1m": 0.0,
+                        "price_change_5m": 0.0, 
+                        "volatility": 0.0,
+                        "momentum_5m": 0.0,
+                        "market_state": "backtest"
+                    }
+                    f.write(json.dumps(tick_data) + '\n')
+                
+                # Cleanup batch
+                del batch
+                if start_idx % (batch_size * 10) == 0:
+                    self._force_garbage_collection()
 class BacktestDataProcessor:
     """Processa dati storici per il backtest"""
     

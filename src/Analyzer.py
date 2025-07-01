@@ -854,8 +854,14 @@ init_universal_encoding(silent=False)
 
 # ================== SISTEMA DI LOGGING AVANZATO ==================
 
+from collections import deque, defaultdict
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional, Any
+import logging
+
 class AnalyzerLogger:
-    """Sistema di logging avanzato per l'Analyzer - VERSIONE COMPLETAMENTE PULITA"""
+    """Sistema di logging avanzato per l'Analyzer - VERSIONE CORRETTA MEMORY-SAFE"""
     
     def __init__(self, base_path: str = "./analyzer_logs") -> None:
         self.base_path = Path(base_path)
@@ -866,12 +872,12 @@ class AnalyzerLogger:
         self.csv_writers: Dict[str, Any] = {}
         self.csv_files: Dict[str, Any] = {}
         
-        # Event buffers for future slave module integration
-        self._prediction_events_buffer = []
-        self._champion_events_buffer = []
-        self._error_events_buffer = []
-        self._training_events_buffer = []
-        self._mt5_events_buffer = []
+        # Event buffers for future slave module integration - MEMORY SAFE con deque
+        self._prediction_events_buffer: deque = deque(maxlen=500)
+        self._champion_events_buffer: deque = deque(maxlen=200)
+        self._error_events_buffer: deque = deque(maxlen=300)
+        self._training_events_buffer: deque = deque(maxlen=200)
+        self._mt5_events_buffer: deque = deque(maxlen=1000)
         
         # Rotazione mensile mantenuta per compatibilità
         self.current_month = datetime.now().strftime("%Y-%m")
@@ -891,10 +897,16 @@ class AnalyzerLogger:
                         'data_points', 'duration_seconds', 'final_loss', 'improvement'],
             'mt5_bridge': ['timestamp', 'direction', 'message_type', 'asset', 'data']
         }
+        
+        # Shutdown flag per controllo sicuro
+        self._shutdown_initiated = False
     
     def log_prediction(self, asset: str, prediction: 'Prediction', 
                       validation_result: Optional[Dict[str, Any]] = None) -> None:
         """Store prediction event for future slave module processing"""
+        
+        if self._shutdown_initiated:
+            return
         
         prediction_event = {
             'timestamp': datetime.now(),
@@ -914,15 +926,15 @@ class AnalyzerLogger:
             }
         }
         
+        # Buffer gestito automaticamente da deque con maxlen=500
         self._prediction_events_buffer.append(prediction_event)
-        
-        # Keep buffer manageable
-        if len(self._prediction_events_buffer) > 500:
-            self._prediction_events_buffer = self._prediction_events_buffer[-250:]
     
     def log_champion_change(self, asset: str, model_type: 'ModelType', old_champion: str, 
                           new_champion: str, old_score: float, new_score: float, reason: str) -> None:
         """Store champion change event for future slave module processing"""
+        
+        if self._shutdown_initiated:
+            return
         
         improvement = ((new_score - old_score) / old_score * 100) if old_score > 0 else 0
         
@@ -941,15 +953,15 @@ class AnalyzerLogger:
             }
         }
         
+        # Buffer gestito automaticamente da deque con maxlen=200
         self._champion_events_buffer.append(champion_event)
-        
-        # Champion changes are rare but important - keep more history
-        if len(self._champion_events_buffer) > 200:
-            self._champion_events_buffer = self._champion_events_buffer[-100:]
     
     def log_error_analysis(self, asset: str, model_type: 'ModelType', algorithm: str,
                          error_analysis: Dict[str, Any], market_condition: Dict[str, Any]) -> None:
         """Store error analysis event for future slave module processing"""
+        
+        if self._shutdown_initiated:
+            return
         
         # Extract lessons learned
         lessons_learned = []
@@ -975,27 +987,15 @@ class AnalyzerLogger:
             }
         }
         
+        # Buffer gestito automaticamente da deque con maxlen=300
         self._error_events_buffer.append(error_event)
-        
-        # Keep buffer manageable with priority for high severity errors
-        if len(self._error_events_buffer) > 300:
-            # Separate by severity
-            high_severity = [e for e in self._error_events_buffer 
-                           if e['data']['severity'] >= 8]
-            medium_severity = [e for e in self._error_events_buffer 
-                             if 4 <= e['data']['severity'] < 8]
-            low_severity = [e for e in self._error_events_buffer 
-                          if e['data']['severity'] < 4]
-            
-            # Keep all high + recent medium + sample of low
-            recent_medium = medium_severity[-50:] if len(medium_severity) > 50 else medium_severity
-            recent_low = low_severity[-20:] if len(low_severity) > 20 else low_severity
-            
-            self._error_events_buffer = high_severity + recent_medium + recent_low
     
     def log_training_event(self, asset: str, model_type: 'ModelType', algorithm: str,
                          training_type: str, metrics: Dict[str, Any]) -> None:
         """Store training event for future slave module processing"""
+        
+        if self._shutdown_initiated:
+            return
         
         training_event = {
             'timestamp': datetime.now(),
@@ -1013,15 +1013,15 @@ class AnalyzerLogger:
             }
         }
         
+        # Buffer gestito automaticamente da deque con maxlen=200
         self._training_events_buffer.append(training_event)
-        
-        # Keep buffer manageable with focus on recent events
-        if len(self._training_events_buffer) > 200:
-            self._training_events_buffer = self._training_events_buffer[-100:]
     
     def log_mt5_communication(self, direction: str, message_type: str, 
                             asset: str, data: Dict[str, Any]) -> None:
         """Store MT5 communication event for future slave module processing"""
+        
+        if self._shutdown_initiated:
+            return
         
         mt5_event = {
             'timestamp': datetime.now(),
@@ -1034,17 +1034,14 @@ class AnalyzerLogger:
             }
         }
         
+        # Buffer gestito automaticamente da deque con maxlen=1000
         self._mt5_events_buffer.append(mt5_event)
-        
-        # MT5 communications can be frequent - keep reasonable buffer
-        if len(self._mt5_events_buffer) > 1000:
-            # Keep recent communications + sample of older ones
-            recent = self._mt5_events_buffer[-500:]
-            older_sample = self._mt5_events_buffer[:-500][::5]  # Every 5th
-            self._mt5_events_buffer = older_sample + recent
     
     def get_performance_summary(self, asset: str, days: int = 30) -> Dict[str, Any]:
         """Generate performance summary from in-memory events (simplified)"""
+        
+        if self._shutdown_initiated:
+            return {'error': 'Logger shutdown initiated'}
         
         cutoff_date = datetime.now() - timedelta(days=days)
         
@@ -1099,16 +1096,24 @@ class AnalyzerLogger:
     
     def get_all_events_for_slave(self) -> Dict[str, List[Dict]]:
         """Get all accumulated events for slave module processing"""
+        
+        if self._shutdown_initiated:
+            return {}
+        
         return {
-            'predictions': self._prediction_events_buffer.copy(),
-            'champion_changes': self._champion_events_buffer.copy(),
-            'errors': self._error_events_buffer.copy(),
-            'training': self._training_events_buffer.copy(),
-            'mt5_communications': self._mt5_events_buffer.copy()
+            'predictions': list(self._prediction_events_buffer),
+            'champion_changes': list(self._champion_events_buffer),
+            'errors': list(self._error_events_buffer),
+            'training': list(self._training_events_buffer),
+            'mt5_communications': list(self._mt5_events_buffer)
         }
     
     def clear_events_buffer(self, event_types: Optional[List[str]] = None) -> None:
         """Clear event buffers after slave module processing"""
+        
+        if self._shutdown_initiated:
+            return
+        
         if event_types is None:
             # Clear all buffers
             self._prediction_events_buffer.clear()
@@ -1129,6 +1134,123 @@ class AnalyzerLogger:
                     self._training_events_buffer.clear()
                 elif event_type == 'mt5_communications':
                     self._mt5_events_buffer.clear()
+    
+    def get_buffer_status(self) -> Dict[str, Dict[str, Any]]:
+        """Ottieni stato corrente dei buffer"""
+        
+        if self._shutdown_initiated:
+            return {'status': {'message': 'shutdown', 'operational': False}}
+        
+        return {
+            'predictions': {
+                'current_size': len(self._prediction_events_buffer),
+                'max_size': self._prediction_events_buffer.maxlen or 0,
+                'utilization_percent': (len(self._prediction_events_buffer) / (self._prediction_events_buffer.maxlen or 1)) * 100
+            },
+            'champion_changes': {
+                'current_size': len(self._champion_events_buffer),
+                'max_size': self._champion_events_buffer.maxlen or 0,
+                'utilization_percent': (len(self._champion_events_buffer) / (self._champion_events_buffer.maxlen or 1)) * 100
+            },
+            'errors': {
+                'current_size': len(self._error_events_buffer),
+                'max_size': self._error_events_buffer.maxlen or 0,
+                'utilization_percent': (len(self._error_events_buffer) / (self._error_events_buffer.maxlen or 1)) * 100
+            },
+            'training': {
+                'current_size': len(self._training_events_buffer),
+                'max_size': self._training_events_buffer.maxlen or 0,
+                'utilization_percent': (len(self._training_events_buffer) / (self._training_events_buffer.maxlen or 1)) * 100
+            },
+            'mt5_communications': {
+                'current_size': len(self._mt5_events_buffer),
+                'max_size': self._mt5_events_buffer.maxlen or 0,
+                'utilization_percent': (len(self._mt5_events_buffer) / (self._mt5_events_buffer.maxlen or 1)) * 100
+            }
+        }
+    
+    def force_flush_buffers(self) -> Dict[str, Any]:
+        """Force flush di tutti i buffer per emergenze"""
+        
+        if self._shutdown_initiated:
+            return {'status': 'already_shutdown', 'message': 'Logger already shut down'}
+        
+        events_flushed = {
+            'predictions': len(self._prediction_events_buffer),
+            'champion_changes': len(self._champion_events_buffer),
+            'errors': len(self._error_events_buffer),
+            'training': len(self._training_events_buffer),
+            'mt5_communications': len(self._mt5_events_buffer),
+            'total_flushed': (
+                len(self._prediction_events_buffer) +
+                len(self._champion_events_buffer) +
+                len(self._error_events_buffer) +
+                len(self._training_events_buffer) +
+                len(self._mt5_events_buffer)
+            ),
+            'flush_timestamp': datetime.now()
+        }
+        
+        # Clear all buffers
+        self.clear_events_buffer()
+        
+        return events_flushed
+    
+    def shutdown(self) -> Dict[str, Any]:
+        """Shutdown sicuro del logger con cleanup completo"""
+        
+        if self._shutdown_initiated:
+            return {'status': 'already_shutdown'}
+        
+        # Set shutdown flag
+        self._shutdown_initiated = True
+        
+        # Get final statistics
+        final_stats = {
+            'shutdown_timestamp': datetime.now(),
+            'events_in_buffers': {
+                'predictions': len(self._prediction_events_buffer),
+                'champion_changes': len(self._champion_events_buffer),
+                'errors': len(self._error_events_buffer),
+                'training': len(self._training_events_buffer),
+                'mt5_communications': len(self._mt5_events_buffer)
+            },
+            'total_events': (
+                len(self._prediction_events_buffer) +
+                len(self._champion_events_buffer) +
+                len(self._error_events_buffer) +
+                len(self._training_events_buffer) +
+                len(self._mt5_events_buffer)
+            )
+        }
+        
+        # Close any open file handles
+        try:
+            for handle in self.csv_files.values():
+                if hasattr(handle, 'close'):
+                    handle.close()
+        except Exception:
+            pass
+        
+        # Clear all buffers
+        self._prediction_events_buffer.clear()
+        self._champion_events_buffer.clear()
+        self._error_events_buffer.clear()
+        self._training_events_buffer.clear()
+        self._mt5_events_buffer.clear()
+        
+        # Clear dictionaries
+        self.loggers.clear()
+        self.csv_writers.clear()
+        self.csv_files.clear()
+        
+        final_stats['shutdown_completed'] = True
+        
+        return final_stats
+    
+    def is_operational(self) -> bool:
+        """Verifica se il logger è operativo"""
+        return not self._shutdown_initiated
     
     # Legacy compatibility methods (disabled)
     def _setup_loggers(self) -> None:
@@ -5468,7 +5590,7 @@ class AlgorithmCompetition:
     def _store_system_event(self, event_type: str, event_data: Dict) -> None:
         """Store system events in memory for future processing by slave module"""
         if not hasattr(self, '_system_events_buffer'):
-            self._system_events_buffer = []
+            self._system_events_buffer: deque = deque(maxlen=100)
         
         event_entry = {
             'timestamp': datetime.now(),
@@ -5478,9 +5600,8 @@ class AlgorithmCompetition:
         
         self._system_events_buffer.append(event_entry)
         
-        # Keep buffer size manageable
-        if len(self._system_events_buffer) > 200:
-            self._system_events_buffer = self._system_events_buffer[-100:]
+        # Buffer size is automatically managed by deque maxlen=50
+        # No manual cleanup needed since deque automatically removes old items
     
     def submit_prediction(self, algorithm_name: str, prediction_data: Dict[str, Any], 
                         confidence: float, validation_criteria: Dict[str, Any],
@@ -5567,7 +5688,7 @@ class AlgorithmCompetition:
     def _store_prediction_event(self, event_type: str, event_data: Dict) -> None:
         """Store prediction events in memory for future processing by slave module"""
         if not hasattr(self, '_prediction_events_buffer'):
-            self._prediction_events_buffer = []
+            self._prediction_events_buffer: deque = deque(maxlen=500)
         
         event_entry = {
             'timestamp': datetime.now(),
@@ -5577,19 +5698,8 @@ class AlgorithmCompetition:
         
         self._prediction_events_buffer.append(event_entry)
         
-        # Keep buffer size manageable with intelligent sampling based on event type
-        if len(self._prediction_events_buffer) > 500:
-            # Separate critical events (rejections) from routine submissions
-            critical_events = [e for e in self._prediction_events_buffer if e['event_type'] in ['rejected_emergency_stop']]
-            routine_events = [e for e in self._prediction_events_buffer if e['event_type'] == 'submitted']
-            
-            # Keep all critical events + sample of routine ones
-            routine_sample = routine_events[-200:] if len(routine_events) > 200 else routine_events
-            if len(routine_events) > 200:
-                older_routine_sample = routine_events[:-200][::10]  # Every 10th
-                routine_sample = older_routine_sample + routine_sample
-            
-            self._prediction_events_buffer = critical_events + routine_sample
+        # Buffer size is automatically managed by deque maxlen=500
+        # No manual cleanup needed since deque automatically removes old items
     
     def _calculate_validation_time(self, criteria: Dict[str, Any]) -> datetime:
         """Calcola quando validare la predizione"""
@@ -5640,7 +5750,7 @@ class AlgorithmCompetition:
     def _store_validation_metrics(self, metrics: Dict) -> None:
         """Store validation metrics in memory for future processing by slave module"""
         if not hasattr(self, '_validation_metrics_buffer'):
-            self._validation_metrics_buffer = []
+            self._validation_metrics_buffer: deque = deque(maxlen=200)
         
         metric_entry = {
             'timestamp': datetime.now(),
@@ -5649,12 +5759,8 @@ class AlgorithmCompetition:
         
         self._validation_metrics_buffer.append(metric_entry)
         
-        # Keep buffer size manageable with intelligent sampling
-        if len(self._validation_metrics_buffer) > 200:
-            # Keep recent entries + sample of older ones
-            recent = self._validation_metrics_buffer[-100:]
-            older_sample = self._validation_metrics_buffer[:-100][::5]  # Every 5th entry
-            self._validation_metrics_buffer = older_sample + recent
+        # Buffer size is automatically managed by deque maxlen=200
+        # No manual cleanup needed since deque automatically removes old items
     
     def _validate_single_prediction(self, prediction: Prediction, market_data: Dict[str, Any]) -> None:
         """Valida una singola predizione con analisi errori - VERSIONE PULITA"""
@@ -6411,7 +6517,7 @@ class AlgorithmCompetition:
     def _store_performance_metrics(self, performance_data: Dict) -> None:
         """Store performance metrics in memory for future processing by slave module"""
         if not hasattr(self, '_performance_metrics_buffer'):
-            self._performance_metrics_buffer = []
+            self._performance_metrics_buffer: deque = deque(maxlen=300)
         
         metric_entry = {
             'timestamp': datetime.now(),
@@ -6420,9 +6526,8 @@ class AlgorithmCompetition:
         
         self._performance_metrics_buffer.append(metric_entry)
         
-        # Keep buffer size manageable
-        if len(self._performance_metrics_buffer) > 300:
-            self._performance_metrics_buffer = self._performance_metrics_buffer[-150:]
+        # Buffer size is automatically managed by deque maxlen=300
+        # No manual cleanup needed since deque automatically removes old items
         
     def get_champion_algorithm(self) -> Optional[str]:
         """Restituisce l'algoritmo champion corrente"""
@@ -7023,7 +7128,7 @@ class AssetAnalyzer:
     def _store_emergency_data(self, stall_info: Dict) -> None:
         """Store emergency data in memory for future processing by slave module"""
         if not hasattr(self, '_emergency_data_buffer'):
-            self._emergency_data_buffer = []
+            self._emergency_data_buffer: deque = deque(maxlen=20)
         
         emergency_data = {
             'timestamp': datetime.now(),
@@ -7034,9 +7139,8 @@ class AssetAnalyzer:
         
         self._emergency_data_buffer.append(emergency_data)
         
-        # Keep buffer size manageable
-        if len(self._emergency_data_buffer) > 100:
-            self._emergency_data_buffer = self._emergency_data_buffer[-50:]
+        # Buffer size is automatically managed by deque maxlen=20
+        # No manual cleanup needed since deque automatically removes old items
     
     def _update_aggregated_data(self, tick: Dict):
         """Aggiorna dati aggregati per diverse finestre temporali"""
@@ -7296,7 +7400,7 @@ class AssetAnalyzer:
     def _store_retraining_event(self, event_type: str, event_data: Dict) -> None:
         """Store retraining events in memory for future processing by slave module"""
         if not hasattr(self, '_retraining_events_buffer'):
-            self._retraining_events_buffer = []
+            self._retraining_events_buffer: deque = deque(maxlen=30)
         
         event_entry = {
             'timestamp': datetime.now(),
@@ -7306,18 +7410,8 @@ class AssetAnalyzer:
         
         self._retraining_events_buffer.append(event_entry)
         
-        # Keep buffer size manageable with priority for failures and successes
-        if len(self._retraining_events_buffer) > 150:
-            # Separate by event type importance
-            critical_events = [e for e in self._retraining_events_buffer 
-                            if e['event_type'] in ['retraining_failed', 'model_not_found', 'no_training_data']]
-            success_events = [e for e in self._retraining_events_buffer 
-                            if e['event_type'] == 'retraining_completed']
-            
-            # Keep all critical + recent successes
-            recent_successes = success_events[-50:] if len(success_events) > 50 else success_events
-            
-            self._retraining_events_buffer = critical_events + recent_successes
+        # Buffer size is automatically managed by deque maxlen=30
+        # No manual cleanup needed since deque automatically removes old items
     
     def _preserve_successful_model(self, model_type: ModelType, algorithm_name: str,
                                  algorithm: AlgorithmPerformance, model: Any):
@@ -7502,7 +7596,7 @@ class AssetAnalyzer:
     def _store_performance_metrics(self, operation: str, metrics: Dict) -> None:
         """Store performance metrics in memory for future processing by slave module"""
         if not hasattr(self, '_performance_metrics_buffer'):
-            self._performance_metrics_buffer = []
+            self._performance_metrics_buffer: deque = deque(maxlen=100)
         
         metric_entry = {
             'operation': operation,
@@ -7512,9 +7606,8 @@ class AssetAnalyzer:
         
         self._performance_metrics_buffer.append(metric_entry)
         
-        # Keep buffer size manageable with sliding window
-        if len(self._performance_metrics_buffer) > 500:
-            self._performance_metrics_buffer = self._performance_metrics_buffer[-250:]
+        # Buffer size is automatically managed by deque maxlen=100
+        # No manual cleanup needed since deque automatically removes old items
     
     def _detect_market_state(self, prices: np.ndarray, volumes: np.ndarray) -> str:
         """Rileva lo stato corrente del mercato"""
@@ -8004,7 +8097,7 @@ class AssetAnalyzer:
     def _store_algorithm_error(self, error_type: str, error_data: Dict) -> None:
         """Store algorithm errors in memory for future processing by slave module"""
         if not hasattr(self, '_algorithm_errors_buffer'):
-            self._algorithm_errors_buffer = []
+            self._algorithm_errors_buffer: deque = deque(maxlen=50)
         
         error_entry = {
             'timestamp': datetime.now(),
@@ -8014,15 +8107,14 @@ class AssetAnalyzer:
         
         self._algorithm_errors_buffer.append(error_entry)
         
-        # Keep buffer size manageable
-        if len(self._algorithm_errors_buffer) > 300:
-            self._algorithm_errors_buffer = self._algorithm_errors_buffer[-150:]
+        # Buffer size is automatically managed by deque maxlen=50
+        # No manual cleanup needed since deque automatically removes old items
 
 
     def _store_algorithm_success(self, algorithm_name: str, success_data: Dict) -> None:
         """Store algorithm success metrics in memory for future processing by slave module"""
         if not hasattr(self, '_algorithm_success_buffer'):
-            self._algorithm_success_buffer = []
+            self._algorithm_success_buffer: deque = deque(maxlen=200)
         
         success_entry = {
             'timestamp': datetime.now(),
@@ -8032,12 +8124,8 @@ class AssetAnalyzer:
         
         self._algorithm_success_buffer.append(success_entry)
         
-        # Keep buffer size manageable with sampling for frequent algorithms
-        if len(self._algorithm_success_buffer) > 1000:
-            # Keep recent 500 + sample of older entries
-            recent = self._algorithm_success_buffer[-500:]
-            older_sample = self._algorithm_success_buffer[:-500][::10]  # Every 10th entry
-            self._algorithm_success_buffer = older_sample + recent
+        # Buffer size is automatically managed by deque maxlen=200
+        # No manual cleanup needed since deque automatically removes old items
     
     def _run_support_resistance_algorithm(self, algorithm_name: str, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """Esegue algoritmi di Support/Resistance"""
@@ -13962,7 +14050,7 @@ class AssetAnalyzer:
     def _store_system_event(self, event_type: str, event_data: Dict) -> None:
         """Store system events in memory for future processing by slave module"""
         if not hasattr(self, '_system_events_buffer'):
-            self._system_events_buffer = []
+            self._system_events_buffer: deque = deque(maxlen=50)
         
         event_entry = {
             'timestamp': datetime.now(),
@@ -13972,9 +14060,8 @@ class AssetAnalyzer:
         
         self._system_events_buffer.append(event_entry)
         
-        # Keep buffer size manageable
-        if len(self._system_events_buffer) > 200:
-            self._system_events_buffer = self._system_events_buffer[-100:]
+        # Buffer size is automatically managed by deque maxlen=50
+        # No manual cleanup needed since deque automatically removes old items
 
     def get_all_events_for_slave(self) -> Dict[str, List[Dict]]:
         """Get all accumulated events for slave module processing"""
@@ -14097,7 +14184,7 @@ class AdvancedMarketAnalyzer:
     def _store_global_event(self, event_type: str, event_data: Dict) -> None:
         """Store global events in memory for future processing by slave module"""
         if not hasattr(self, '_global_events_buffer'):
-            self._global_events_buffer = []
+            self._global_events_buffer: deque = deque(maxlen=200)
         
         event = {
             'timestamp': datetime.now(),
@@ -14107,9 +14194,8 @@ class AdvancedMarketAnalyzer:
         
         self._global_events_buffer.append(event)
         
-        # Keep buffer size manageable
-        if len(self._global_events_buffer) > 200:
-            self._global_events_buffer = self._global_events_buffer[-100:]
+        # Buffer size is automatically managed by deque maxlen=200
+        # No manual cleanup needed since deque automatically removes old items
     
     def receive_observer_feedback(self, asset: str, prediction_id: str, 
                                 feedback_data: Dict[str, Any]) -> None:
