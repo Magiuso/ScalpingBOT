@@ -39,12 +39,15 @@ class MT5DataExporter:
     def __init__(self):
         self.logger = logging.getLogger('MT5DataExporter')
         
-        # 🚀 Memory management settings
-        self.memory_threshold_critical = 85  # % - Emergency stop
-        self.memory_threshold_warning = 75   # % - Reduce chunk size
-        self.base_chunk_days = 30           # Default chunk size
-        self.min_chunk_days = 3             # Minimum chunk size
+        # 🚀 Memory management settings - OPTIMIZED FOR 180 DAYS
+        self.memory_threshold_critical = 95  # % - Emergency stop
+        self.memory_threshold_warning = 85   # % - Reduce chunk size  
+        self.base_chunk_days = 45           # Default chunk size
+        self.min_chunk_days = 15            # Minimum chunk size
         self.ticks_per_gc = 1000            # Force GC every N ticks
+        # Memory trend tracking
+        self.memory_history = []
+        self.max_memory_history = 5  # Track last 5 measurements
         
         # 🚀 Reusable objects pool to avoid allocations
         self._tick_data_template = {
@@ -79,28 +82,43 @@ class MT5DataExporter:
         gc.collect()  # Triple for maximum effect
         
     def _calculate_dynamic_chunk_size(self, total_days: int, current_memory: float) -> int:
-        """Calculate chunk size based on available memory"""
+        """Calculate chunk size based on available memory - AGGRESSIVE FOR 180 DAYS"""
+
+        # Track memory trend
+        self.memory_history.append(current_memory)
+        if len(self.memory_history) > self.max_memory_history:
+            self.memory_history.pop(0)
+
+        # If memory is decreasing (GC working well), be more aggressive
+        if len(self.memory_history) >= 3:
+            memory_trend = self.memory_history[-1] - self.memory_history[-3]
+            if memory_trend < -2:  # Memory dropping by 2%+
+                self.logger.info(f"📉 Memory trending down ({memory_trend:.1f}%), will be more aggressive")
         
         if current_memory > self.memory_threshold_critical:
             # Emergency: smallest possible chunks
-            chunk_days = max(1, self.min_chunk_days // 2)
+            chunk_days = max(7, self.min_chunk_days)
             self.logger.warning(f"🚨 EMERGENCY: Memory at {current_memory:.1f}%, using {chunk_days}-day chunks")
             
         elif current_memory > self.memory_threshold_warning:
-            # Warning: smaller chunks
-            chunk_days = max(self.min_chunk_days, self.base_chunk_days // 4)
+            # Warning: reduced chunks
+            chunk_days = max(self.min_chunk_days, self.base_chunk_days // 2)
             self.logger.warning(f"⚠️ HIGH MEMORY: {current_memory:.1f}%, reducing to {chunk_days}-day chunks")
             
-        elif total_days > 60:
-            # Normal: standard chunks but check memory
-            chunk_days = min(self.base_chunk_days, max(7, self.base_chunk_days // 2))
-            self.logger.info(f"📊 Using {chunk_days}-day chunks (memory: {current_memory:.1f}%)")
+        elif current_memory < 50:
+            # Plenty of memory: LARGE chunks
+            chunk_days = min(60, total_days)
+            self.logger.info(f"🚀 LOW MEMORY USAGE: {current_memory:.1f}%, using LARGE {chunk_days}-day chunks")
             
-        elif total_days > 30:
-            chunk_days = 15
+        elif current_memory < 70:
+            # Good memory: large chunks
+            chunk_days = min(45, total_days)
+            self.logger.info(f"📊 GOOD MEMORY: {current_memory:.1f}%, using {chunk_days}-day chunks")
             
         else:
-            chunk_days = total_days
+            # Normal memory: standard chunks
+            chunk_days = min(self.base_chunk_days, total_days)
+            self.logger.info(f"📊 NORMAL MEMORY: {current_memory:.1f}%, using {chunk_days}-day chunks")
             
         return chunk_days
         
@@ -143,7 +161,7 @@ class MT5DataExporter:
             
             # 🚀 STREAMING: Open file once and keep it open for streaming
             try:
-                with open(output_file, 'w', encoding='utf-8', buffering=8192) as f:  # Small buffer
+                with open(output_file, 'w', encoding='utf-8', buffering=65536) as f:  # 64KB buffer
                     
                     while current_date < end_date:
                         # 🚀 MEMORY CHECK: Monitor before each chunk
@@ -238,9 +256,9 @@ class MT5DataExporter:
             return False
     
     def _process_chunk_memory_safe(self, mt5, symbol: str, start_date: datetime, 
-                                  end_date: datetime, file_handle, is_first_chunk: bool, 
-                                  chunk_number: int) -> Optional[int]:
-        """Process a single chunk with aggressive memory management"""
+                                end_date: datetime, file_handle, is_first_chunk: bool, 
+                                chunk_number: int) -> Optional[int]:
+        """Process a single chunk with aggressive memory management + PROGRESS BAR"""
         
         try:
             # 🚀 MEMORY CHECK before processing
@@ -271,8 +289,19 @@ class MT5DataExporter:
                 file_handle.write(json.dumps(header) + '\n')
                 file_handle.flush()  # Immediate write
             
+            # 📊 PROGRESS BAR CONFIGURATION
+            if chunk_tick_count > 5_000_000:
+                progress_interval = 100_000  # Ogni 100K ticks per chunk enormi (fluido)
+            elif chunk_tick_count > 1_000_000:
+                progress_interval = 50_000   # Ogni 50K ticks per chunk grandi
+            else:
+                progress_interval = 25_000   # Ogni 25K ticks per chunk medi
+            
             # 🚀 STREAMING TICK PROCESSING - Process one tick at a time
             ticks_processed = 0
+            
+            # Progress bar iniziale
+            print(f"\n📊 Processing Chunk {chunk_number} ({chunk_tick_count:,} ticks):")
             
             for i, tick in enumerate(ticks):
                 
@@ -302,14 +331,49 @@ class MT5DataExporter:
                 tick_data["volume"] = int(tick_volume)
                 tick_data["spread_percentage"] = float(spread_percentage)
                 
-                # 🚀 IMMEDIATE WRITE (no accumulation)
-                file_handle.write(json.dumps(tick_data) + '\n')
+                # 🚀 BATCH WRITE for speed
+                if not hasattr(self, '_write_batch'):
+                    self._write_batch = []
+
+                self._write_batch.append(json.dumps(tick_data))
+
+                # Write in batches of 100 for speed
+                if len(self._write_batch) >= 100 or i == len(ticks) - 1:
+                    file_handle.write('\n'.join(self._write_batch) + '\n')
+                    self._write_batch.clear()
+
                 ticks_processed += 1
                 
-                # 🚀 MICRO-GC: Every 500 ticks within chunk
-                if (i + 1) % 500 == 0:
+                # 📊 PROGRESS BAR FLUIDA - Update ogni progress_interval
+                if i > 0 and (i % progress_interval == 0 or i == chunk_tick_count - 1):
+                    progress_pct = (i / chunk_tick_count) * 100
+                    
+                    # Progress bar visuale
+                    bar_length = 40
+                    filled_length = int(bar_length * progress_pct / 100)
+                    bar = '█' * filled_length + '░' * (bar_length - filled_length)
+                    
+                    # Calcola velocità
+                    if hasattr(self, '_chunk_start_time'):
+                        elapsed = datetime.now() - self._chunk_start_time
+                        speed = i / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
+                        eta_seconds = (chunk_tick_count - i) / speed if speed > 0 else 0
+                        eta_str = f"ETA: {eta_seconds/60:.1f}min" if eta_seconds < 3600 else f"ETA: {eta_seconds/3600:.1f}h"
+                    else:
+                        self._chunk_start_time = datetime.now()
+                        eta_str = "calculating..."
+                        speed = 0
+                    
+                    # Progress bar con dettagli
+                    print(f"\r📊 |{bar}| {progress_pct:5.1f}% " +
+                        f"({i:,}/{chunk_tick_count:,}) | " +
+                        f"⚡{speed:,.0f} t/s | " +
+                        f"{eta_str}", end='', flush=True)
+                
+                # 🚀 OPTIMIZED GC: Less frequent for speed
+                if (i + 1) % 1000 == 0:
                     file_handle.flush()  # Force write to disk
-                    if (i + 1) % 2000 == 0:  # Less frequent GC
+                    if (i + 1) % 10000 == 0:  # Much less frequent GC
                         self._force_garbage_collection()
                     
                     # Memory emergency check
@@ -322,6 +386,14 @@ class MT5DataExporter:
                         if self._get_memory_usage() > 90:
                             self.logger.error(f"🚨 Emergency break at tick {i+1}/{chunk_tick_count}")
                             break
+            
+            # 📊 PROGRESS BAR FINALE - Complete
+            print()  # New line dopo progress bar
+            print(f"✅ Chunk {chunk_number} processing completed!")
+            
+            # Reset timer per prossimo chunk
+            if hasattr(self, '_chunk_start_time'):
+                delattr(self, '_chunk_start_time')
             
             # 🚀 IMMEDIATE CLEANUP
             del ticks  # Free the numpy array immediately
@@ -336,6 +408,8 @@ class MT5DataExporter:
             return ticks_processed
             
         except Exception as e:
+            # Clear progress bar su errore
+            print()
             self.logger.error(f"❌ Error processing chunk {chunk_number}: {e}")
             
             # Emergency cleanup
@@ -423,6 +497,24 @@ class MT5DataExporter:
             self.logger.warning(f"⚠️ Could not find last tick time: {e}")
             return None
     
+    def _log_export_progress(self, chunk_number: int, total_days: int, current_date: datetime, 
+                            start_date: datetime, total_ticks_so_far: int) -> None:
+        """Log detailed export progress with ETA"""
+        
+        days_processed = (current_date - start_date).days
+        progress_pct = (days_processed / total_days) * 100
+        
+        # Estimate based on current rate
+        if days_processed > 0 and total_ticks_so_far > 0:
+            ticks_per_day = total_ticks_so_far / days_processed
+            estimated_total_ticks = ticks_per_day * total_days
+            eta_days = total_days - days_processed
+            
+            self.logger.info(f"📈 EXPORT PROGRESS: {progress_pct:.1f}% ({days_processed}/{total_days} days)")
+            self.logger.info(f"   ➤ Ticks so far: {total_ticks_so_far:,} | Rate: {ticks_per_day:,.0f}/day")
+            self.logger.info(f"   ➤ Estimated total: {estimated_total_ticks:,.0f} ticks")
+            self.logger.info(f"   ➤ ETA: {eta_days} days remaining")
+
     def _save_tick_data(self, df: pd.DataFrame, symbol: str, output_file: str) -> None:
         """DEPRECATED - Legacy method maintained for compatibility"""
         self.logger.warning("⚠️ _save_tick_data called but memory-optimized streaming export is preferred")
@@ -533,11 +625,28 @@ class BacktestDataProcessor:
             return []
     
     def load_data_from_jsonl(self, jsonl_file: str) -> List[MT5TickData]:
-        """Carica dati da file JSONL (formato analyzer)"""
-        ticks = []
+        """Carica dati da file JSONL - STREAMING VERSION per evitare memory overload"""
         
         try:
+            # 🚀 MEMORY-SAFE: Count total lines first
+            total_lines = 0
             with open(jsonl_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.strip() and ('type":"tick"' in line or '"type": "tick"' in line):
+                        total_lines += 1
+            
+            self.logger.info(f"📊 Found {total_lines:,} tick lines to process")
+            
+            # 🚀 STREAMING LOAD: Process in memory-safe batches
+            batch_size = 50000  # 50K ticks per batch
+            ticks = []
+            processed_lines = 0
+            
+            self.logger.info(f"🔄 Loading in batches of {batch_size:,} ticks...")
+            
+            with open(jsonl_file, 'r', encoding='utf-8') as f:
+                current_batch = []
+                
                 for line_num, line in enumerate(f, 1):
                     try:
                         line_stripped = line.strip()
@@ -561,18 +670,77 @@ class BacktestDataProcessor:
                                 momentum_5m=float(data['momentum_5m']),
                                 market_state=str(data['market_state'])
                             )
-                            ticks.append(tick)
+                            current_batch.append(tick)
+                            processed_lines += 1
                             
+                            # 🚀 BATCH PROCESSING: Process and clear every batch_size
+                            if len(current_batch) >= batch_size:
+                                ticks.extend(current_batch)
+                                current_batch.clear()
+                                
+                                # Memory monitoring + progress
+                                progress = (processed_lines / max(1, total_lines)) * 100  # Evita division by zero
+                                memory_usage = self._get_memory_usage() if hasattr(self, '_get_memory_usage') else 0
+                                
+                                self.logger.info(f"📊 Loaded batch: {progress:.1f}% ({processed_lines:,}/{total_lines:,}) | Memory: {memory_usage:.1f}%")
+                                
+                                # 🚨 MEMORY PRESSURE CHECK
+                                if memory_usage > 85:
+                                    self.logger.warning(f"⚠️ High memory during loading: {memory_usage:.1f}%")
+                                    # Force garbage collection
+                                    import gc
+                                    gc.collect()
+                                    
+                                    # Check again after GC
+                                    memory_after_gc = self._get_memory_usage() if hasattr(self, '_get_memory_usage') else 0
+                                    self.logger.info(f"🧹 After GC: {memory_after_gc:.1f}%")
+                                    
+                                    if memory_after_gc > 90:
+                                        self.logger.error(f"🚨 CRITICAL MEMORY: {memory_after_gc:.1f}% - ABORTING LOAD FOR SAFETY")
+                                        self.logger.error(f"📊 Emergency stop: {len(ticks):,} ticks loaded before abort (partial dataset)")
+                                        
+                                        # Final cleanup before abort
+                                        if current_batch:
+                                            ticks.extend(current_batch)
+                                            current_batch.clear()
+                                        
+                                        import gc
+                                        gc.collect()
+                                        
+                                        abort_memory = self._get_memory_usage() if hasattr(self, '_get_memory_usage') else 0
+                                        self.logger.error(f"💾 Final memory after abort: {abort_memory:.1f}%")
+                                        
+                                        return ticks  # Return partial dataset for safety
+                                
                     except (json.JSONDecodeError, KeyError, ValueError) as e:
                         if line_num <= 10:  # Log solo primi errori
                             self.logger.warning(f"⚠️ Error parsing line {line_num}: {e}")
+                
+                # 🚀 FINAL BATCH: Add remaining ticks
+                if current_batch:
+                    ticks.extend(current_batch)
+                    current_batch.clear()
             
-            self.logger.info(f"✅ Loaded {len(ticks)} ticks from JSONL")
+            # Final memory cleanup
+            import gc
+            gc.collect()
+            
+            final_memory = self._get_memory_usage() if hasattr(self, '_get_memory_usage') else 0
+            self.logger.info(f"✅ Loaded {len(ticks):,} ticks from JSONL | Final memory: {final_memory:.1f}%")
+            
             return ticks
             
         except Exception as e:
             self.logger.error(f"❌ Error loading JSONL: {e}")
             return []
+
+    def _get_memory_usage(self) -> float:
+        """Get current memory usage percentage"""
+        try:
+            import psutil
+            return psutil.virtual_memory().percent
+        except ImportError:
+            return 0.0
 
 class MT5BacktestRunner:
     """Runner principale per backtest - UNIFIED SYSTEM VERSION"""
@@ -730,7 +898,11 @@ class MT5BacktestRunner:
             return False
     
     async def _run_backtest_async(self, config: BacktestConfig) -> bool:
-        """Esegue backtest completo - VERSIONE ASINCRONA"""
+        """Esegue backtest completo - VERSIONE ASINCRONA CON DEBUG ESTENSIVO"""
+        
+        # AGGIUNGI IMPORT ALL'INIZIO
+        import traceback
+        import os
         
         self.logger.info("="*60)
         self.logger.info("🔄 STARTING MT5 BACKTEST - UNIFIED SYSTEM")
@@ -740,38 +912,121 @@ class MT5BacktestRunner:
         self.logger.info(f"Speed: {config.speed_multiplier}x")
         self.logger.info(f"Data source: {config.data_source}")
         
+        # DEBUG: Memory iniziale
+        initial_memory = self._get_memory_usage()
+        self.logger.info(f"🧠 Initial memory usage: {initial_memory:.1f}MB")
+        
         try:
+            # DEBUG: PHASE 1
+            self.logger.info("🔧 PHASE 1: Starting unified system setup...")
+            
             # 1. Setup sistema unificato
             if not await self.setup_unified_system(config):
+                self.logger.error("❌ PHASE 1 FAILED: Unified system setup failed")
                 return False
+            
+            setup_memory = self._get_memory_usage()
+            self.logger.info(f"✅ PHASE 1 COMPLETED: System setup OK, memory: {setup_memory:.1f}MB")
+            
+            # DEBUG: PHASE 2
+            self.logger.info("🔧 PHASE 2: Data export/load starting...")
             
             # 2. Carica/esporta dati
             data_file = f"{self.analyzer_data_path}/backtest_{config.symbol}_{config.start_date.strftime('%Y%m%d')}_{config.end_date.strftime('%Y%m%d')}.jsonl"
             
             if config.data_source == 'mt5_export':
+                self.logger.info(f"📊 Starting data export to: {data_file}")
                 if not self._export_mt5_data(config, data_file):
+                    self.logger.error("❌ PHASE 2 FAILED: Data export failed")
                     return False
+                
+                export_memory = self._get_memory_usage()
+                self.logger.info(f"✅ Data export completed, memory: {export_memory:.1f}MB")
             
             # 3. Carica dati processati
+            self.logger.info(f"📂 Loading data from: {data_file}")
+            
+            # Check file size before loading
+            if os.path.exists(data_file):
+                file_size_gb = os.path.getsize(data_file) / (1024**3)
+                self.logger.info(f"📊 Data file size: {file_size_gb:.2f} GB")
+            
             ticks = self._load_backtest_data(config, data_file)
             if not ticks:
-                self.logger.error("❌ No data loaded for backtest")
+                self.logger.error("❌ PHASE 2 FAILED: No data loaded for backtest")
                 return False
+            
+            load_memory = self._get_memory_usage()
+            self.logger.info(f"✅ PHASE 2 COMPLETED: {len(ticks):,} ticks loaded, memory: {load_memory:.1f}MB")
+            
+            # DEBUG: PHASE 3
+            self.logger.info("🔧 PHASE 3: ML processing starting...")
+            self.logger.info(f"🧠 Ready to process {len(ticks):,} ticks through ML system")
+            
+            # Memory check before ML processing
+            pre_ml_memory = self._get_memory_usage()
+            self.logger.info(f"🧠 Pre-ML memory: {pre_ml_memory:.1f}MB")
+            
+            # Add heartbeat before starting intensive processing
+            self.logger.info("💓 HEARTBEAT: Starting ML backtest processing...")
             
             # 4. Esegui backtest con sistema unificato
             success = await self._execute_backtest_unified(config, ticks)
             
+            if success:
+                final_memory = self._get_memory_usage()
+                self.logger.info(f"✅ PHASE 3 COMPLETED: ML processing successful, final memory: {final_memory:.1f}MB")
+            else:
+                self.logger.error("❌ PHASE 3 FAILED: ML processing failed")
+            
             return success
             
+        except KeyboardInterrupt:
+            self.logger.info("🛑 MANUAL INTERRUPTION: User cancelled backtest")
+            return False
+            
+        except MemoryError as e:
+            self.logger.error(f"🧠 MEMORY ERROR: {e}")
+            current_memory = self._get_memory_usage()
+            self.logger.error(f"🧠 Memory at crash: {current_memory:.1f}MB")
+            return False
+            
+        except ImportError as e:
+            self.logger.error(f"📦 IMPORT ERROR: {e}")
+            self.logger.error("📦 Missing dependency or module loading issue")
+            return False
+            
         except Exception as e:
-            self.logger.error(f"❌ Backtest execution error: {e}")
-            import traceback
-            traceback.print_exc()
+            crash_memory = self._get_memory_usage()
+            self.logger.error(f"❌ CRASH DETECTED: {type(e).__name__}: {e}")
+            self.logger.error(f"💥 Crash memory: {crash_memory:.1f}MB")
+            self.logger.error(f"💥 Crash location: {traceback.format_exc()}")
+            
+            # Force flush all logs immediately
+            try:
+                import logging
+                logging.shutdown()
+            except:
+                pass
+                
             return False
             
         finally:
-            # Cleanup sempre
-            await self.cleanup_unified_system()
+            # DEBUG: Cleanup phase
+            self.logger.info("🧹 CLEANUP PHASE: Starting system shutdown...")
+            
+            try:
+                cleanup_memory = self._get_memory_usage()
+                self.logger.info(f"🧹 Pre-cleanup memory: {cleanup_memory:.1f}MB")
+                
+                # Cleanup sempre
+                await self.cleanup_unified_system()
+                
+                final_cleanup_memory = self._get_memory_usage()
+                self.logger.info(f"✅ CLEANUP COMPLETED: Final memory: {final_cleanup_memory:.1f}MB")
+                
+            except Exception as cleanup_error:
+                self.logger.error(f"⚠️ CLEANUP ERROR: {cleanup_error}")
     
     def _export_mt5_data(self, config: BacktestConfig, output_file: str) -> bool:
         """Esporta dati da MT5 se necessario"""
@@ -846,6 +1101,15 @@ class MT5BacktestRunner:
                     )
                     
                     processed_ticks += 1
+
+                    # Ogni 10K ticks, log memory
+                    if i % 10000 == 0:
+                        memory_mb = self._get_memory_usage()
+                        self.logger.info(f"📊 Memory check: {memory_mb:.1f}MB at tick {i}")
+                    
+                    # Log heartbeat ogni minuto
+                    if i % 60000 == 0:  # Ogni ~60K ticks
+                        self.logger.info(f"💓 HEARTBEAT: System alive, processing tick {i}")
                     
                     # Rate limiting per non sovraccaricare
                     if processed_ticks % 100 == 0:
