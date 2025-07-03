@@ -26,6 +26,7 @@ import os
 import asyncio
 import shutil
 import time
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -367,14 +368,34 @@ class MLLearningTestSuite:
         """Test setup del sistema"""
         
         try:
-            # Clean test directory
+            # Setup test directory (preserve data files)
             if os.path.exists(self.test_data_path):
-                safe_print(f"🧹 Cleaning existing test directory: {self.test_data_path}")
-                shutil.rmtree(self.test_data_path)
-            
-            # Create fresh test directory
-            os.makedirs(self.test_data_path, exist_ok=True)
-            safe_print(f"📁 Created fresh test directory: {self.test_data_path}")
+                safe_print(f"📁 Test directory exists: {self.test_data_path}")
+                
+                # Preserve data files but clean logs
+                data_files = []
+                if os.path.isdir(self.test_data_path):
+                    for file in os.listdir(self.test_data_path):
+                        if file.endswith(('.jsonl', '.csv')) and 'backtest_' in file:
+                            data_files.append(file)
+                
+                if data_files:
+                    safe_print(f"📊 Found {len(data_files)} existing data files:")
+                    for file in data_files:
+                        file_path = os.path.join(self.test_data_path, file)
+                        size_mb = os.path.getsize(file_path) / 1024 / 1024
+                        safe_print(f"   💾 {file} ({size_mb:.1f} MB)")
+                    safe_print("✅ Preserving existing data files")
+                
+                # Clean only log directories, not data files
+                for item in os.listdir(self.test_data_path):
+                    item_path = os.path.join(self.test_data_path, item)
+                    if os.path.isdir(item_path):
+                        shutil.rmtree(item_path)
+                        safe_print(f"🧹 Cleaned log directory: {item}")
+            else:
+                os.makedirs(self.test_data_path, exist_ok=True)
+                safe_print(f"📁 Created fresh test directory: {self.test_data_path}")
             
             # Initialize MT5BacktestRunner
             safe_print("🔧 Initializing MT5BacktestRunner...")
@@ -610,22 +631,26 @@ class MLLearningTestSuite:
 
             learning_start_time = time.time()
 
-            # Run backtest with unified system integration
+            # Run backtest with memory-aware unified system ONLY
             success = False
             if self.mt5_runner is not None:
                 if self.unified_system and UNIFIED_SYSTEM_AVAILABLE:
-                    safe_print("🔄 Using integrated unified system for backtest...")
-                    # Use asyncio.run to handle async method
-                    import asyncio
+                    safe_print("🔄 Using memory-aware unified system for backtest...")
                     try:
-                        success = asyncio.run(self._run_backtest_with_unified_system())
+                        success = await self._run_memory_aware_backtest()
+                        safe_print("✅ Memory-aware unified system completed successfully")
                     except Exception as async_error:
-                        safe_print(f"⚠️ Async backtest failed: {async_error}")
-                        safe_print("🔄 Falling back to legacy runner...")
-                        success = self.mt5_runner.run_backtest(self.backtest_config)
+                        safe_print(f"❌ Memory-aware unified system failed: {async_error}")
+                        import traceback
+                        traceback.print_exc()
+                        return False
                 else:
-                    safe_print("🔄 Using legacy backtest runner...")
-                    success = self.mt5_runner.run_backtest(self.backtest_config)
+                    safe_print("❌ Unified system not available - cannot proceed")
+                    safe_print("⚠️ This test requires the unified system with memory management")
+                    return False
+            else:
+                safe_print("❌ MT5 runner not available")
+                return False
             
             learning_duration = time.time() - learning_start_time
             
@@ -793,45 +818,186 @@ class MLLearningTestSuite:
             return False
 
     async def _run_memory_aware_backtest(self) -> bool:
-        """Esegue backtest con gestione intelligente della memoria"""
+        """Backtest con loading progressivo da file completo"""
         
         try:
-            safe_print("🧠 Starting memory-aware backtest...")
+            safe_print("🧠 Starting file-based memory-aware backtest...")
             
-            # Load/export data using existing MT5BacktestRunner functionality
             data_file = f"{self.test_data_path}/backtest_{self.backtest_config.symbol}_{self.backtest_config.start_date.strftime('%Y%m%d')}_{self.backtest_config.end_date.strftime('%Y%m%d')}.jsonl"
             
-            # Export data if needed
+            safe_print(f"📁 Looking for data file: {data_file}")
+            safe_print(f"📁 File exists: {os.path.exists(data_file)}")
+            
+            # FASE 1: Assicurati che il file completo esista
             if self.backtest_config.data_source == 'mt5_export':
-                if self.mt5_runner and hasattr(self.mt5_runner, '_export_mt5_data'):
-                    if not self.mt5_runner._export_mt5_data(self.backtest_config, data_file):
-                        safe_print("❌ Failed to export MT5 data")
+                if not os.path.exists(data_file):
+                    safe_print("📊 Exporting complete dataset from MT5...")
+                    if self.mt5_runner and hasattr(self.mt5_runner, '_export_mt5_data'):
+                        if not self.mt5_runner._export_mt5_data(self.backtest_config, data_file):
+                            safe_print("❌ Failed to export MT5 data")
+                            return False
+                        safe_print("✅ Complete MT5 export finished")
+                    else:
+                        safe_print("❌ MT5 runner not available")
                         return False
                 else:
-                    safe_print("❌ MT5 runner not available for data export")
-                    return False
+                    file_size = os.path.getsize(data_file)
+                    safe_print(f"✅ Using existing complete file: {file_size / 1024 / 1024:.1f} MB")
             
-            # Load ALL ticks first (just file loading, not processing)
-            if self.mt5_runner and hasattr(self.mt5_runner, '_load_backtest_data'):
-                all_ticks = self.mt5_runner._load_backtest_data(self.backtest_config, data_file)
-            else:
-                safe_print("❌ MT5 runner not available for data loading")
-                return False
-            
-            if not all_ticks:
-                safe_print("❌ No data loaded for backtest")
-                return False
-            
-            safe_print(f"📊 Loaded {len(all_ticks):,} total ticks for memory-aware processing")
-            
-            # Memory-aware processing
-            return await self._process_ticks_with_memory_management(all_ticks)
+            # FASE 2: Processing progressivo del file completo
+            safe_print("🔄 Starting progressive file processing...")
+            return await self._process_file_progressively(data_file)
             
         except Exception as e:
-            safe_print(f"❌ Memory-aware backtest failed: {e}")
+            safe_print(f"❌ File-based memory-aware backtest failed: {e}")
             import traceback
             traceback.print_exc()
             return False
+
+    async def _process_file_progressively(self, data_file: str) -> bool:
+        """Processa il file in batch basati sulla memoria"""
+        
+        try:
+            import psutil
+            process = psutil.Process()
+            
+            MEMORY_THRESHOLD = 80.0
+            
+            total_processed = 0
+            total_analyses = 0
+            batch_number = 1
+            
+            safe_print(f"📖 Opening file for progressive reading: {data_file}")
+            
+            with open(data_file, 'r', encoding='utf-8') as f:
+                # Salta header se presente
+                first_line = f.readline()
+                if '"type": "backtest_start"' in first_line:
+                    safe_print("📋 Skipping header line")
+                else:
+                    f.seek(0)  # Torna all'inizio se non era header
+                
+                current_batch = []
+                
+                while True:
+                    # FASE 1: Carica batch fino all'80% memoria
+                    safe_print(f"\n📦 Batch {batch_number}: Loading until {MEMORY_THRESHOLD}% memory...")
+                    initial_memory = process.memory_percent()
+                    safe_print(f"💾 Starting memory: {initial_memory:.1f}%")
+                    
+                    batch_loaded = 0
+                    while True:
+                        line = f.readline()
+                        if not line:  # Fine file
+                            safe_print("📄 Reached end of file")
+                            break
+                        
+                        try:
+                            tick_data = json.loads(line.strip())
+                            if tick_data.get('type') == 'tick':
+                                # Converti in formato compatibile
+                                current_batch.append(self._convert_tick_format(tick_data))
+                                batch_loaded += 1
+                                
+                                # Controlla memoria ogni 1000 tick
+                                if batch_loaded % 1000 == 0:
+                                    current_memory = process.memory_percent()
+                                    if current_memory >= MEMORY_THRESHOLD:
+                                        safe_print(f"💾 Memory threshold reached: {current_memory:.1f}%")
+                                        break
+                        except json.JSONDecodeError:
+                            continue
+                    
+                    if not current_batch:
+                        safe_print("✅ No more data to process")
+                        break
+                    
+                    final_memory = process.memory_percent()
+                    safe_print(f"📊 Loaded {len(current_batch):,} ticks (memory: {final_memory:.1f}%)")
+                    
+                    # FASE 2: Processa il batch caricato
+                    safe_print(f"⚡ Processing batch {batch_number}...")
+                    batch_processed, batch_analyses = await self._process_batch_memory_safe(current_batch)
+                    
+                    total_processed += batch_processed
+                    total_analyses += batch_analyses
+                    
+                    safe_print(f"✅ Batch {batch_number} completed:")
+                    safe_print(f"   Processed: {batch_processed:,} ticks")
+                    safe_print(f"   Analyses: {batch_analyses:,}")
+                    safe_print(f"   Total: {total_processed:,} ticks, {total_analyses:,} analyses")
+                    
+                    # FASE 3: Libera memoria
+                    safe_print("🧹 Clearing batch from memory...")
+                    current_batch.clear()
+                    import gc
+                    gc.collect()
+                    
+                    after_cleanup = process.memory_percent()
+                    safe_print(f"💾 Memory after cleanup: {after_cleanup:.1f}%")
+                    
+                    batch_number += 1
+                    
+                    # Pausa breve per stabilizzazione
+                    await asyncio.sleep(1.0)
+            
+            safe_print(f"\n🎉 Progressive file processing completed!")
+            safe_print(f"📊 Total processed: {total_processed:,} ticks")
+            safe_print(f"🧠 Total analyses: {total_analyses:,}")
+            safe_print(f"📦 Total batches: {batch_number-1}")
+            
+            return True
+            
+        except Exception as e:
+            safe_print(f"❌ Progressive file processing failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _convert_tick_format(self, tick_data: dict):
+        """Converte tick dal formato JSON al formato atteso"""
+        # Semplice oggetto con attributi per compatibilità
+        class TickObject:
+            def __init__(self, data):
+                self.timestamp = datetime.strptime(data['timestamp'], '%Y.%m.%d %H:%M:%S')
+                self.price = data.get('last', (data['bid'] + data['ask']) / 2)
+                self.volume = data.get('volume', 1)
+                self.bid = data.get('bid')
+                self.ask = data.get('ask')
+        
+        return TickObject(tick_data)
+
+    async def _process_batch_memory_safe(self, batch_ticks: list) -> tuple:
+        """Processa un batch in modo memory-safe"""
+        
+        processed_count = 0
+        analysis_count = 0
+        
+        for i, tick in enumerate(batch_ticks):
+            try:
+                if self.unified_system and hasattr(self.unified_system, 'process_tick'):
+                    result = await self.unified_system.process_tick(
+                        timestamp=tick.timestamp,
+                        price=tick.price,
+                        volume=tick.volume,
+                        bid=tick.bid,
+                        ask=tick.ask
+                    )
+                    
+                    if result and result.get('status') in ['success', 'mock']:
+                        analysis_count += 1
+                
+                processed_count += 1
+                
+                # Progress ogni 5000 tick
+                if i > 0 and i % 5000 == 0:
+                    progress = (i / len(batch_ticks)) * 100
+                    safe_print(f"   Progress: {progress:.1f}% ({processed_count:,}/{len(batch_ticks):,})")
+                    
+            except Exception as tick_error:
+                continue
+        
+        return processed_count, analysis_count
 
     async def _process_ticks_with_memory_management(self, all_ticks: list) -> bool:
         """Processa i tick con gestione intelligente della memoria"""
