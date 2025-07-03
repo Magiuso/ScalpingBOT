@@ -263,6 +263,9 @@ class MLLearningTestSuite:
         # Test config
         self.symbol = 'USTEC'
         self.learning_days = 181  # Start with 2 days
+
+        self.stop_requested = False
+        self.monitoring_active = False
         
         safe_print(f"🧪 ML Learning Test Suite initialized")
         safe_print(f"📊 Symbol: {self.symbol}")
@@ -503,6 +506,30 @@ class MLLearningTestSuite:
             # Create and start unified system
             self.unified_system = UnifiedAnalyzerSystem(unified_config)
             await self.unified_system.start()
+
+            # AGGIUNGI QUESTO SIGNAL HANDLER CHE SETTA ENTRAMBE LE FLAGS
+            import signal
+            
+            def test_signal_handler(signum, frame):
+                # Setta le flag del test
+                self.stop_requested = True  
+                self.monitoring_active = False
+                
+                safe_print("🚨 TEST: Stop flags set, forcing exit in 1 second...")
+                
+                # Force exit dopo 1 secondo
+                import threading
+                import time
+                import os
+                
+                def delayed_exit():
+                    time.sleep(1)
+                    os._exit(1)
+                
+                threading.Thread(target=delayed_exit, daemon=True).start()
+            
+            signal.signal(signal.SIGINT, test_signal_handler)
+            safe_print("🔧 Test signal handler active")
             
             safe_print("✅ Unified System started for enhanced logging")
             safe_print(f"📁 Logs directory: {getattr(unified_config, 'base_directory', 'unknown')}")
@@ -846,7 +873,17 @@ class MLLearningTestSuite:
             
             # FASE 2: Processing progressivo del file completo
             safe_print("🔄 Starting progressive file processing...")
-            return await self._process_file_progressively(data_file)
+
+            if os.path.exists(data_file):
+                file_size = os.path.getsize(data_file)
+
+            try:
+                result = await self._process_file_progressively(data_file)
+                return result
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return False
             
         except Exception as e:
             safe_print(f"❌ File-based memory-aware backtest failed: {e}")
@@ -859,6 +896,7 @@ class MLLearningTestSuite:
         
         try:
             import psutil
+            
             process = psutil.Process()
             
             MEMORY_THRESHOLD = 80.0
@@ -870,24 +908,56 @@ class MLLearningTestSuite:
             safe_print(f"📖 Opening file for progressive reading: {data_file}")
             
             with open(data_file, 'r', encoding='utf-8') as f:
-                # Salta header se presente
+                # Controlla se la prima riga è un header e la salta se necessario
                 first_line = f.readline()
                 if '"type": "backtest_start"' in first_line:
                     safe_print("📋 Skipping header line")
                 else:
-                    f.seek(0)  # Torna all'inizio se non era header
+                    # Se non era header, torna all'inizio del file
+                    f.seek(0)
+                    safe_print("📋 No header found, processing from beginning")
                 
-                current_batch = []
+                # Setup monitoraggio memoria in tempo reale
+                import threading
+                import time as time_module
                 
+                # Variabili condivise per il monitoraggio
+                self.monitoring_active = True
+                total_ticks_loaded = 0
+                current_batch_size = 0
+                
+                def memory_monitor():
+                    """Monitor memoria ogni secondo con feedback continuo"""
+                    while self.monitoring_active and not self.stop_requested:
+                        try:
+                            current_memory = process.memory_percent()
+                            safe_print(f"💾 Memory: {current_memory:.1f}% | Batch ticks: {current_batch_size:,} | Total: {total_ticks_loaded:,}")
+                            time_module.sleep(1.0)
+                        except:
+                            break
+                
+                # Avvia thread di monitoraggio
+                monitor_thread = threading.Thread(target=memory_monitor, daemon=True)
+                monitor_thread.start()
+                safe_print("🔍 Started real-time memory monitoring (every 1 second)")
+                
+                # Main processing loop           
                 while True:
+                    
                     # FASE 1: Carica batch fino all'80% memoria
                     safe_print(f"\n📦 Batch {batch_number}: Loading until {MEMORY_THRESHOLD}% memory...")
                     initial_memory = process.memory_percent()
                     safe_print(f"💾 Starting memory: {initial_memory:.1f}%")
                     
-                    batch_loaded = 0
+                    current_batch = []
+                    current_batch_size = 0  # Reset contatore batch
+                    
+                    line_count = 0  # DEBUG: conta le righe lette
+                    
                     while True:
                         line = f.readline()
+                        line_count += 1
+                        
                         if not line:  # Fine file
                             safe_print("📄 Reached end of file")
                             break
@@ -897,23 +967,48 @@ class MLLearningTestSuite:
                             if tick_data.get('type') == 'tick':
                                 # Converti in formato compatibile
                                 current_batch.append(self._convert_tick_format(tick_data))
-                                batch_loaded += 1
-                                
-                                # Controlla memoria ogni 1000 tick
-                                if batch_loaded % 1000 == 0:
-                                    current_memory = process.memory_percent()
-                                    if current_memory >= MEMORY_THRESHOLD:
-                                        safe_print(f"💾 Memory threshold reached: {current_memory:.1f}%")
+                                current_batch_size += 1
+                                total_ticks_loaded += 1
+
+                                # Controllo stop ogni 1000 tick
+                                if current_batch_size % 100 == 0:
+                                    if self.stop_requested:
+                                        safe_print("🛑 Stop requested, breaking batch loading")
                                         break
+                                
+                                # Controllo memoria più frequente - ogni 100 tick invece di 1000
+                                if current_batch_size % 100 == 0:
+                                    # Usa memoria di sistema invece di processo per coerenza
+                                    try:
+                                        import psutil
+                                        system_memory = psutil.virtual_memory().percent
+                                        process_memory = process.memory_percent()
+                                        
+                                        # Usa il valore più alto tra i due per sicurezza
+                                        current_memory = max(system_memory, process_memory)
+                                        
+                                        # Exit forzato all'80%
+                                        if current_memory >= MEMORY_THRESHOLD:
+                                            safe_print(f"🛑 MEMORY THRESHOLD REACHED! Stopping at {current_memory:.1f}%")
+                                            safe_print(f"📊 System: {system_memory:.1f}%, Process: {process_memory:.1f}%")
+                                            safe_print(f"📊 Loaded {current_batch_size:,} ticks in this batch")
+                                            break
+                                    except Exception as mem_error:
+                                        safe_print(f"⚠️ Memory check error: {mem_error}")
+                                        
                         except json.JSONDecodeError:
                             continue
+                    
+                    # Ferma il monitoraggio prima del processing
+                    self.monitoring_active = False
+                    safe_print("🔍 Stopped memory monitoring for processing phase")
                     
                     if not current_batch:
                         safe_print("✅ No more data to process")
                         break
                     
                     final_memory = process.memory_percent()
-                    safe_print(f"📊 Loaded {len(current_batch):,} ticks (memory: {final_memory:.1f}%)")
+                    safe_print(f"📊 Batch {batch_number} loaded: {len(current_batch):,} ticks (memory: {final_memory:.1f}%)")
                     
                     # FASE 2: Processa il batch caricato
                     safe_print(f"⚡ Processing batch {batch_number}...")
@@ -938,8 +1033,18 @@ class MLLearningTestSuite:
                     
                     batch_number += 1
                     
+                    # Riavvia monitoraggio per il prossimo batch se non è fine file
+                    if line:  # Se NON è fine file
+                        self.monitoring_active = True
+                        monitor_thread = threading.Thread(target=memory_monitor, daemon=True)
+                        monitor_thread.start()
+                        safe_print("🔍 Restarted memory monitoring for next batch")
+                    
                     # Pausa breve per stabilizzazione
                     await asyncio.sleep(1.0)
+                
+                # Assicurati che il monitoraggio sia fermato
+                self.monitoring_active = False
             
             safe_print(f"\n🎉 Progressive file processing completed!")
             safe_print(f"📊 Total processed: {total_processed:,} ticks")
