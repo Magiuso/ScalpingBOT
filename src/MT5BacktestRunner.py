@@ -161,7 +161,7 @@ class MT5DataExporter:
             
             # 🚀 STREAMING: Open file once and keep it open for streaming
             try:
-                with open(output_file, 'w', encoding='utf-8', buffering=65536) as f:  # 64KB buffer
+                with open(output_file, 'w', encoding='utf-8', buffering=131072) as f:  # 64KB buffer
                     
                     while current_date < end_date:
                         # 🚀 MEMORY CHECK: Monitor before each chunk
@@ -338,7 +338,7 @@ class MT5DataExporter:
                 self._write_batch.append(json.dumps(tick_data))
 
                 # Write in batches of 100 for speed
-                if len(self._write_batch) >= 100 or i == len(ticks) - 1:
+                if len(self._write_batch) >= 500 or i == len(ticks) - 1:
                     file_handle.write('\n'.join(self._write_batch) + '\n')
                     self._write_batch.clear()
 
@@ -371,9 +371,9 @@ class MT5DataExporter:
                         f"{eta_str}", end='', flush=True)
                 
                 # 🚀 OPTIMIZED GC: Less frequent for speed
-                if (i + 1) % 1000 == 0:
+                if (i + 1) % 2000 == 0:
                     file_handle.flush()  # Force write to disk
-                    if (i + 1) % 10000 == 0:  # Much less frequent GC
+                    if (i + 1) % 20000 == 0:  # Much less frequent GC
                         self._force_garbage_collection()
                     
                     # Memory emergency check
@@ -1345,8 +1345,29 @@ class MT5BacktestRunner:
             return f"{hours:.1f}h"
 
 def create_backtest_config(symbol: str, months_back: int = 6) -> BacktestConfig:
-    """Crea configurazione backtest per N mesi indietro"""
-    end_date = datetime.now()
+    """Crea configurazione con date STABILI per caching intelligente"""
+    
+    # 🎯 DATE STABILI: Ancora a fine mese per caching
+    today = datetime.now().date()
+    
+    # Ancora alla fine del mese appropriato
+    if today.day <= 15:
+        # Prima metà mese → usa fine mese precedente
+        if today.month == 1:
+            end_date = datetime(today.year - 1, 12, 31, 23, 59, 59)
+        else:
+            # Ultimo giorno del mese precedente
+            first_day_current = datetime(today.year, today.month, 1)
+            end_date = (first_day_current - timedelta(days=1)).replace(hour=23, minute=59, second=59)
+    else:
+        # Seconda metà → usa fine mese corrente
+        if today.month == 12:
+            end_date = datetime(today.year, 12, 31, 23, 59, 59)
+        else:
+            # Ultimo giorno del mese corrente
+            first_day_next = datetime(today.year, today.month + 1, 1)
+            end_date = (first_day_next - timedelta(days=1)).replace(hour=23, minute=59, second=59)
+    
     start_date = end_date - timedelta(days=months_back * 30)
     
     return BacktestConfig(
