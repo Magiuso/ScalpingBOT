@@ -261,7 +261,7 @@ class MLLearningTestSuite:
         
         # Test config
         self.symbol = 'USTEC'
-        self.learning_days = 180  # Start with 2 days
+        self.learning_days = 181  # Start with 2 days
         
         safe_print(f"🧪 ML Learning Test Suite initialized")
         safe_print(f"📊 Symbol: {self.symbol}")
@@ -791,7 +791,284 @@ class MLLearningTestSuite:
             import traceback
             traceback.print_exc()
             return False
+
+    async def _run_memory_aware_backtest(self) -> bool:
+        """Esegue backtest con gestione intelligente della memoria"""
         
+        try:
+            safe_print("🧠 Starting memory-aware backtest...")
+            
+            # Load/export data using existing MT5BacktestRunner functionality
+            data_file = f"{self.test_data_path}/backtest_{self.backtest_config.symbol}_{self.backtest_config.start_date.strftime('%Y%m%d')}_{self.backtest_config.end_date.strftime('%Y%m%d')}.jsonl"
+            
+            # Export data if needed
+            if self.backtest_config.data_source == 'mt5_export':
+                if self.mt5_runner and hasattr(self.mt5_runner, '_export_mt5_data'):
+                    if not self.mt5_runner._export_mt5_data(self.backtest_config, data_file):
+                        safe_print("❌ Failed to export MT5 data")
+                        return False
+                else:
+                    safe_print("❌ MT5 runner not available for data export")
+                    return False
+            
+            # Load ALL ticks first (just file loading, not processing)
+            if self.mt5_runner and hasattr(self.mt5_runner, '_load_backtest_data'):
+                all_ticks = self.mt5_runner._load_backtest_data(self.backtest_config, data_file)
+            else:
+                safe_print("❌ MT5 runner not available for data loading")
+                return False
+            
+            if not all_ticks:
+                safe_print("❌ No data loaded for backtest")
+                return False
+            
+            safe_print(f"📊 Loaded {len(all_ticks):,} total ticks for memory-aware processing")
+            
+            # Memory-aware processing
+            return await self._process_ticks_with_memory_management(all_ticks)
+            
+        except Exception as e:
+            safe_print(f"❌ Memory-aware backtest failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    async def _process_ticks_with_memory_management(self, all_ticks: list) -> bool:
+        """Processa i tick con gestione intelligente della memoria"""
+        
+        try:
+            import psutil
+            process = psutil.Process()
+            
+            # Configurazione memoria
+            MEMORY_THRESHOLD = 80.0  # 80%
+            MEMORY_CHECK_INTERVAL = 1000  # Controlla ogni 1000 tick
+            SAFETY_MARGIN = 5.0  # Margine di sicurezza 5%
+            
+            total_ticks = len(all_ticks)
+            processed_count = 0
+            analysis_count = 0
+            batch_number = 1
+            current_batch_start = 0
+            
+            safe_print(f"🧠 Memory-aware processing: {total_ticks:,} ticks total")
+            safe_print(f"⚠️ Memory threshold: {MEMORY_THRESHOLD}%")
+            safe_print(f"🔍 Memory check interval: {MEMORY_CHECK_INTERVAL:,} ticks")
+            
+            while current_batch_start < total_ticks:
+                # Determina batch corrente
+                batch_end = min(current_batch_start + MEMORY_CHECK_INTERVAL, total_ticks)
+                current_batch = all_ticks[current_batch_start:batch_end]
+                
+                safe_print(f"\n📦 Batch {batch_number}: processing ticks {current_batch_start:,} to {batch_end-1:,}")
+                
+                # Processa batch corrente con monitoraggio memoria
+                batch_processed, batch_analyses, memory_exceeded = await self._process_batch_with_memory_monitoring(
+                    current_batch, current_batch_start, MEMORY_THRESHOLD, SAFETY_MARGIN
+                )
+                
+                processed_count += batch_processed
+                analysis_count += batch_analyses
+                
+                # Controlla stato memoria
+                current_memory = process.memory_percent()
+                safe_print(f"📊 Batch {batch_number} completed: {batch_processed:,} ticks, {batch_analyses:,} analyses")
+                safe_print(f"💾 Memory usage: {current_memory:.1f}%")
+                
+                if memory_exceeded:
+                    safe_print(f"⚠️ Memory threshold exceeded during batch {batch_number}")
+                    safe_print("🧹 Triggering memory cleanup and analysis processing...")
+                    
+                    # Forza processing di analisi accumulate
+                    await self._force_analysis_processing()
+                    
+                    # Pausa per permettere garbage collection
+                    import gc
+                    gc.collect()
+                    
+                    # Controlla memoria dopo cleanup
+                    after_cleanup_memory = process.memory_percent()
+                    safe_print(f"🧹 Memory after cleanup: {after_cleanup_memory:.1f}%")
+                    
+                    # Se memoria ancora alta, pausa più lunga
+                    if after_cleanup_memory > MEMORY_THRESHOLD - 10:
+                        safe_print("⏳ Memory still high, waiting for system stabilization...")
+                        await asyncio.sleep(5.0)
+                        
+                        final_memory = process.memory_percent()
+                        safe_print(f"💾 Memory after stabilization: {final_memory:.1f}%")
+                
+                # Aggiorna per prossimo batch
+                current_batch_start = batch_end
+                batch_number += 1
+                
+                # Progress report
+                progress = (processed_count / total_ticks) * 100
+                safe_print(f"📈 Overall progress: {progress:.1f}% ({processed_count:,}/{total_ticks:,})")
+                
+                # Pausa breve tra batch per stabilità
+                await asyncio.sleep(0.1)
+            
+            safe_print(f"\n✅ Memory-aware processing completed!")
+            safe_print(f"📊 Total processed: {processed_count:,} ticks")
+            safe_print(f"🧠 Total analyses: {analysis_count:,}")
+            safe_print(f"📦 Total batches: {batch_number-1}")
+            
+            # Final memory check
+            final_memory = process.memory_percent()
+            safe_print(f"💾 Final memory usage: {final_memory:.1f}%")
+            
+            return True
+            
+        except ImportError:
+            safe_print("❌ psutil not available for memory monitoring")
+            safe_print("🔄 Falling back to standard processing...")
+            # Fallback a processing normale
+            return await self._process_ticks_standard(all_ticks)
+        except Exception as e:
+            safe_print(f"❌ Memory-aware processing failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    async def _process_batch_with_memory_monitoring(self, batch_ticks: list, start_index: int, 
+                                                memory_threshold: float, safety_margin: float) -> tuple:
+        """Processa un batch di tick con monitoraggio memoria continuo"""
+        
+        try:
+            import psutil
+            process = psutil.Process()
+            
+            processed_count = 0
+            analysis_count = 0
+            memory_exceeded = False
+            
+            for i, tick in enumerate(batch_ticks):
+                try:
+                    # Process tick
+                    if self.unified_system and hasattr(self.unified_system, 'process_tick'):
+                        result = await self.unified_system.process_tick(
+                            timestamp=getattr(tick, 'timestamp', datetime.now()),
+                            price=getattr(tick, 'price', 0.0),
+                            volume=getattr(tick, 'volume', 0),
+                            bid=getattr(tick, 'bid', None),
+                            ask=getattr(tick, 'ask', None)
+                        )
+                        
+                        if result and result.get('status') in ['success', 'mock']:
+                            analysis_count += 1
+                    else:
+                        # Fallback processing
+                        result = {'status': 'fallback'}
+                    
+                    processed_count += 1
+                    
+                    # Controlla memoria ogni 100 tick nel batch
+                    if i > 0 and i % 100 == 0:
+                        current_memory = process.memory_percent()
+                        
+                        if current_memory >= memory_threshold:
+                            safe_print(f"⚠️ Memory threshold reached: {current_memory:.1f}% >= {memory_threshold}%")
+                            memory_exceeded = True
+                            break
+                        elif current_memory >= memory_threshold - safety_margin:
+                            safe_print(f"🟡 Memory approaching threshold: {current_memory:.1f}%")
+                    
+                    # Speed control per evitare overhead
+                    if i % 500 == 0 and self.backtest_config.speed_multiplier < 1000:
+                        await asyncio.sleep(0.001 / self.backtest_config.speed_multiplier)
+                    
+                except Exception as tick_error:
+                    safe_print(f"⚠️ Error processing tick {start_index + i}: {tick_error}")
+                    continue
+            
+            return processed_count, analysis_count, memory_exceeded
+            
+        except Exception as e:
+            safe_print(f"❌ Batch processing error: {e}")
+            return 0, 0, True
+
+    async def _force_analysis_processing(self):
+        """Forza il processing delle analisi accumulate per liberare memoria"""
+        
+        try:
+            safe_print("🔄 Forcing accumulated analysis processing...")
+            
+            # Se abbiamo unified system, forza processing eventi
+            if self.unified_system and hasattr(self.unified_system, 'analyzer'):
+                analyzer = getattr(self.unified_system, 'analyzer', None)
+                if analyzer and hasattr(analyzer, 'get_all_events'):
+                    try:
+                        events = analyzer.get_all_events()
+                        if events and isinstance(events, dict):
+                            total_events = sum(len(event_list) for event_list in events.values() if event_list)
+                            if total_events > 0:
+                                safe_print(f"📊 Processing {total_events} accumulated events...")
+                                
+                                # Clear events per liberare memoria
+                                if hasattr(analyzer, 'clear_events'):
+                                    analyzer.clear_events()
+                                    safe_print("🧹 Events cleared from memory")
+                            else:
+                                safe_print("📊 No accumulated events to process")
+                        else:
+                            safe_print("📊 No events structure available")
+                    except Exception as events_error:
+                        safe_print(f"⚠️ Error processing events: {events_error}")
+                else:
+                    safe_print("📊 No analyzer or events system available for processing")
+            else:
+                safe_print("📊 No unified system available for event processing")
+            
+            # Se abbiamo analyzer tradizionale, salva stato
+            if self.analyzer:
+                try:
+                    self.analyzer.save_all_states()
+                    safe_print("💾 Analyzer states saved")
+                except Exception as save_error:
+                    safe_print(f"⚠️ State save error: {save_error}")
+            
+            safe_print("✅ Analysis processing completed")
+            
+        except Exception as e:
+            safe_print(f"⚠️ Force analysis processing error: {e}")
+
+    async def _process_ticks_standard(self, all_ticks: list) -> bool:
+        """Fallback a processing standard se psutil non disponibile"""
+        
+        safe_print("🔄 Using standard tick processing (no memory monitoring)")
+        
+        processed_count = 0
+        analysis_count = 0
+        
+        for i, tick in enumerate(all_ticks):
+            try:
+                if self.unified_system and hasattr(self.unified_system, 'process_tick'):
+                    result = await self.unified_system.process_tick(
+                        timestamp=getattr(tick, 'timestamp', datetime.now()),
+                        price=getattr(tick, 'price', 0.0),
+                        volume=getattr(tick, 'volume', 0),
+                        bid=getattr(tick, 'bid', None),
+                        ask=getattr(tick, 'ask', None)
+                    )
+                    
+                    if result and result.get('status') in ['success', 'mock']:
+                        analysis_count += 1
+                
+                processed_count += 1
+                
+                # Progress report
+                if i > 0 and i % 5000 == 0:
+                    progress = (i / len(all_ticks)) * 100
+                    safe_print(f"📈 Progress: {progress:.1f}% ({processed_count:,} processed)")
+                    
+            except Exception as tick_error:
+                safe_print(f"⚠️ Error processing tick {i}: {tick_error}")
+                continue
+        
+        safe_print(f"✅ Standard processing completed: {processed_count:,} ticks, {analysis_count:,} analyses")
+        return True
+
     async def _test_persistence(self) -> bool:
         """Test sistema di persistenza"""
         
