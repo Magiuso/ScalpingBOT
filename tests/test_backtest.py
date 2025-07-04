@@ -515,7 +515,7 @@ class MLLearningTestSuite:
                 self.stop_requested = True  
                 self.monitoring_active = False
                 
-                safe_print("🚨 TEST: Stop flags set, forcing exit in 1 second...")
+                safe_print("🚨 RICHIESTA DI STOP DA OPERATORE...")
                 
                 # Force exit dopo 1 secondo
                 import threading
