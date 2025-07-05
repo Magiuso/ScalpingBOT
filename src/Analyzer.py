@@ -13501,10 +13501,19 @@ class AssetAnalyzer:
             # Save recent predictions for analysis
             self._save_recent_predictions()
             
-            self.logger.loggers['system'].info(f"Analyzer state saved for {self.asset}")
+            self._store_system_event('analyzer_state_saved', {
+                'asset': self.asset,
+                'state_file': state_file,
+                'timestamp': datetime.now()
+            })
             
         except Exception as e:
-            self.logger.loggers['errors'].error(f"Failed to save analyzer state: {e}")
+            self._store_system_event('analyzer_state_save_error', {
+                'asset': self.asset,
+                'error': str(e),
+                'error_type': type(e).__name__,
+                'timestamp': datetime.now()
+            })
             
     def _save_ml_models(self) -> None:
         """Salva i modelli ML trainati"""
@@ -13531,7 +13540,12 @@ class AssetAnalyzer:
                         pickle.dump(model, f)
                 
             except Exception as e:
-                self.logger.loggers['errors'].error(f"Failed to save model {model_name}: {e}")
+                self._store_system_event('model_save_error', {
+                    'model_name': model_name,
+                    'error': str(e),
+                    'error_type': type(e).__name__,
+                    'timestamp': datetime.now()
+                })
         
         # Save scalers
         try:
@@ -13539,7 +13553,11 @@ class AssetAnalyzer:
             with open(scalers_path, 'wb') as f:
                 pickle.dump(self.scalers, f)
         except Exception as e:
-            self.logger.loggers['errors'].error(f"Failed to save scalers: {e}")
+            self._store_system_event('scalers_save_error', {
+                'error': str(e),
+                'error_type': type(e).__name__,
+                'timestamp': datetime.now()
+            })
     
     def _save_recent_predictions(self):
         """Salva predizioni recenti per analisi futura"""
