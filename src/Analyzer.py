@@ -6733,6 +6733,27 @@ class AssetAnalyzer:
             'timestamp': datetime.now()
         })
 
+        # ✅ NUOVO: Event buffers locali per compatibilità con UnifiedAnalyzerSystem
+        self._local_events_buffer = {
+            'algorithm_success': deque(maxlen=100),
+            'algorithm_errors': deque(maxlen=50),
+            'retraining_events': deque(maxlen=30),
+            'performance_metrics': deque(maxlen=100),
+            'emergency_events': deque(maxlen=20)
+        }
+        
+        # ✅ NUOVO: Thread safety per event management locali
+        self._local_events_lock = threading.RLock()
+        
+        # ✅ NUOVO: Performance tracking locale
+        self._asset_performance_stats = {
+            'local_ticks_processed': 0,
+            'local_events_generated': 0,
+            'algorithm_executions': 0,
+            'error_count': 0,
+            'last_activity_time': datetime.now()
+        }
+
         def _load_ml_models(self) -> None:
             """Carica i modelli ML salvati - VERSIONE PULITA"""
             
@@ -7107,6 +7128,10 @@ class AssetAnalyzer:
             # Update counters
             self.analysis_count += 1
             self.last_analysis_time = datetime.now()
+
+            # ✅ NUOVO: Update local performance stats per UnifiedAnalyzerSystem
+            self._asset_performance_stats['local_ticks_processed'] += 1
+            self._asset_performance_stats['last_activity_time'] = datetime.now()
             
             # Prepare for MT5/Observer
             if self.mt5_interface.connected:
@@ -7410,8 +7435,13 @@ class AssetAnalyzer:
         
         self._retraining_events_buffer.append(event_entry)
         
-        # Buffer size is automatically managed by deque maxlen=30
-        # No manual cleanup needed since deque automatically removes old items
+        # ✅ NUOVO: Store anche in local events per UnifiedAnalyzerSystem
+        self._store_local_event('retraining_event', {
+            'retraining_type': event_type,
+            'retraining_data': event_data,
+            'algorithm': event_data.get('algorithm_name', 'unknown'),
+            'success': event_data.get('success', False)
+        })
     
     def _preserve_successful_model(self, model_type: ModelType, algorithm_name: str,
                                  algorithm: AlgorithmPerformance, model: Any):
@@ -7606,8 +7636,13 @@ class AssetAnalyzer:
         
         self._performance_metrics_buffer.append(metric_entry)
         
-        # Buffer size is automatically managed by deque maxlen=100
-        # No manual cleanup needed since deque automatically removes old items
+        # ✅ NUOVO: Store anche in local events per UnifiedAnalyzerSystem
+        self._store_local_event('performance_metrics', {
+            'operation': operation,
+            'metrics': metrics,
+            'processing_time': metrics.get('processing_time', 0),
+            'tick_count': metrics.get('tick_count', 0)
+        })
     
     def _detect_market_state(self, prices: np.ndarray, volumes: np.ndarray) -> str:
         """Rileva lo stato corrente del mercato"""
@@ -8107,8 +8142,15 @@ class AssetAnalyzer:
         
         self._algorithm_errors_buffer.append(error_entry)
         
-        # Buffer size is automatically managed by deque maxlen=50
-        # No manual cleanup needed since deque automatically removes old items
+        # ✅ NUOVO: Store anche in local events per UnifiedAnalyzerSystem
+        self._store_local_event('algorithm_error', {
+            'error_type': error_type,
+            'error_data': error_data,
+            'algorithm': error_data.get('algorithm', 'unknown')
+        })
+        
+        # Update local performance stats
+        self._asset_performance_stats['error_count'] += 1
 
 
     def _store_algorithm_success(self, algorithm_name: str, success_data: Dict) -> None:
@@ -8124,8 +8166,15 @@ class AssetAnalyzer:
         
         self._algorithm_success_buffer.append(success_entry)
         
-        # Buffer size is automatically managed by deque maxlen=200
-        # No manual cleanup needed since deque automatically removes old items
+        # ✅ NUOVO: Store anche in local events per UnifiedAnalyzerSystem
+        self._store_local_event('algorithm_success', {
+            'algorithm': algorithm_name,
+            'success_data': success_data,
+            'execution_time': success_data.get('execution_time', 0)
+        })
+        
+        # Update local performance stats
+        self._asset_performance_stats['algorithm_executions'] += 1
     
     def _run_support_resistance_algorithm(self, algorithm_name: str, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """Esegue algoritmi di Support/Resistance"""
@@ -13983,6 +14032,71 @@ class AssetAnalyzer:
             safe_print(f"   ✅ No stall detected")
         
         return stall_info, structure_analysis
+    
+    def get_recent_events(self) -> Dict[str, List[Dict]]:
+        """✅ NUOVO: Ottieni eventi recenti per UnifiedAnalyzerSystem"""
+        
+        with self._local_events_lock:
+            # Converti deque a list per serializzazione
+            local_events = {}
+            for buffer_name, buffer_deque in self._local_events_buffer.items():
+                local_events[buffer_name] = list(buffer_deque)
+            
+            # Aggiungi anche system events se disponibili
+            if hasattr(self, '_system_events_buffer'):
+                local_events['system_events'] = list(self._system_events_buffer)
+            
+            return local_events
+    
+    def clear_local_events(self) -> None:
+        """✅ NUOVO: Pulisci eventi locali dopo processing da slave module"""
+        
+        with self._local_events_lock:
+            for buffer_deque in self._local_events_buffer.values():
+                buffer_deque.clear()
+            
+            # Pulisci anche system events se disponibili
+            if hasattr(self, '_system_events_buffer'):
+                self._system_events_buffer.clear()
+
+    def _store_local_event(self, event_type: str, event_data: Dict) -> None:
+        """✅ NUOVO: Store eventi locali thread-safe per UnifiedAnalyzerSystem"""
+        
+        with self._local_events_lock:
+            try:
+                # Determina il buffer appropriato
+                if 'algorithm' in event_type and 'success' in event_type:
+                    buffer_name = 'algorithm_success'
+                elif 'algorithm' in event_type and 'error' in event_type:
+                    buffer_name = 'algorithm_errors'
+                elif 'retraining' in event_type:
+                    buffer_name = 'retraining_events'
+                elif 'performance' in event_type:
+                    buffer_name = 'performance_metrics'
+                elif 'emergency' in event_type:
+                    buffer_name = 'emergency_events'
+                else:
+                    buffer_name = 'algorithm_success'  # Default
+                
+                # Crea evento strutturato
+                event = {
+                    'timestamp': datetime.now(),
+                    'event_type': event_type,
+                    'asset': self.asset,
+                    'data': event_data
+                }
+                
+                # Store nell'appropriato buffer
+                if buffer_name in self._local_events_buffer:
+                    self._local_events_buffer[buffer_name].append(event)
+                
+                # Update performance stats
+                self._asset_performance_stats['local_events_generated'] += 1
+                self._asset_performance_stats['last_activity_time'] = datetime.now()
+                
+            except Exception as e:
+                # Silent fail per event storage - non vogliamo crash
+                pass
 
     def shutdown(self):
         """Shutdown pulito dell'analyzer con diagnostica - VERSIONE PULITA"""
@@ -14067,12 +14181,24 @@ class AssetAnalyzer:
         """Get all accumulated events for slave module processing"""
         events = {}
         
-        # System events
+        # System events (esistenti)
         if hasattr(self, '_system_events_buffer'):
-            events['system_events'] = self._system_events_buffer.copy()
+            events['system_events'] = list(self._system_events_buffer)
         
-        # Add other event buffers if they exist
-        # Note: Altri buffer potrebbero essere aggiunti qui in futuro
+        # ✅ NUOVO: Local events per UnifiedAnalyzerSystem
+        with self._local_events_lock:
+            for buffer_name, buffer_deque in self._local_events_buffer.items():
+                events[f'local_{buffer_name}'] = list(buffer_deque)
+        
+        # Altri buffer esistenti se presenti
+        if hasattr(self, '_algorithm_success_buffer'):
+            events['algorithm_success'] = list(self._algorithm_success_buffer)
+        if hasattr(self, '_algorithm_errors_buffer'):
+            events['algorithm_errors'] = list(self._algorithm_errors_buffer)
+        if hasattr(self, '_retraining_events_buffer'):
+            events['retraining_events'] = list(self._retraining_events_buffer)
+        if hasattr(self, '_performance_metrics_buffer'):
+            events['performance_metrics'] = list(self._performance_metrics_buffer)
         
         return events
 
@@ -14091,7 +14217,10 @@ class AssetAnalyzer:
 # ================== MAIN ANALYZER SYSTEM ==================
 
 class AdvancedMarketAnalyzer:
-    """Analyzer principale che gestisce tutti gli asset"""
+    """
+    Analyzer principale che gestisce tutti gli asset
+    VERSIONE COMPLETA E MODIFICATA per compatibilità con UnifiedAnalyzerSystem
+    """
     
     def __init__(self, data_path: str = "./analyzer_data"):
         self.data_path = data_path
@@ -14106,117 +14235,357 @@ class AdvancedMarketAnalyzer:
             'system_start_time': datetime.now()
         }
         
-        # Global logger
-        self.logger = AnalyzerLogger(f"{data_path}/global_logs")
+        # ✅ NUOVO: Attributi di compatibilità per UnifiedAnalyzerSystem
+        self.tick_data = []  # Compatibility attribute
+        self.predictions_history = []  # Compatibility attribute
+        
+        # ✅ NUOVO: Event storage buffers (thread-safe)
+        self._events_buffer = {
+            'tick_processed': deque(maxlen=1000),
+            'prediction_generated': deque(maxlen=500), 
+            'learning_completed': deque(maxlen=100),
+            'champion_changes': deque(maxlen=200),
+            'errors': deque(maxlen=300),
+            'training_events': deque(maxlen=150),
+            'validations': deque(maxlen=400),
+            'emergency_events': deque(maxlen=50)
+        }
+        
+        # ✅ NUOVO: Thread safety per event management
+        self._events_lock = threading.RLock()
+        
+        # ✅ NUOVO: Performance tracking
+        self._performance_stats = {
+            'ticks_processed': 0,
+            'events_generated': 0,
+            'avg_processing_time_ms': 0.0,
+            'last_tick_time': None,
+            'system_start_time': datetime.now(),
+            'processing_times': deque(maxlen=1000)  # Ultimi 1000 processing times
+        }
+        
+        # Global logger con accesso sicuro
+        self.logger = None
+        self._logger_available = False
+        
+        try:
+            # Tentativo di import della classe AnalyzerLogger
+            from src.Analyzer import AnalyzerLogger
+            self.logger = AnalyzerLogger(f"{data_path}/global_logs")
+            self._logger_available = True
+        except ImportError:
+            print(f"⚠️ AnalyzerLogger not available - using fallback logging")
+        except Exception as e:
+            print(f"⚠️ Logger initialization failed: {e} - using fallback logging")
         
         # Load existing analyzers
         self._load_existing_analyzers()
         
-        # Log system start - con accesso sicuro
+        # ✅ MIGLIORATO: Log system start con accesso sicuro
+        self._safe_log('system', 'info', 
+                       f"AdvancedMarketAnalyzer initialized with {len(self.asset_analyzers)} assets")
+    
+    def _safe_log(self, logger_type: str, level: str, message: str) -> None:
+        """Logging sicuro che non causa crash se logger non disponibile"""
         try:
-            if (hasattr(self.logger, 'loggers') and 
-                self.logger.loggers and 
+            if (self.logger is not None and 
+                self._logger_available and 
+                hasattr(self.logger, 'loggers') and 
+                self.logger.loggers is not None and 
                 isinstance(self.logger.loggers, dict) and
-                'system' in self.logger.loggers):
-                self.logger.loggers['system'].info(
-                    f"AdvancedMarketAnalyzer initialized with {len(self.asset_analyzers)} assets"
-                )
+                logger_type in self.logger.loggers and
+                self.logger.loggers[logger_type] is not None):
+                
+                logger_instance = self.logger.loggers[logger_type]
+                if hasattr(logger_instance, level):
+                    getattr(logger_instance, level)(message)
+                else:
+                    # Fallback se il level non esiste
+                    timestamp = datetime.now().strftime('%H:%M:%S')
+                    print(f"[{timestamp}] {logger_type.upper()}: {message}")
             else:
-                print(f"⚠️ AdvancedMarketAnalyzer initialized with {len(self.asset_analyzers)} assets (system logger not available)")
-        except Exception as e:
-            print(f"⚠️ AdvancedMarketAnalyzer initialized with {len(self.asset_analyzers)} assets (logger error: {e})")
+                # Fallback a print se logger non disponibile
+                timestamp = datetime.now().strftime('%H:%M:%S')
+                print(f"[{timestamp}] {logger_type.upper()}: {message}")
+        except Exception:
+            # Silent fallback - non vogliamo crash per logging
+            timestamp = datetime.now().strftime('%H:%M:%S')
+            print(f"[{timestamp}] FALLBACK: {message}")
     
     def _load_existing_analyzers(self) -> None:
         """Carica gli analyzer esistenti"""
         
-        for item in os.listdir(self.data_path):
-            item_path = os.path.join(self.data_path, item)
-            if os.path.isdir(item_path) and not item.startswith('global'):
-                try:
-                    # Assume directory name is asset name
-                    asset = item
-                    analyzer = AssetAnalyzer(asset, self.data_path)
-                    self.asset_analyzers[asset] = analyzer
-                    
-                    self.logger.loggers['system'].info(f"Loaded analyzer for {asset}")
-                    
-                except Exception as e:
-                    self.logger.loggers['errors'].error(f"Failed to load analyzer for {item}: {e}")
+        try:
+            for item in os.listdir(self.data_path):
+                item_path = os.path.join(self.data_path, item)
+                if os.path.isdir(item_path) and not item.startswith('global'):
+                    try:
+                        # Assume directory name is asset name
+                        asset = item
+                        analyzer = AssetAnalyzer(asset, self.data_path)
+                        self.asset_analyzers[asset] = analyzer
+                        
+                        self._safe_log('system', 'info', f"Loaded analyzer for {asset}")
+                        
+                    except Exception as e:
+                        self._safe_log('errors', 'error', f"Failed to load analyzer for {item}: {e}")
+        except FileNotFoundError:
+            # Data directory doesn't exist yet - this is normal for first run
+            pass
+        except Exception as e:
+            self._safe_log('errors', 'error', f"Error during analyzer loading: {e}")
     
     def add_asset(self, asset: str) -> AssetAnalyzer:
-        """Aggiunge un nuovo asset per l'analisi - VERSIONE PULITA"""
+        """Aggiunge un nuovo asset per l'analisi - VERSIONE COMPLETA"""
         
         if asset not in self.asset_analyzers:
-            self.asset_analyzers[asset] = AssetAnalyzer(asset, self.data_path)
-            # 🧹 PULITO: Sostituito logger con event storage (usa metodo esistente)
-            self._store_global_event('asset_added', {
-                'asset': asset,
-                'total_assets': len(self.asset_analyzers),
-                'timestamp': datetime.now()
-            })
+            try:
+                self.asset_analyzers[asset] = AssetAnalyzer(asset, self.data_path)
+                
+                # ✅ NUOVO: Store event per UnifiedAnalyzerSystem
+                self._store_event('asset_added', {
+                    'asset': asset,
+                    'total_assets': len(self.asset_analyzers),
+                    'timestamp': datetime.now()
+                })
+                
+                self._safe_log('system', 'info', f"Added new asset: {asset}")
+                
+            except Exception as e:
+                self._safe_log('errors', 'error', f"Failed to add asset {asset}: {e}")
+                raise
         
         return self.asset_analyzers[asset]
     
     def process_tick(self, asset: str, timestamp: datetime, price: float, 
                     volume: float, **kwargs) -> Dict[str, Any]:
-        """Processa un tick per un asset specifico - VERSIONE PULITA"""
+        """
+        ✅ COMPLETATO: Processa un tick per un asset specifico - VERSIONE COMPLETA
+        """
         
-        if asset not in self.asset_analyzers:
-            self.add_asset(asset)
+        processing_start = time.time()
         
-        analyzer = self.asset_analyzers[asset]
-        result = analyzer.process_tick(timestamp, price, volume, **kwargs)
-        
-        # Update global stats
-        self._update_global_stats()
-        
-        # Store significant events for future slave module processing
-        if result.get('status') == 'learning_complete':
-            self._store_global_event('learning_complete', {
+        try:
+            # Ensure asset exists
+            if asset not in self.asset_analyzers:
+                self.add_asset(asset)
+            
+            # Get asset analyzer
+            analyzer = self.asset_analyzers[asset]
+            
+            # Process tick through asset analyzer
+            result = analyzer.process_tick(timestamp, price, volume, **kwargs)
+            
+            # ✅ NUOVO: Update compatibility attributes
+            self.tick_data.append({
+                'timestamp': timestamp,
+                'price': price,
+                'volume': volume,
+                'asset': asset
+            })
+            
+            # Manage tick_data size (keep last 10000)
+            if len(self.tick_data) > 10000:
+                self.tick_data = self.tick_data[-10000:]
+            
+            # ✅ NUOVO: Update performance stats
+            processing_time_ms = (time.time() - processing_start) * 1000
+            self._update_performance_stats(processing_time_ms)
+            
+            # ✅ NUOVO: Store tick processing event
+            self._store_event('tick_processed', {
                 'asset': asset,
                 'timestamp': timestamp,
-                'result': result
+                'price': price,
+                'volume': volume,
+                'processing_time_ms': processing_time_ms,
+                'result_status': result.get('status', 'unknown') if result else 'no_result'
             })
+            
+            # Update global stats
+            self._update_global_stats()
+            
+            # ✅ NUOVO: Store significant events  
+            if result and result.get('status') == 'learning_complete':
+                self._store_event('learning_completed', {
+                    'asset': asset,
+                    'timestamp': timestamp,
+                    'result': result
+                })
+            
+            # ✅ NUOVO: Store prediction events if present
+            if result and 'prediction' in result:
+                self.predictions_history.append({
+                    'asset': asset,
+                    'timestamp': timestamp,
+                    'prediction': result['prediction']
+                })
+                
+                # Manage predictions history size
+                if len(self.predictions_history) > 5000:
+                    self.predictions_history = self.predictions_history[-5000:]
+                
+                self._store_event('prediction_generated', {
+                    'asset': asset,
+                    'timestamp': timestamp,
+                    'prediction': result['prediction']
+                })
+            
+            return result if result else {'status': 'processed', 'asset': asset}
+            
+        except Exception as e:
+            # ✅ NUOVO: Store error event
+            self._store_event('error', {
+                'asset': asset,
+                'timestamp': timestamp,
+                'error': str(e),
+                'error_type': type(e).__name__
+            })
+            
+            self._safe_log('errors', 'error', f"Error processing tick for {asset}: {e}")
+            
+            # Return error result instead of raising
+            return {
+                'status': 'error',
+                'asset': asset,
+                'error': str(e),
+                'timestamp': timestamp
+            }
+    
+    def _update_performance_stats(self, processing_time_ms: float) -> None:
+        """✅ NUOVO: Aggiorna statistiche di performance"""
         
-        return result
-
-
-    def _store_global_event(self, event_type: str, event_data: Dict) -> None:
-        """Store global events in memory for future processing by slave module"""
-        if not hasattr(self, '_global_events_buffer'):
-            self._global_events_buffer: deque = deque(maxlen=200)
+        self._performance_stats['ticks_processed'] += 1
+        self._performance_stats['last_tick_time'] = datetime.now()
+        self._performance_stats['processing_times'].append(processing_time_ms)
         
-        event = {
-            'timestamp': datetime.now(),
-            'type': event_type,
-            'data': event_data
+        # Calcola media mobile dei tempi di processing
+        recent_times = list(self._performance_stats['processing_times'])
+        if recent_times:
+            self._performance_stats['avg_processing_time_ms'] = sum(recent_times) / len(recent_times)
+    
+    def _store_event(self, event_type: str, event_data: Dict) -> None:
+        """✅ NUOVO: Store eventi per future processing da slave module"""
+        
+        with self._events_lock:
+            try:
+                # Determina il buffer appropriato
+                buffer_name = event_type
+                if event_type in ['asset_added', 'learning_completed']:
+                    buffer_name = 'learning_completed'
+                elif event_type in ['error']:
+                    buffer_name = 'errors'
+                elif event_type in ['prediction_generated']:
+                    buffer_name = 'prediction_generated'
+                elif event_type in ['tick_processed']:
+                    buffer_name = 'tick_processed'
+                else:
+                    # Default buffer per eventi non categorizzati
+                    buffer_name = 'training_events'
+                
+                # Crea evento strutturato
+                event = {
+                    'timestamp': datetime.now(),
+                    'event_type': event_type,
+                    'data': event_data
+                }
+                
+                # Store nell'appropriato buffer
+                if buffer_name in self._events_buffer:
+                    self._events_buffer[buffer_name].append(event)
+                
+                # Update global event counter
+                self._performance_stats['events_generated'] += 1
+                
+            except Exception as e:
+                # Silent fail per event storage - non vogliamo crash
+                self._safe_log('errors', 'error', f"Failed to store event {event_type}: {e}")
+    
+    def get_all_events(self) -> Dict[str, List[Dict]]:
+        """✅ NUOVO: Ottieni tutti gli eventi accumulati per slave module processing"""
+        
+        with self._events_lock:
+            # Converti deque a list per serializzazione
+            events = {}
+            for buffer_name, buffer_deque in self._events_buffer.items():
+                events[buffer_name] = list(buffer_deque)
+            
+            return events
+    
+    def clear_events(self) -> None:
+        """✅ NUOVO: Pulisci eventi dopo processing da slave module"""
+        
+        with self._events_lock:
+            for buffer_deque in self._events_buffer.values():
+                buffer_deque.clear()
+    
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """✅ NUOVO: Ottieni statistiche di performance per UnifiedAnalyzerSystem"""
+        
+        uptime_seconds = (datetime.now() - self._performance_stats['system_start_time']).total_seconds()
+        
+        # Calcola statistiche avanzate
+        processing_times = list(self._performance_stats['processing_times'])
+        
+        stats = {
+            'ticks_processed': self._performance_stats['ticks_processed'],
+            'events_generated': self._performance_stats['events_generated'],
+            'avg_latency_ms': self._performance_stats['avg_processing_time_ms'],
+            'max_latency_ms': max(processing_times) if processing_times else 0,
+            'min_latency_ms': min(processing_times) if processing_times else 0,
+            'uptime_seconds': uptime_seconds,
+            'ticks_per_second': (
+                self._performance_stats['ticks_processed'] / uptime_seconds 
+                if uptime_seconds > 0 else 0
+            ),
+            'buffer_utilization': {
+                (len(buffer_deque) / buffer_deque.maxlen * 100) if (buffer_deque.maxlen is not None and buffer_deque.maxlen > 0) else 0
+                for buffer_name, buffer_deque in self._events_buffer.items()
+            },
+            'total_assets': len(self.asset_analyzers),
+            'active_assets': self.global_stats['active_assets'],
+            'last_tick_time': self._performance_stats['last_tick_time']
         }
         
-        self._global_events_buffer.append(event)
-        
-        # Buffer size is automatically managed by deque maxlen=200
-        # No manual cleanup needed since deque automatically removes old items
+        return stats
     
     def receive_observer_feedback(self, asset: str, prediction_id: str, 
                                 feedback_data: Dict[str, Any]) -> None:
         """Inoltra feedback dell'Observer all'asset specifico"""
         
         if asset in self.asset_analyzers:
-            feedback_score = feedback_data.get('score', 0.5)
-            self.asset_analyzers[asset].receive_observer_feedback(
-                prediction_id, feedback_score, feedback_data
-            )
-            self.global_stats['total_feedback_received'] += 1
-            
-            self.logger.loggers['system'].info(
-                f"Forwarded observer feedback to {asset} for {prediction_id}"
-            )
+            try:
+                feedback_score = feedback_data.get('score', 0.5)
+                self.asset_analyzers[asset].receive_observer_feedback(
+                    prediction_id, feedback_score, feedback_data
+                )
+                self.global_stats['total_feedback_received'] += 1
+                
+                # ✅ NUOVO: Store feedback event
+                self._store_event('feedback_received', {
+                    'asset': asset,
+                    'prediction_id': prediction_id,
+                    'feedback_score': feedback_score,
+                    'feedback_data': feedback_data
+                })
+                
+                self._safe_log('system', 'info', 
+                              f"Forwarded observer feedback to {asset} for {prediction_id}")
+                
+            except Exception as e:
+                self._safe_log('errors', 'error', 
+                              f"Error processing feedback for {asset}: {e}")
     
     def get_analysis_for_observer(self, asset: str) -> Optional[Dict[str, Any]]:
         """Ottiene analisi per Observer per un asset specifico"""
         
         if asset in self.asset_analyzers:
-            return self.asset_analyzers[asset].get_analysis_for_observer()
+            try:
+                return self.asset_analyzers[asset].get_analysis_for_observer()
+            except Exception as e:
+                self._safe_log('errors', 'error', 
+                              f"Error getting analysis for observer {asset}: {e}")
+                return None
         return None
     
     def get_global_summary(self) -> Dict[str, Any]:
@@ -14227,147 +14596,236 @@ class AdvancedMarketAnalyzer:
             'global_stats': self.global_stats,
             'assets': {},
             'system_health': self._calculate_global_health(),
-            'recommendations': self._generate_global_recommendations()
+            'recommendations': self._generate_global_recommendations(),
+            'performance': self.get_performance_stats()
         }
         
         for asset, analyzer in self.asset_analyzers.items():
-            summary['assets'][asset] = analyzer.get_full_analysis_summary()
+            try:
+                summary['assets'][asset] = analyzer.get_full_analysis_summary()
+            except Exception as e:
+                self._safe_log('errors', 'error', 
+                              f"Error getting summary for {asset}: {e}")
+                summary['assets'][asset] = {'error': str(e)}
         
         return summary
     
     def _update_global_stats(self) -> None:
         """Aggiorna le statistiche globali"""
         
-        total_performance = 0
-        active_assets = 0
-        total_predictions = 0
-        
-        for analyzer in self.asset_analyzers.values():
-            if not analyzer.learning_phase:
-                active_assets += 1
-                summary = analyzer.get_full_analysis_summary()
-                total_performance += summary['overall_health']
-                
-                # Count predictions
-                for model_perf in summary['models_performance'].values():
-                    total_predictions += model_perf.get('total_predictions', 0)
-        
-        self.global_stats.update({
-            'active_assets': active_assets,
-            'global_performance': total_performance / max(1, active_assets),
-            'total_predictions': total_predictions,
-            'uptime_hours': (datetime.now() - self.global_stats['system_start_time']).total_seconds() / 3600
-        })
+        try:
+            total_performance = 0
+            active_assets = 0
+            total_predictions = 0
+            
+            for analyzer in self.asset_analyzers.values():
+                try:
+                    if not analyzer.learning_phase:
+                        active_assets += 1
+                        summary = analyzer.get_full_analysis_summary()
+                        total_performance += summary.get('overall_health', 0)
+                        
+                        # Count predictions
+                        for model_perf in summary.get('models_performance', {}).values():
+                            total_predictions += model_perf.get('total_predictions', 0)
+                except Exception:
+                    # Skip problematic analyzers in stats calculation
+                    continue
+            
+            self.global_stats.update({
+                'active_assets': active_assets,
+                'global_performance': total_performance / max(1, active_assets),
+                'total_predictions': total_predictions,
+                'uptime_hours': (
+                    (datetime.now() - self.global_stats['system_start_time']).total_seconds() / 3600
+                )
+            })
+            
+        except Exception as e:
+            self._safe_log('errors', 'error', f"Error updating global stats: {e}")
     
     def _calculate_global_health(self) -> Dict[str, Any]:
         """Calcola la salute globale del sistema"""
         
-        asset_healths = []
-        issues = []
-        
-        for asset, analyzer in self.asset_analyzers.items():
-            health = analyzer._calculate_system_health()
-            asset_healths.append(health['score'])
+        try:
+            asset_healths = []
+            issues = []
             
-            if health['status'] == 'critical':
-                issues.append(f"{asset}_critical")
-        
-        avg_health = np.mean(asset_healths) if asset_healths else 0
-        
-        # Check system-wide issues
-        if self.global_stats['active_assets'] == 0:
-            issues.append("no_active_assets")
-            avg_health -= 30
-        
-        return {
-            'score': max(0, avg_health),
-            'status': 'healthy' if avg_health > 70 else 'degraded' if avg_health > 40 else 'critical',
-            'issues': issues,
-            'assets_health': {
-                asset: analyzer._calculate_system_health()['status']
-                for asset, analyzer in self.asset_analyzers.items()
+            for asset, analyzer in self.asset_analyzers.items():
+                try:
+                    health = analyzer._calculate_system_health()
+                    asset_healths.append(health['score'])
+                    
+                    if health['status'] == 'critical':
+                        issues.append(f"{asset}_critical")
+                except Exception:
+                    # Skip problematic analyzers
+                    issues.append(f"{asset}_health_check_failed")
+            
+            avg_health = np.mean(asset_healths) if asset_healths else 0
+            
+            # Check system-wide issues
+            if self.global_stats['active_assets'] == 0:
+                issues.append("no_active_assets")
+                avg_health -= 30
+            
+            return {
+                'score': max(0, avg_health),
+                'status': 'healthy' if avg_health > 70 else 'degraded' if avg_health > 40 else 'critical',
+                'issues': issues,
+                'assets_health': {
+                    asset: (analyzer._calculate_system_health()['status'] 
+                           if hasattr(analyzer, '_calculate_system_health') else 'unknown')
+                    for asset, analyzer in self.asset_analyzers.items()
+                }
             }
-        }
+            
+        except Exception as e:
+            self._safe_log('errors', 'error', f"Error calculating global health: {e}")
+            return {
+                'score': 0,
+                'status': 'critical',
+                'issues': ['health_calculation_failed'],
+                'assets_health': {}
+            }
     
     def _generate_global_recommendations(self) -> List[str]:
         """Genera raccomandazioni a livello di sistema"""
         
         recommendations = []
         
-        # Check for common patterns across assets
-        trend_directions = []
-        volatility_levels = []
-        
-        for analyzer in self.asset_analyzers.values():
-            if not analyzer.learning_phase and len(analyzer.tick_data) > 50:
-                market_data = analyzer._prepare_market_data()
-                
-                # Collect trend info
-                if 'price_change_5m' in market_data:
-                    if market_data['price_change_5m'] > 0.01:
-                        trend_directions.append('up')
-                    elif market_data['price_change_5m'] < -0.01:
-                        trend_directions.append('down')
-                
-                # Collect volatility
-                if 'volatility' in market_data:
-                    volatility_levels.append(market_data['volatility'])
-        
-        # Generate recommendations
-        if trend_directions:
-            up_count = trend_directions.count('up')
-            down_count = trend_directions.count('down')
+        try:
+            # Check for common patterns across assets
+            trend_directions = []
+            volatility_levels = []
             
-            if up_count > len(trend_directions) * 0.7:
-                recommendations.append("Strong bullish sentiment across multiple assets")
-            elif down_count > len(trend_directions) * 0.7:
-                recommendations.append("Strong bearish sentiment across multiple assets")
-        
-        if volatility_levels:
-            avg_volatility = np.mean(volatility_levels)
-            if avg_volatility > 0.02:
-                recommendations.append("High volatility detected - consider reducing position sizes")
-            elif avg_volatility < 0.005:
-                recommendations.append("Low volatility environment - watch for breakouts")
-        
-        # System recommendations
-        if self.global_stats['active_assets'] < len(self.asset_analyzers):
-            recommendations.append(f"{len(self.asset_analyzers) - self.global_stats['active_assets']} assets still in learning phase")
+            for analyzer in self.asset_analyzers.values():
+                try:
+                    if not analyzer.learning_phase and len(analyzer.tick_data) > 50:
+                        market_data = analyzer._prepare_market_data()
+                        
+                        # Collect trend info
+                        if 'price_change_5m' in market_data:
+                            if market_data['price_change_5m'] > 0.01:
+                                trend_directions.append('up')
+                            elif market_data['price_change_5m'] < -0.01:
+                                trend_directions.append('down')
+                        
+                        # Collect volatility
+                        if 'volatility' in market_data:
+                            volatility_levels.append(market_data['volatility'])
+                except Exception:
+                    # Skip problematic analyzers
+                    continue
+            
+            # Generate recommendations
+            if trend_directions:
+                up_count = trend_directions.count('up')
+                down_count = trend_directions.count('down')
+                
+                if up_count > len(trend_directions) * 0.7:
+                    recommendations.append("Strong bullish sentiment across multiple assets")
+                elif down_count > len(trend_directions) * 0.7:
+                    recommendations.append("Strong bearish sentiment across multiple assets")
+            
+            if volatility_levels:
+                avg_volatility = np.mean(volatility_levels)
+                if avg_volatility > 0.02:
+                    recommendations.append("High volatility detected - consider reducing position sizes")
+                elif avg_volatility < 0.005:
+                    recommendations.append("Low volatility environment - watch for breakouts")
+            
+            # System recommendations
+            if self.global_stats['active_assets'] < len(self.asset_analyzers):
+                learning_assets = len(self.asset_analyzers) - self.global_stats['active_assets']
+                recommendations.append(f"{learning_assets} assets still in learning phase")
+            
+        except Exception as e:
+            self._safe_log('errors', 'error', f"Error generating recommendations: {e}")
+            recommendations.append("Error generating recommendations - check system health")
         
         return recommendations
     
     def save_all_states(self) -> None:
         """Salva lo stato di tutti gli analyzer"""
         
-        self.logger.loggers['system'].info("Saving all analyzer states...")
+        self._safe_log('system', 'info', "Saving all analyzer states...")
+        
+        saved_count = 0
+        failed_count = 0
         
         for asset, analyzer in self.asset_analyzers.items():
             try:
                 analyzer.save_analyzer_state()
+                saved_count += 1
             except Exception as e:
-                self.logger.loggers['errors'].error(f"Failed to save state for {asset}: {e}")
+                failed_count += 1
+                self._safe_log('errors', 'error', f"Failed to save state for {asset}: {e}")
         
-        # Save global stats
-        global_state = {
-            'global_stats': self.global_stats,
-            'assets': list(self.asset_analyzers.keys()),
-            'timestamp': datetime.now()
-        }
+        # ✅ NUOVO: Save global state with enhanced data
+        try:
+            global_state = {
+                'global_stats': self.global_stats,
+                'assets': list(self.asset_analyzers.keys()),
+                'performance_stats': self._performance_stats,
+                'events_summary': {
+                    buffer_name: len(buffer_deque)
+                    for buffer_name, buffer_deque in self._events_buffer.items()
+                },
+                'timestamp': datetime.now(),
+                'saved_assets': saved_count,
+                'failed_assets': failed_count
+            }
+            
+            with open(f"{self.data_path}/global_state.json", 'w') as f:
+                json.dump(global_state, f, indent=2, default=str)
+                
+        except Exception as e:
+            self._safe_log('errors', 'error', f"Failed to save global state: {e}")
         
-        with open(f"{self.data_path}/global_state.json", 'w') as f:
-            json.dump(global_state, f, indent=2, default=str)
-        
-        self.logger.loggers['system'].info("All states saved successfully")
+        self._safe_log('system', 'info', 
+                      f"States saved - Success: {saved_count}, Failed: {failed_count}")
     
     def cleanup_old_data(self, days_to_keep: int = 180) -> None:
         """Pulisce dati vecchi per tutti gli asset"""
         
-        self.logger.loggers['system'].info(f"Starting cleanup for data older than {days_to_keep} days")
+        self._safe_log('system', 'info', f"Starting cleanup for data older than {days_to_keep} days")
         
+        cleaned_count = 0
         for asset, analyzer in self.asset_analyzers.items():
-            analyzer.cleanup_old_data(days_to_keep)
+            try:
+                analyzer.cleanup_old_data(days_to_keep)
+                cleaned_count += 1
+            except Exception as e:
+                self._safe_log('errors', 'error', f"Cleanup failed for {asset}: {e}")
         
-        self.logger.loggers['system'].info("Cleanup completed for all assets")
+        # ✅ NUOVO: Cleanup internal buffers
+        cutoff_date = datetime.now() - timedelta(days=days_to_keep)
+        
+        with self._events_lock:
+            for buffer_name, buffer_deque in self._events_buffer.items():
+                # Filter out old events
+                fresh_events = [
+                    event for event in buffer_deque 
+                    if event['timestamp'] > cutoff_date
+                ]
+                buffer_deque.clear()
+                buffer_deque.extend(fresh_events)
+        
+        # Cleanup compatibility attributes
+        cutoff_timestamp = cutoff_date
+        self.tick_data = [
+            tick for tick in self.tick_data
+            if tick['timestamp'] > cutoff_timestamp
+        ]
+        
+        self.predictions_history = [
+            pred for pred in self.predictions_history
+            if pred['timestamp'] > cutoff_timestamp
+        ]
+        
+        self._safe_log('system', 'info', 
+                      f"Cleanup completed - {cleaned_count} assets processed")
     
     def get_performance_report(self) -> Dict[str, Any]:
         """Genera report completo delle performance"""
@@ -14379,16 +14837,24 @@ class AdvancedMarketAnalyzer:
                 'active_assets': self.global_stats['active_assets'],
                 'total_predictions': self.global_stats['total_predictions'],
                 'total_feedback': self.global_stats['total_feedback_received'],
-                'uptime_hours': self.global_stats.get('uptime_hours', 0)
+                'uptime_hours': self.global_stats.get('uptime_hours', 0),
+                'performance_stats': self.get_performance_stats()
             },
             'asset_performances': {},
             'model_rankings': self._calculate_model_rankings(),
-            'system_health': self._calculate_global_health()
+            'system_health': self._calculate_global_health(),
+            'events_summary': {
+                buffer_name: len(buffer_deque)
+                for buffer_name, buffer_deque in self._events_buffer.items()
+            }
         }
         
         # Add detailed asset performances
         for asset, analyzer in self.asset_analyzers.items():
-            report['asset_performances'][asset] = analyzer.get_performance_metrics()
+            try:
+                report['asset_performances'][asset] = analyzer.get_performance_metrics()
+            except Exception as e:
+                report['asset_performances'][asset] = {'error': str(e)}
         
         return report
     
@@ -14397,46 +14863,78 @@ class AdvancedMarketAnalyzer:
         
         rankings = {}
         
-        for model_type in ModelType:
-            model_scores = []
-            
-            for asset, analyzer in self.asset_analyzers.items():
-                if model_type in analyzer.competitions:
-                    competition = analyzer.competitions[model_type]
-                    summary = competition.get_performance_summary()
-                    
-                    if summary['champion']:
-                        champion_data = summary['algorithms'].get(summary['champion'], {})
-                        model_scores.append({
-                            'asset': asset,
-                            'algorithm': summary['champion'],
-                            'score': champion_data.get('final_score', 0),
-                            'accuracy': champion_data.get('accuracy_rate', 0),
-                            'predictions': champion_data.get('total_predictions', 0)
-                        })
-            
-            # Sort by score
-            model_scores.sort(key=lambda x: x['score'], reverse=True)
-            rankings[model_type.value] = model_scores[:10]  # Top 10
+        try:
+            for model_type in ModelType:
+                model_scores = []
+                
+                for asset, analyzer in self.asset_analyzers.items():
+                    try:
+                        if model_type in analyzer.competitions:
+                            competition = analyzer.competitions[model_type]
+                            summary = competition.get_performance_summary()
+                            
+                            if summary['champion']:
+                                champion_data = summary['algorithms'].get(summary['champion'], {})
+                                model_scores.append({
+                                    'asset': asset,
+                                    'algorithm': summary['champion'],
+                                    'score': champion_data.get('final_score', 0),
+                                    'accuracy': champion_data.get('accuracy_rate', 0),
+                                    'predictions': champion_data.get('total_predictions', 0)
+                                })
+                    except Exception:
+                        # Skip problematic competitions
+                        continue
+                
+                # Sort by score
+                model_scores.sort(key=lambda x: x['score'], reverse=True)
+                rankings[model_type.value] = model_scores[:10]  # Top 10
+                
+        except Exception as e:
+            self._safe_log('errors', 'error', f"Error calculating model rankings: {e}")
         
         return rankings
     
     def shutdown(self):
-        """Shutdown pulito del sistema"""
+        """✅ MIGLIORATO: Shutdown pulito del sistema"""
         
-        self.logger.loggers['system'].info("Initiating system shutdown...")
+        self._safe_log('system', 'info', "Initiating system shutdown...")
         
         # Save all states
-        self.save_all_states()
+        try:
+            self.save_all_states()
+        except Exception as e:
+            self._safe_log('errors', 'error', f"Error saving states during shutdown: {e}")
         
         # Shutdown each analyzer
+        shutdown_count = 0
         for asset, analyzer in self.asset_analyzers.items():
-            analyzer.shutdown()
+            try:
+                analyzer.shutdown()
+                shutdown_count += 1
+            except Exception as e:
+                self._safe_log('errors', 'error', f"Error shutting down {asset}: {e}")
+        
+        # ✅ NUOVO: Clear all event buffers
+        try:
+            self.clear_events()
+        except Exception as e:
+            self._safe_log('errors', 'error', f"Error clearing events during shutdown: {e}")
         
         # Final log
-        self.logger.loggers['system'].info(
-            f"System shutdown complete - Total uptime: {self.global_stats.get('uptime_hours', 0):.2f} hours"
-        )
+        uptime_hours = self.global_stats.get('uptime_hours', 0)
+        self._safe_log('system', 'info', 
+                      f"System shutdown complete - Uptime: {uptime_hours:.2f}h, "
+                      f"Assets: {shutdown_count}/{len(self.asset_analyzers)}")
+        
+        # ✅ NUOVO: Shutdown logger if available
+        try:
+            if (self.logger is not None and 
+                self._logger_available and 
+                hasattr(self.logger, 'shutdown')):
+                self.logger.shutdown()
+        except Exception:
+            pass  # Silent fail per logger shutdown
 
 # ================== END OF ANALYZER MODULE ==================
 
