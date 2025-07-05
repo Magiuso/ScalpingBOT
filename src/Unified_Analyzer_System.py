@@ -36,6 +36,7 @@ import csv
 import logging
 import signal
 import sys
+import os 
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Set, Union, Callable
@@ -47,6 +48,8 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 import contextlib
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from src.Analyzer import AdvancedMarketAnalyzer
 
 # ================================
 # CONFIGURATION SYSTEM (OPTIMIZED)
@@ -390,273 +393,6 @@ class PerformanceMonitor:
                 break
             except Exception:
                 pass  # Silenzioso per performance
-
-
-# ================================
-# SIMPLIFIED ANALYZER (ULTRA-CLEAN)
-# ================================
-
-class CleanAnalyzer:
-    """Analyzer completamente pulito - zero logging overhead (ULTRA-OTTIMIZZATO)"""
-    
-    def __init__(self, config: UnifiedConfig):
-        self.config = config
-        self.asset = config.asset_symbol
-        
-        # Core data structures
-        self.tick_data: deque = deque(maxlen=config.max_tick_buffer_size)
-        self.predictions_history: List[Dict] = []
-        
-        # Event buffers ottimizzati per backtesting
-        if config.system_mode == SystemMode.BACKTESTING:
-            # Buffer minimi per backtesting
-            max_events = 100
-        else:
-            # Buffer normali
-            max_events = 1000
-            
-        self._event_buffers = {
-            'tick_events': deque(maxlen=max_events // 5),      # RIDOTTI
-            'prediction_events': deque(maxlen=max_events // 2),
-            'training_events': deque(maxlen=max_events // 10),
-            'champion_events': deque(maxlen=max_events // 20),
-            'error_events': deque(maxlen=max_events // 5),
-            'diagnostic_events': deque(maxlen=max_events // 10)
-        }
-        
-        # Performance tracking ottimizzato
-        perf_buffer_size = 50 if config.system_mode == SystemMode.BACKTESTING else 100
-        self.performance_stats = {
-            'ticks_processed': 0,
-            'predictions_generated': 0,
-            'training_events': 0,
-            'processing_times': deque(maxlen=perf_buffer_size),  # RIDOTTO
-            'last_tick_time': None
-        }
-        
-        # Threading
-        self.data_lock = threading.RLock()
-        
-        # Learning state ottimizzato
-        self.learning_phase = config.learning_phase_enabled and config.system_mode != SystemMode.BACKTESTING
-        self.learning_start_time = datetime.now()
-        self.learning_progress = 0.0
-        
-        # 🚀 PREDICTION OPTIMIZATION (NUOVO)
-        self.last_prediction_time = {}  # Cache per anti-duplicati
-        self.prediction_counter = 0
-        
-        # 🚀 MEMORY CLEANUP (NUOVO)
-        self.memory_cleanup_counter = 0
-    
-    def process_tick(self, timestamp: datetime, price: float, volume: float, 
-                    bid: Optional[float] = None, ask: Optional[float] = None) -> Dict[str, Any]:
-        """Processa tick con zero logging overhead (ULTRA-OTTIMIZZATO)"""
-        
-        processing_start = time.time()
-        
-        # Store tick data (ottimizzato)
-        with self.data_lock:
-            tick_data = {
-                'timestamp': timestamp,
-                'price': price,
-                'volume': volume,
-                'bid': bid or price,
-                'ask': ask or price,
-                'spread': (ask - bid) if ask and bid else 0
-            }
-            self.tick_data.append(tick_data)
-        
-        # Update performance stats (minimal)
-        self.performance_stats['ticks_processed'] += 1
-        self.performance_stats['last_tick_time'] = timestamp
-        
-        # Learning progress (ottimizzato)
-        if self.learning_phase:
-            days_learning = (datetime.now() - self.learning_start_time).days
-            self.learning_progress = min(1.0, days_learning / self.config.min_learning_days)
-            
-            if days_learning >= self.config.min_learning_days:
-                self.learning_phase = False
-                # Store solo se logging abilitato
-                if self.config.log_level != "SILENT":
-                    self._store_event('learning_completed', {
-                        'asset': self.asset,
-                        'days_learned': days_learning,
-                        'ticks_collected': len(self.tick_data)
-                    })
-        
-        # Generate analysis (ottimizzato)
-        analysis_result = self._generate_analysis()
-        
-        # Track processing time (condizionale)
-        if self.config.system_mode != SystemMode.BACKTESTING:
-            processing_time = (time.time() - processing_start) * 1000  # ms
-            self.performance_stats['processing_times'].append(processing_time)
-        
-        # 🚀 MEMORY CLEANUP PERIODICO
-        self.memory_cleanup_counter += 1
-        if (self.config.enable_memory_cleanup and 
-            self.memory_cleanup_counter % self.config.memory_cleanup_interval == 0):
-            self._cleanup_memory()
-        
-        # Store tick event (condizionale)
-        if self.config.log_level != "SILENT" and self.config.system_mode != SystemMode.BACKTESTING:
-            processing_time_val = (time.time() - processing_start) * 1000
-            self._store_event('tick_processed', {
-                'asset': self.asset,
-                'price': price,
-                'volume': volume,
-                'processing_time_ms': processing_time_val,
-                'learning_progress': self.learning_progress if self.learning_phase else 1.0
-            })
-        
-        return analysis_result
-    
-    def _generate_analysis(self) -> Dict[str, Any]:
-        """Genera analisi simulata (ULTRA-OTTIMIZZATA)"""
-        if len(self.tick_data) < 10:
-            return {'status': 'insufficient_data'}
-        
-        with self.data_lock:
-            recent_prices = [tick['price'] for tick in list(self.tick_data)[-10:]]
-        
-        current_price = recent_prices[-1]
-        price_change = (current_price - recent_prices[0]) / recent_prices[0] * 100
-        
-        # 🚀 PREDICTION OTTIMIZZATA CON RATE LIMITING INTELLIGENTE
-        if (self.config.demo_predictor_enabled and 
-            len(self.tick_data) % self.config.demo_predictor_interval == 0):
-            
-            confidence = 0.75 + (hash(str(current_price)) % 100) / 400
-            prediction_type = 'buy' if price_change > 0 else 'sell'
-            
-            # Anti-duplicati intelligente
-            prediction_key = f"{prediction_type}_{confidence:.2f}"
-            current_time = datetime.now()
-            
-            should_predict = True
-            if prediction_key in self.last_prediction_time:
-                time_diff = (current_time - self.last_prediction_time[prediction_key]).total_seconds()
-                if time_diff < self.config.prediction_duplicate_window:
-                    should_predict = False
-            
-            # Soglia di confidence
-            if confidence < self.config.prediction_confidence_threshold:
-                should_predict = False
-            
-            if should_predict:
-                prediction = {
-                    'algorithm': 'demo_predictor',
-                    'confidence': confidence,
-                    'prediction': prediction_type,
-                    'timestamp': current_time
-                }
-                
-                self.predictions_history.append(prediction)
-                self.performance_stats['predictions_generated'] += 1
-                self.last_prediction_time[prediction_key] = current_time
-                
-                # Store evento solo se logging abilitato
-                if self.config.log_level != "SILENT":
-                    self._store_event('prediction_generated', {
-                        'asset': self.asset,
-                        'algorithm': prediction['algorithm'],
-                        'confidence': prediction['confidence'],
-                        'prediction': prediction['prediction']
-                    })
-        
-        return {
-            'status': 'success',
-            'current_price': current_price,
-            'price_change_percent': price_change,
-            'trend': 'bullish' if price_change > 0 else 'bearish',
-            'confidence': 0.8,
-            'tick_count': len(self.tick_data),
-            'learning_phase': self.learning_phase,
-            'learning_progress': self.learning_progress
-        }
-    
-    def _cleanup_memory(self):
-        """🚀 CLEANUP AGGRESSIVO DELLA MEMORIA"""
-        with self.data_lock:
-            # Pulisci predictions history vecchie
-            if len(self.predictions_history) > 1000:
-                self.predictions_history = self.predictions_history[-500:]
-            
-            # Pulisci cache anti-duplicati vecchie
-            current_time = datetime.now()
-            expired_keys = [
-                key for key, timestamp in self.last_prediction_time.items()
-                if (current_time - timestamp).total_seconds() > self.config.prediction_duplicate_window * 2
-            ]
-            for key in expired_keys:
-                del self.last_prediction_time[key]
-            
-            # Pulisci event buffers se troppo pieni (modalità backtesting)
-            if self.config.system_mode == SystemMode.BACKTESTING:
-                for buffer in self._event_buffers.values():
-                    if len(buffer) > 50:
-                        # Mantieni solo gli ultimi 20 eventi
-                        while len(buffer) > 20:
-                            buffer.popleft()
-    
-    def _store_event(self, event_type: str, event_data: Dict):
-        """Store event nel buffer appropriato (OTTIMIZZATO)"""
-        
-        # Skip completamente in modalità SILENT
-        if self.config.log_level == "SILENT":
-            return
-        
-        event = {
-            'timestamp': datetime.now(),
-            'event_type': event_type,
-            'data': event_data
-        }
-        
-        # Route to appropriate buffer (ottimizzato)
-        if 'tick' in event_type:
-            self._event_buffers['tick_events'].append(event)
-        elif 'prediction' in event_type:
-            self._event_buffers['prediction_events'].append(event)
-        elif 'training' in event_type:
-            self._event_buffers['training_events'].append(event)
-        elif 'champion' in event_type:
-            self._event_buffers['champion_events'].append(event)
-        elif 'error' in event_type or 'emergency' in event_type:
-            self._event_buffers['error_events'].append(event)
-        else:
-            self._event_buffers['diagnostic_events'].append(event)
-    
-    def get_all_events(self) -> Dict[str, List[Dict]]:
-        """Ottieni tutti gli eventi per il slave logging"""
-        with self.data_lock:
-            return {
-                buffer_name: list(buffer) 
-                for buffer_name, buffer in self._event_buffers.items()
-            }
-    
-    def clear_events(self):
-        """Pulisci tutti gli event buffers"""
-        with self.data_lock:
-            for buffer in self._event_buffers.values():
-                buffer.clear()
-    
-    def get_performance_stats(self) -> Dict[str, Any]:
-        """Ottieni statistiche performance"""
-        with self.data_lock:
-            avg_processing_time = (
-                sum(self.performance_stats['processing_times']) / 
-                len(self.performance_stats['processing_times'])
-            ) if self.performance_stats['processing_times'] else 0
-            
-            return {
-                **self.performance_stats,
-                'avg_latency_ms': avg_processing_time,
-                'buffer_utilization': len(self.tick_data) / self.config.max_tick_buffer_size * 100,
-                'events_pending': sum(len(buffer) for buffer in self._event_buffers.values())
-            }
-
 
 # ================================
 # INTELLIGENT LOGGING SLAVE (BATCH OPTIMIZED)
@@ -1044,8 +780,13 @@ class UnifiedAnalyzerSystem:
         self.config = config or UnifiedConfig()
         
         # Core components
-        self.analyzer = CleanAnalyzer(self.config)
+        self.analyzer = AdvancedMarketAnalyzer(self.config.base_directory)  # ← NUOVA RIGA
         self.logging_slave = LoggingSlave(self.config)
+
+        # Add asset to analyzer
+        asset_analyzer = self.analyzer.add_asset(self.config.asset_symbol)  # ← AGGIUNGI
+        if not asset_analyzer:  # ← AGGIUNGI
+            raise RuntimeError(f"Failed to add asset {self.config.asset_symbol}")  # ← AGGIUNGI
         
         # Performance monitor solo se necessario
         if (self.config.enable_performance_monitoring and 
@@ -1187,8 +928,15 @@ class UnifiedAnalyzerSystem:
             raise RuntimeError("System not running. Call start() first.")
         
         try:
-            # Process tick con zero logging overhead
-            result = self.analyzer.process_tick(timestamp, price, volume, bid, ask)
+            # Process tick through AdvancedMarketAnalyzer
+            result = self.analyzer.process_tick(
+                asset=self.config.asset_symbol,
+                timestamp=timestamp,
+                price=price,
+                volume=volume,
+                bid=bid,
+                ask=ask
+            )
             
             # Update system stats (minimal)
             self.system_stats['total_ticks_processed'] += 1
@@ -1300,6 +1048,20 @@ class UnifiedAnalyzerSystem:
         print(f"📊 Queue Usage: {metrics.queue_utilization_percent:.1f}%")
         print("="*50 + "\n")
     
+    def _get_analyzer_stats(self) -> Dict[str, Any]:
+        """Get stats from AdvancedMarketAnalyzer"""
+        if self.config.asset_symbol in self.analyzer.asset_analyzers:
+            asset_analyzer = self.analyzer.asset_analyzers[self.config.asset_symbol]
+            return {
+                'ticks_processed': getattr(asset_analyzer, 'analysis_count', 0),
+                'learning_phase': getattr(asset_analyzer, 'learning_phase', False),
+                'learning_progress': getattr(asset_analyzer, 'learning_progress', 0.0),
+                'predictions_generated': 0,  # TODO: implement if needed
+                'avg_latency_ms': 0.0,  # TODO: implement if needed
+                'buffer_utilization': 0.0  # TODO: implement if needed
+            }
+        return {'ticks_processed': 0, 'predictions_generated': 0}
+
     def get_system_status(self) -> Dict[str, Any]:
         """Get complete system status"""
         
@@ -1314,7 +1076,7 @@ class UnifiedAnalyzerSystem:
                 ),
                 'stats': self.system_stats.copy()
             },
-            'analyzer': self.analyzer.get_performance_stats(),
+            'analyzer': self._get_analyzer_stats(),
             'logging': self.logging_slave.get_stats(),
             'config': asdict(self.config)
         }
