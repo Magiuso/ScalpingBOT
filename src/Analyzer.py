@@ -7331,6 +7331,21 @@ class AssetAnalyzer:
         TRAINING_THRESHOLD = 100000
         if len(self.tick_data) < TRAINING_THRESHOLD:
             return
+
+        # 🛡️ PROTEZIONE ANTI-LOOP - Una sola sessione di training per soglia
+        if not hasattr(self, '_training_started_at_threshold'):
+            self._training_started_at_threshold = set()
+
+        current_threshold_key = f"{len(self.tick_data)//TRAINING_THRESHOLD}_{TRAINING_THRESHOLD}"
+        if current_threshold_key in self._training_started_at_threshold:
+            # Training già eseguito per questa soglia, skip silenziosamente
+            return
+
+        # Marca questa soglia come processata
+        self._training_started_at_threshold.add(current_threshold_key)
+
+        # 🔍 DEBUG INFO
+        print(f"[TRAINING] Starting FIRST training session for threshold {TRAINING_THRESHOLD} with {len(self.tick_data)} ticks")
         
         # CONTROLLI DI SICUREZZA PRELIMINARI
         if not hasattr(self, 'rolling_trainer') or self.rolling_trainer is None:
