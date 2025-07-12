@@ -852,6 +852,67 @@ from utils.universal_encoding_fix import (
 # Inizializza encoding una sola volta
 init_universal_encoding(silent=False)
 
+# ================== ML TRAINING LOGGER IMPORTS ==================
+
+try:
+    from modules.Analyzer_Logging_SlaveModule import (
+        AnalyzerLoggingSlave as MLAnalyzerLoggingSlave,
+        LoggingConfig as MLLoggingConfig, 
+        LogLevel as MLLogLevel,
+        EventPriority as MLEventPriority,
+        create_logging_slave as ml_create_logging_slave,
+        process_analyzer_data as ml_process_analyzer_data
+    )
+    ML_TRAINING_LOGGER_AVAILABLE = True
+    print("✅ ML Training Logger modules imported successfully")
+    
+    # Type aliases per evitare conflitti
+    AnalyzerLoggingSlave = MLAnalyzerLoggingSlave  # type: ignore
+    LoggingConfig = MLLoggingConfig  # type: ignore
+    LogLevel = MLLogLevel  # type: ignore
+    EventPriority = MLEventPriority  # type: ignore
+    create_logging_slave = ml_create_logging_slave  # type: ignore
+    process_analyzer_data = ml_process_analyzer_data  # type: ignore
+    
+except ImportError as e:
+    ML_TRAINING_LOGGER_AVAILABLE = False
+    print(f"⚠️ ML Training Logger not available: {e}")
+    print("📄 Falling back to basic structured logging...")
+    
+    # Dummy classes per compatibilità
+    class LoggingConfig:  # type: ignore
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+    
+    class LogLevel:  # type: ignore
+        NORMAL = "normal"
+        VERBOSE = "verbose"
+        DEBUG = "debug"
+        MINIMAL = "minimal"
+    
+    class EventPriority:  # type: ignore
+        CRITICAL = 1
+        HIGH = 2
+        MEDIUM = 3
+        LOW = 4
+    
+    class AnalyzerLoggingSlave:  # type: ignore
+        def __init__(self, config):
+            pass
+        async def start(self): 
+            pass
+        async def stop(self): 
+            pass
+        async def process_events(self, events): 
+            pass
+    
+    async def create_logging_slave(config):  # type: ignore
+        return AnalyzerLoggingSlave(config)
+    
+    async def process_analyzer_data(slave, analyzer):  # type: ignore
+        pass
+
 # ================== SISTEMA DI LOGGING AVANZATO ==================
 
 from collections import deque, defaultdict
@@ -1280,6 +1341,8 @@ class AsyncAnalyzerLogger(AnalyzerLogger):
     
     def __init__(self, base_path: str = "./analyzer_logs"):
         super().__init__(base_path)
+
+        self.loggers: Dict[str, Any] = {}
         
         # Sistema I/O asincrono SOLO per necessità business critical
         self.async_writer = AsyncFileWriter(max_queue_size=2000, max_workers=3)
@@ -1648,6 +1711,95 @@ class AsyncAnalyzerLogger(AnalyzerLogger):
         if event_types is None or 'performance_metrics' in event_types:
             if hasattr(self, '_performance_events_buffer'):
                 self._performance_events_buffer.clear()
+    
+class CompatibleAsyncLogger(AsyncAnalyzerLogger):
+    """Wrapper che aggiunge compatibilità al sistema esistente + ML Training Logger"""
+    
+    def __init__(self, base_path: str):
+        super().__init__(base_path)
+        
+        # ✅ Versione semplice senza type hints complessi
+        self.loggers = {
+            'training': StructuredLogger(self, 'training'),
+            'errors': StructuredLogger(self, 'errors'), 
+            'system': StructuredLogger(self, 'system'),
+            'emergency': StructuredLogger(self, 'emergency')
+        }
+        
+        self.ml_logger_enabled = True
+        self.structured_events = []
+
+class StructuredLogger:
+    """Logger strutturato che accumula eventi dettagliati per ML Training"""
+    
+    def __init__(self, parent_logger, logger_type):
+        self.parent = parent_logger
+        self.type = logger_type
+    
+    def info(self, message):
+        self._log_structured('INFO', message)
+    
+    def error(self, message):
+        self._log_structured('ERROR', message)
+    
+    def warning(self, message):
+        self._log_structured('WARNING', message)
+    
+    def critical(self, message):
+        self._log_structured('CRITICAL', message)
+    
+    def _log_structured(self, level, message):
+        """Log strutturato con dettagli ML"""
+        from datetime import datetime
+        
+        # 🎯 STRUCTURED LOG per ML Training
+        structured_event = {
+            'timestamp': datetime.now(),
+            'level': level,
+            'logger_type': self.type,
+            'message': message,
+            'asset': getattr(self.parent, 'asset', 'unknown'),
+            'context': self._extract_context(message)
+        }
+        
+        # Console output immediato per debug
+        timestamp_str = structured_event['timestamp'].strftime('%H:%M:%S')
+        print(f"[{timestamp_str}] {level} [{self.type.upper()}] {message}")
+        
+        # Accumula per ML Training Logger
+        if self.parent.ml_logger_enabled:
+            self.parent.structured_events.append(structured_event)
+            
+            # Mantieni buffer manageable
+            if len(self.parent.structured_events) > 1000:
+                self.parent.structured_events = self.parent.structured_events[-500:]
+    
+    def _extract_context(self, message):
+        """Estrae contesto ML dal messaggio"""
+        context = {}
+        
+        # Estrai informazioni specifiche per ML training
+        if 'training' in message.lower():
+            if 'ticks' in message:
+                # Cerca pattern "with X ticks"
+                import re
+                match = re.search(r'with (\d+) ticks', message)
+                if match:
+                    context['tick_count'] = int(match.group(1))
+            
+            if 'RandomForest' in message:
+                context['model_type'] = 'RandomForest'
+            elif 'LSTM' in message:
+                context['model_type'] = 'LSTM'
+            elif 'VolumePrice' in message:
+                context['model_type'] = 'VolumePrice'
+        
+        if 'failed' in message.lower() or 'error' in message.lower():
+            context['status'] = 'failed'
+        elif 'success' in message.lower():
+            context['status'] = 'success'
+        
+        return context
 
 # ================== SISTEMA DIAGNOSTICO ==================
 
@@ -6668,7 +6820,7 @@ class AssetAnalyzer:
         self.config = config or get_analyzer_config()
         
         # Sistema di logging
-        self.logger = AsyncAnalyzerLogger(f"{self.data_path}/logs")
+        self.logger = CompatibleAsyncLogger(f"{self.data_path}/logs")
         
         # 🔧 NUOVO: Sistema diagnostico avanzato
         self.diagnostics = LearningDiagnostics(asset, self.logger)
@@ -7173,107 +7325,163 @@ class AssetAnalyzer:
         pass  # Implementazione semplificata per brevità
     
     def _perform_learning_phase_training(self):
-        """Esegue mini-training durante la fase di learning"""
-        if len(self.tick_data) < self.config.learning_ticks_threshold // 10:  # 🔧 CHANGED (1/10 del threshold)
+        """Esegue mini-training durante la fase di learning con logging strutturato"""
+        
+        # 🎯 TRAINING inizia solo con 100K ticks
+        TRAINING_THRESHOLD = 100000
+        if len(self.tick_data) < TRAINING_THRESHOLD:
             return
+        
+        # CONTROLLI DI SICUREZZA PRELIMINARI
+        if not hasattr(self, 'rolling_trainer') or self.rolling_trainer is None:
+            self.logger.loggers['errors'].warning(f"Rolling trainer not initialized for {self.asset}, skipping mini-training")
+            return
+        
+        if not hasattr(self, 'competitions') or not self.competitions:
+            self.logger.loggers['errors'].warning(f"Competitions not initialized for {self.asset}, skipping mini-training")
+            return
+        
+        # 🚀 STRUCTURED TRAINING LOG - INIZIO
+        training_session = {
+            'session_id': f"{self.asset}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            'asset': self.asset,
+            'tick_count': len(self.tick_data),
+            'start_time': datetime.now(),
+            'models_to_train': [],
+            'results': {}
+        }
         
         self.logger.loggers['training'].info(
-            f"Performing learning phase training for {self.asset} with {len(self.tick_data)} ticks"
+            f"🚀 TRAINING SESSION STARTED | Asset: {self.asset} | Ticks: {len(self.tick_data)} | Threshold: {TRAINING_THRESHOLD} | Session: {training_session['session_id']}"
         )
         
-        # Prepara dati di training
-        training_data = self.rolling_trainer.prepare_training_data(self.tick_data)
-        
-        if not training_data:
-            return
-        
-            # 🧪 AGGIUNGI QUI IL DEBUG - START
-            safe_print(f"\n🧪 DEBUGGING RandomForest_Trend for {self.asset}:")
-            print(f"Training data available: {bool(training_data)}")
-            print(f"Training data keys: {list(training_data.keys()) if training_data else 'None'}")
+        # TRAINING CON GESTIONE ERRORI ROBUSTA
+        try:
+            # Prepara dati di training con logging strutturato
+            training_data = None
+            try:
+                self.logger.loggers['training'].info(f"📊 PREPARING training data for {self.asset}...")
+                training_data = self.rolling_trainer.prepare_training_data(self.tick_data)
+                
+                if training_data:
+                    data_summary = {
+                        'datasets_created': len(training_data),
+                        'dataset_keys': list(training_data.keys()) if training_data else []
+                    }
+                    self.logger.loggers['training'].info(f"✅ TRAINING DATA prepared | {data_summary}")
+                else:
+                    self.logger.loggers['errors'].error(f"❌ TRAINING DATA preparation failed - no data returned")
+                    return
+                    
+            except Exception as e:
+                self.logger.loggers['errors'].error(f"❌ TRAINING DATA preparation failed | Error: {e}")
+                return
             
-            # Test specifico per RandomForest_Trend dataset
-            if 'RandomForest_Trend' in ['LSTM_SupportResistance', 'RandomForest_Trend', 'VolumePrice_Analysis']:
-                try:
-                    safe_print(f"📊 Testing trend dataset preparation...")
-                    X, y = self.rolling_trainer._prepare_trend_dataset(training_data)
-                    safe_print(f"✅ Dataset prepared successfully!")
-                    print(f"   📏 X shape: {X.shape}")
-                    print(f"   📏 y shape: {y.shape}")
-                    safe_print(f"   🔢 Target type: {type(y[0])}")
-                    safe_print(f"   📈 Target samples: {y[:3]}")
-                    safe_print(f"   ✅ Is continuous: {not np.all(y == y.astype(int))}")
-                    safe_print(f"   📊 Target range: [{np.min(y):.6f}, {np.max(y):.6f}]")
-                except Exception as e:
-                    safe_print(f"❌ Dataset preparation FAILED: {e}")
-                    import traceback
-                    traceback.print_exc()
-            # 🧪 DEBUG - END
-
-            # 🧪 TEST LSTM AUTO-RESIZE
-            if 'LSTM_SupportResistance' in key_models:
-                safe_print(f"\n🧪 TESTING LSTM Auto-Resize for {self.asset}:")
+            if not training_data:
+                self.logger.loggers['training'].warning(f"⚠️ NO TRAINING DATA available for {self.asset}, skipping training")
+                return
+            
+            # DEFINISCI key_models con logging
+            key_models = ['LSTM_SupportResistance', 'RandomForest_Trend', 'VolumePrice_Analysis']
+            training_session['models_to_train'] = key_models
+            
+            self.logger.loggers['training'].info(f"🎯 MODELS TO TRAIN: {key_models}")
+            
+            # Train modelli con logging strutturato dettagliato
+            for model_idx, model_name in enumerate(key_models):
+                model_start_time = datetime.now()
                 
-                try:
-                    # Simula input di dimensione sbagliata
-                    test_features_2d = np.random.randn(10, 200)  # 200 features invece di 10
-                    test_features_3d = np.random.randn(5, 30, 150)  # 150 features invece di 10
-                    
-                    model = self.ml_models['LSTM_SupportResistance']
-                    safe_print(f"   🎯 Model expects input_size: {model.expected_input_size}")
-                    
-                    # Test con input 2D
-                    safe_print(f"   🧪 Testing 2D input: {test_features_2d.shape}")
-                    test_input_2d = torch.FloatTensor(test_features_2d)
-                    output_2d = model(test_input_2d)
-                    safe_print(f"   ✅ 2D → 3D + resize successful! Output: {output_2d.shape}")
-                    
-                    # Test con input 3D
-                    safe_print(f"   🧪 Testing 3D input: {test_features_3d.shape}")
-                    test_input_3d = torch.FloatTensor(test_features_3d)
-                    output_3d = model(test_input_3d)
-                    safe_print(f"   ✅ 3D resize successful! Output: {output_3d.shape}")
-                    
-                except Exception as e:
-                    safe_print(f"   ❌ LSTM auto-resize test FAILED: {e}")
-                    import traceback
-                    traceback.print_exc()
-
-        # Train solo alcuni modelli chiave durante learning
-        key_models = ['LSTM_SupportResistance', 'RandomForest_Trend', 'VolumePrice_Analysis']
-        
-        for model_name in key_models:
-            if model_name in self.ml_models:
-                model = self.ml_models[model_name]
+                self.logger.loggers['training'].info(f"🔄 TRAINING MODEL [{model_idx+1}/{len(key_models)}]: {model_name}")
                 
-                # Determina il tipo di modello
-                model_type = None
-                for mt, competition in self.competitions.items():
-                    if model_name in competition.algorithms:
-                        model_type = mt
-                        break
-                
-                if model_type:
-                    try:
-                        result = self.rolling_trainer.train_model(
-                            model, training_data, model_type, model_name,
-                            preserve_weights=False  # Durante learning, non preservare
-                        )
-                        
-                        if result['status'] == 'success':
-                            # Aggiorna data di training
-                            if model_name in self.competitions[model_type].algorithms:
-                                self.competitions[model_type].algorithms[model_name].last_training_date = datetime.now()
-                        
-                        self.logger.log_training_event(
-                            self.asset, model_type, model_name,
-                            'learning_phase', result
-                        )
-                        
-                    except Exception as e:
-                        self.logger.loggers['errors'].error(
-                            f"Learning phase training failed for {model_name}: {e}"
-                        )
+                if model_name in self.ml_models:
+                    model = self.ml_models[model_name]
+                    
+                    # Determina il tipo di modello
+                    model_type = None
+                    for mt, competition in self.competitions.items():
+                        if model_name in competition.algorithms:
+                            model_type = mt
+                            break
+                    
+                    if model_type:
+                        try:
+                            self.logger.loggers['training'].info(f"⚙️ STARTING training | Model: {model_name} | Type: {model_type.value}")
+                            
+                            result = self.rolling_trainer.train_model(
+                                model, training_data, model_type, model_name,
+                                preserve_weights=False  # Durante learning, non preservare
+                            )
+                            
+                            # Log risultato strutturato
+                            model_duration = (datetime.now() - model_start_time).total_seconds()
+                            
+                            if result['status'] == 'success':
+                                # Aggiorna data di training
+                                if model_name in self.competitions[model_type].algorithms:
+                                    self.competitions[model_type].algorithms[model_name].last_training_date = datetime.now()
+                                
+                                self.logger.loggers['training'].info(
+                                    f"✅ TRAINING SUCCESS | Model: {model_name} | Duration: {model_duration:.2f}s | "
+                                    f"Loss: {result.get('final_loss', 'N/A')} | Improvement: {result.get('improvement', 'N/A')}"
+                                )
+                                
+                                training_session['results'][model_name] = {
+                                    'status': 'success',
+                                    'duration_seconds': model_duration,
+                                    'final_loss': result.get('final_loss'),
+                                    'improvement': result.get('improvement')
+                                }
+                            else:
+                                self.logger.loggers['errors'].error(
+                                    f"❌ TRAINING FAILED | Model: {model_name} | Duration: {model_duration:.2f}s | "
+                                    f"Error: {result.get('message', 'Unknown error')}"
+                                )
+                                
+                                training_session['results'][model_name] = {
+                                    'status': 'failed',
+                                    'duration_seconds': model_duration,
+                                    'error': result.get('message', 'Unknown error')
+                                }
+                            
+                            # Log training event (se disponibile)
+                            try:
+                                self.logger.log_training_event(
+                                    self.asset, model_type, model_name,
+                                    'learning_phase', result
+                                )
+                            except:
+                                self.logger.loggers['training'].warning(f"⚠️ Could not log training event for {model_name}")
+                            
+                        except Exception as e:
+                            model_duration = (datetime.now() - model_start_time).total_seconds()
+                            self.logger.loggers['errors'].error(f"❌ TRAINING EXCEPTION | Model: {model_name} | Duration: {model_duration:.2f}s | Exception: {e}")
+                            
+                            training_session['results'][model_name] = {
+                                'status': 'exception',
+                                'duration_seconds': model_duration,
+                                'exception': str(e)
+                            }
+                    else:
+                        self.logger.loggers['errors'].warning(f"⚠️ MODEL TYPE not found for {model_name}")
+                else:
+                    self.logger.loggers['errors'].warning(f"⚠️ MODEL not found in ml_models: {model_name}")
+            
+            # 🚀 TRAINING SESSION SUMMARY
+            session_duration = (datetime.now() - training_session['start_time']).total_seconds()
+            successful_models = [name for name, result in training_session['results'].items() if result['status'] == 'success']
+            failed_models = [name for name, result in training_session['results'].items() if result['status'] != 'success']
+            
+            self.logger.loggers['training'].info(
+                f"🏁 TRAINING SESSION COMPLETED | Duration: {session_duration:.2f}s | "
+                f"Successful: {len(successful_models)}/{len(key_models)} | "
+                f"Success: {successful_models} | Failed: {failed_models}"
+            )
+            
+        except Exception as e:
+            self.logger.loggers['errors'].error(f"❌ CRITICAL ERROR in training session | Asset: {self.asset} | Error: {e}")
+            import traceback
+            self.logger.loggers['errors'].error(f"❌ TRAINING TRACEBACK: {traceback.format_exc()}")
+            return
                         
     def _perform_final_training(self):
         """Esegue training completo alla fine della fase di learning"""
@@ -7507,11 +7715,11 @@ class AssetAnalyzer:
         volume_history = volumes
         
         # Price changes con accesso diretto (NO SLICE COPIES)
-        price_change_1m = (current_price - prices[-20]) / prices[-20] if n_ticks > 20 else 0.0
-        price_change_5m = (current_price - prices[0]) / prices[0] if n_ticks == 100 else 0.0
+        price_change_1m = (current_price - prices[-20]) / prices[-20] if n_ticks > 20 and prices[-20] != 0 else 0.0
+        price_change_5m = (current_price - prices[0]) / prices[0] if n_ticks == 100 and prices[0] != 0 else 0.0
         
         # Volume analysis (avg_volume già calcolato)
-        volume_ratio = volumes[-1] / avg_volume if avg_volume > 0 else 1.0
+        volume_ratio = volumes[-1] / max(avg_volume, 1e-10)
         
         # VOLATILITY OTTIMIZZATA: Pre-alloca + operazioni IN-PLACE
         if n_ticks > 1:
@@ -7538,7 +7746,7 @@ class AssetAnalyzer:
                     window_prices = prices[window_start:window_end]
                     ranges[i] = np.ptp(window_prices)  # Peak-to-peak vettoriale
             
-            atr_volatility = float(np.mean(ranges)) / current_price if max_windows > 0 else volatility
+            atr_volatility = float(np.mean(ranges)) / max(current_price, 1e-10) if max_windows > 0 else volatility
         else:
             atr_volatility = volatility
         
@@ -7549,7 +7757,7 @@ class AssetAnalyzer:
                 bid = last_tick['bid']
                 ask = last_tick['ask']
                 spread = ask - bid
-                spread_percentage = spread / current_price if current_price > 0 else 0
+                spread_percentage = spread / max(current_price, 1e-10)
                 mid_price = (bid + ask) * 0.5  # Moltiplicazione più veloce di divisione
             else:
                 spread_percentage = 0.0
@@ -7566,7 +7774,7 @@ class AssetAnalyzer:
             older_volumes = volumes[-40:-20]  # View
             recent_vol_mean = float(np.mean(recent_volumes))
             older_vol_mean = float(np.mean(older_volumes))
-            volume_momentum = (recent_vol_mean - older_vol_mean) / older_vol_mean if older_vol_mean > 0 else 0.0
+            volume_momentum = (recent_vol_mean - older_vol_mean) / max(older_vol_mean, 1e-10)
         elif n_ticks >= 20:
             recent_vol_mean = float(np.mean(volumes[-20:]))
             volume_momentum = (recent_vol_mean - avg_volume) / avg_volume if avg_volume > 0 else 0.0
@@ -7578,7 +7786,7 @@ class AssetAnalyzer:
             # Accesso diretto senza slice intermedi
             price_20_ago = prices[-20]
             price_30_ago = prices[-30]
-            older_change = (price_20_ago - price_30_ago) / price_30_ago if price_30_ago != 0 else 0.0
+            older_change = (price_20_ago - price_30_ago) / max(price_30_ago, 1e-10)
             acceleration = price_change_1m - older_change
         else:
             acceleration = 0.0
@@ -8817,19 +9025,17 @@ class AssetAnalyzer:
                 negative_volume = np.sum(volumes[1:][price_changes < 0])
                 total_volume = positive_volume + negative_volume
                 
-                if total_volume > 0:
-                    buying_pressure = positive_volume / total_volume
-                    selling_pressure = negative_volume / total_volume
-                else:
-                    buying_pressure = selling_pressure = 0.5
+                total_volume_safe = max(total_volume, 1e-10)
+                buying_pressure = positive_volume / total_volume_safe
+                selling_pressure = negative_volume / total_volume_safe
                 
                 # Volume momentum
                 volume_ma_short = np.mean(volumes[-10:])
                 volume_ma_long = np.mean(volumes[-30:])
-                volume_momentum = (volume_ma_short - volume_ma_long) / volume_ma_long if volume_ma_long > 0 else 0
+                volume_momentum = (volume_ma_short - volume_ma_long) / max(volume_ma_long, 1e-10)
                 
                 # Price-Volume divergence
-                price_trend = (prices[-1] - prices[-20]) / prices[-20]
+                price_trend = (prices[-1] - prices[-20]) / max(prices[-20], 1e-10)
                 volume_trend = (volume_ma_short - np.mean(volumes[-20:-10])) / np.mean(volumes[-20:-10])
                 divergence = abs(price_trend - volume_trend)
                 
@@ -9792,7 +9998,7 @@ class AssetAnalyzer:
         # 🚀 CALCOLA RETURNS UNA VOLTA (operazione vettoriale)
         returns = np.empty(len(prices) - 1, dtype=np.float32)
         if len(prices) >= 2:
-            np.divide(np.diff(prices), prices[:-1], out=returns, 
+            np.divide(np.diff(prices), np.maximum(prices[:-1], 1e-10), out=returns, 
                     where=(prices[:-1] != 0), casting='safe')
             # Clamp extremes IN-PLACE
             np.clip(returns, -0.5, 0.5, out=returns)
@@ -9847,7 +10053,7 @@ class AssetAnalyzer:
         
         # Feature 5: Bollinger position
         bb_range = np.maximum(bb_upper_slice - bb_lower_slice, 1e-10)
-        np.divide(price_slice - bb_lower_slice, bb_range, out=features_matrix[:, 5])
+        np.divide(price_slice - bb_lower_slice, np.maximum(bb_range, 1e-10), out=features_matrix[:, 5])
         np.clip(features_matrix[:, 5], 0.0, 1.0, out=features_matrix[:, 5])
         
         # Feature 6: ATR normalized
@@ -10127,7 +10333,7 @@ class AssetAnalyzer:
         # Returns: operazione vettoriale IN-PLACE
         if len(prices) > 1:
             returns = np.empty(len(prices) - 1, dtype=np.float32)
-            np.divide(np.diff(prices), prices[:-1], out=returns, 
+            np.divide(np.diff(prices), np.maximum(prices[:-1], 1e-10), out=returns, 
                     where=(prices[:-1] != 0), casting='safe')
             np.clip(returns, -0.5, 0.5, out=returns)  # Clamp extremes
             
@@ -10956,10 +11162,10 @@ class AssetAnalyzer:
             
             start_idx = n_prices - 20
             for i in range(n_returns):
-                if prices[start_idx + i] > 0:
-                    return_val = (prices[start_idx + i + 1] - prices[start_idx + i]) / prices[start_idx + i]
-                    returns_sum += return_val
-                    returns_sum_sq += return_val * return_val
+                prev_price_safe = max(prices[start_idx + i], 1e-10)
+                return_val = (prices[start_idx + i + 1] - prices[start_idx + i]) / prev_price_safe
+                returns_sum += return_val
+                returns_sum_sq += return_val * return_val
             
             # Calcola standard deviation senza array temporaneo
             if n_returns > 0:
@@ -11481,10 +11687,10 @@ class AssetAnalyzer:
             
             start_idx = n_prices - 21  # 21 prezzi per 20 returns
             for i in range(n_returns):
-                if prices[start_idx + i] > 0:
-                    return_val = (prices[start_idx + i + 1] - prices[start_idx + i]) / prices[start_idx + i]
-                    returns_sum += return_val
-                    returns_sum_sq += return_val * return_val
+                prev_price_safe = max(prices[start_idx + i], 1e-10)
+                return_val = (prices[start_idx + i + 1] - prices[start_idx + i]) / prev_price_safe
+                returns_sum += return_val
+                returns_sum_sq += return_val * return_val
             
             if n_returns > 0:
                 mean_return = returns_sum / n_returns
@@ -11709,11 +11915,11 @@ class AssetAnalyzer:
             lower_wick = body_low - low
             
             # Pin bar detection con thresholds cached
-            if body > 0:  # Evita divisione per zero
-                if upper_wick > body * 2.0 and lower_wick < body * 0.5:
-                    pin_bars_down += 1
-                elif lower_wick > body * 2.0 and upper_wick < body * 0.5:
-                    pin_bars_up += 1
+            body_safe = max(body, 1e-10)
+            if upper_wick > body_safe * 2.0 and lower_wick < body_safe * 0.5:
+                pin_bars_down += 1
+            elif lower_wick > body_safe * 2.0 and upper_wick < body_safe * 0.5:
+                pin_bars_up += 1
         
         # Calculate bias
         bullish_score = bullish_candles + pin_bars_up * 2
@@ -12523,7 +12729,7 @@ class AssetAnalyzer:
         
         # Volume confirmation
         if len(volumes) >= 20:
-            price_trend = (prices[-1] - prices[-20]) / prices[-20]
+            price_trend = (prices[-1] - prices[-20]) / max(prices[-20], 1e-10)
             volume_trend = (np.mean(volumes[-10:]) - np.mean(volumes[-20:-10])) / np.mean(volumes[-20:-10])
             
             if np.sign(price_trend) == np.sign(volume_trend):
@@ -12753,12 +12959,10 @@ class AssetAnalyzer:
             numerator = n * log_xy_sum - log_x_sum * log_y_sum
             denominator = n * log_x_sum_sq - log_x_sum * log_x_sum
             
-            if denominator != 0:
-                hurst = numerator / denominator
-                # Clamp to valid range
-                hurst = max(0.0, min(1.0, hurst))
-            else:
-                hurst = 0.5
+            hurst = numerator / max(abs(denominator), 1e-10)
+            # Clamp to valid range
+            hurst = max(0.0, min(1.0, hurst))
+
         else:
             hurst = 0.5
         
@@ -12839,14 +13043,12 @@ class AssetAnalyzer:
             numerator = n_points * log_xy_sum - log_x_sum * log_y_sum
             denominator = n_points * log_x_sum_sq - log_x_sum * log_x_sum
             
-            if denominator != 0:
-                slope = numerator / denominator
-                dimension = abs(slope)  # Negative slope gives fractal dimension
-                
-                # Typical range is 1 to 2
-                dimension = max(1.0, min(2.0, dimension))
-            else:
-                dimension = 1.5
+            slope = numerator / max(abs(denominator), 1e-10)
+            dimension = abs(slope)  # Negative slope gives fractal dimension
+
+            # Typical range is 1 to 2
+            dimension = max(1.0, min(2.0, dimension))
+
         else:
             dimension = 1.5
         
@@ -12871,10 +13073,7 @@ class AssetAnalyzer:
             total_movement += diff
         
         # Efficiency ratio
-        if total_movement > 0:
-            efficiency = net_change / total_movement
-        else:
-            efficiency = 0.0
+        efficiency = net_change / max(total_movement, 1e-10)
         
         return efficiency
     
@@ -12901,16 +13100,16 @@ class AssetAnalyzer:
                 
                 start_idx = n_prices - window - 1
                 for i in range(n_returns):
-                    if prices[start_idx + i] > 0:
-                        return_val = (prices[start_idx + i + 1] - prices[start_idx + i]) / prices[start_idx + i]
-                        returns_sum += return_val
-                        returns_sum_sq += return_val * return_val
+                    prev_price_safe = max(prices[start_idx + i], 1e-10)
+                    return_val = (prices[start_idx + i + 1] - prices[start_idx + i]) / prev_price_safe
+                    returns_sum += return_val
+                    returns_sum_sq += return_val * return_val
                 
                 # Standard deviation senza np.std()
                 if n_returns > 0:
                     mean_return = returns_sum / n_returns
                     variance = (returns_sum_sq / n_returns) - (mean_return * mean_return)
-                    vol = np.sqrt(variance) if variance > 0 else 0.0
+                    vol = np.sqrt(max(variance, 0.0))
                     features[feature_idx] = vol
                 # else: già 0.0 da pre-allocazione
             # else: già 0.0 da pre-allocazione
@@ -12926,17 +13125,17 @@ class AssetAnalyzer:
             squared_returns_sum_historical = 0.0  # Ultimi 20
             
             for i in range(n_returns):
-                if prices[start_idx + i] > 0:
-                    return_val = (prices[start_idx + i + 1] - prices[start_idx + i]) / prices[start_idx + i]
-                    squared_return = return_val * return_val
+                prev_price_safe = max(prices[start_idx + i], 1e-10)
+                return_val = (prices[start_idx + i + 1] - prices[start_idx + i]) / prev_price_safe
+                squared_return = return_val * return_val
                     
-                    # Accumula per historical (tutti i 20)
-                    if i >= n_returns - 20:
-                        squared_returns_sum_historical += squared_return
-                    
-                    # Accumula per recent (ultimi 5)
-                    if i >= n_returns - 5:
-                        squared_returns_sum_recent += squared_return
+                # Accumula per historical (tutti i 20)
+                if i >= n_returns - 20:
+                    squared_returns_sum_historical += squared_return
+                
+                # Accumula per recent (ultimi 5)
+                if i >= n_returns - 5:
+                    squared_returns_sum_recent += squared_return
             
             recent_vol = squared_returns_sum_recent / 5.0
             historical_vol = squared_returns_sum_historical / 20.0
@@ -14452,22 +14651,52 @@ class AdvancedMarketAnalyzer:
             return result if result else {'status': 'processed', 'asset': asset}
             
         except Exception as e:
-            # ✅ NUOVO: Store error event
-            self._store_event('error', {
+            # DEBUG COMPLETO - Catturiamo tutto l'errore
+            import traceback
+            
+            error_details = {
+                'error_type': type(e).__name__,
+                'error_message': str(e),
+                'traceback': traceback.format_exc(),
                 'asset': asset,
                 'timestamp': timestamp,
-                'error': str(e),
-                'error_type': type(e).__name__
-            })
+                'tick_data_length': len(self.tick_data) if hasattr(self, 'tick_data') else 0
+            }
             
-            self._safe_log('errors', 'error', f"Error processing tick for {asset}: {e}")
+            # Stampa completa per debugging
+            print(f"\n{'='*60}")
+            print(f"🔍 ERRORE COMPLETO per {asset}:")
+            print(f"{'='*60}")
+            print(f"Tipo errore: {error_details['error_type']}")
+            print(f"Messaggio: {error_details['error_message']}")
+            print(f"Timestamp: {timestamp}")
+            print(f"Tick data: {error_details['tick_data_length']} elementi")
+            print(f"\nTRACEBACK COMPLETO:")
+            print(error_details['traceback'])
+            print(f"{'='*60}\n")
+            
+            # ✅ NUOVO: Store error event (senza logging problematico)
+            try:
+                self._store_event('error', {
+                    'asset': asset,
+                    'timestamp': timestamp,
+                    'error': str(e),
+                    'error_type': type(e).__name__,
+                    'traceback': error_details['traceback']
+                })
+            except:
+                print("⚠️ Anche _store_event fallito!")
+            
+            # RIMUOVIAMO il _safe_log problematico!
+            # self._safe_log('errors', 'error', f"Error processing tick for {asset}: {e}")
             
             # Return error result instead of raising
             return {
                 'status': 'error',
                 'asset': asset,
                 'error': str(e),
-                'timestamp': timestamp
+                'timestamp': timestamp,
+                'error_type': type(e).__name__
             }
     
     def _update_performance_stats(self, processing_time_ms: float) -> None:
