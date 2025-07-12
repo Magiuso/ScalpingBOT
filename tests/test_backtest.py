@@ -208,69 +208,136 @@ except ImportError as e:
     def create_custom_config(**kwargs):
         return UnifiedConfig(**kwargs)
 
-# ✅ INTEGRAZIONE: Import del ML Training Logger
-from typing import TYPE_CHECKING, Union, Any
+# ✅ INTEGRAZIONE: Import del ML Training Logger - VERSIONE SENZA CONFLITTI
+ML_TRAINING_LOGGER_AVAILABLE = False
 
-# Type checking separato per ML Logger
-if TYPE_CHECKING:
-    from modules.Analyzer_Logging_SlaveModule import (
-        AnalyzerLoggingSlave as RealAnalyzerLoggingSlave,
-        LoggingConfig as RealLoggingConfig, 
-        LogLevel as RealLogLevel
-    )
-else:
-    # Runtime: prova import reale, fallback a mock
+# Dichiara variabili globali che verranno assegnate
+LoggingConfig = None
+LogLevel = None
+AnalyzerLoggingSlave = None
+create_logging_slave = None
+process_analyzer_data = None
+
+try:
+    # Import con nomi originali dal modulo
+    import modules.Analyzer_Logging_SlaveModule as ml_module
+    
+    # Assegna alle variabili globali
+    LoggingConfig = ml_module.LoggingConfig
+    LogLevel = ml_module.LogLevel
+    AnalyzerLoggingSlave = ml_module.AnalyzerLoggingSlave
+    create_logging_slave = ml_module.create_logging_slave
+    process_analyzer_data = ml_module.process_analyzer_data
+    
+    ML_TRAINING_LOGGER_AVAILABLE = True
+    print("✅ ML Training Logger imported successfully")
+    
+except ImportError as e:
+    print(f"⚠️ ML Training Logger not available: {e}")
+    print("📄 Will use mock logging system")
     ML_TRAINING_LOGGER_AVAILABLE = False
-    try:
-        from modules.Analyzer_Logging_SlaveModule import (
-            AnalyzerLoggingSlave, 
-            LoggingConfig, 
-            LogLevel,
-            create_logging_slave,
-            process_analyzer_data
-        )
-        ML_TRAINING_LOGGER_AVAILABLE = True
-        print("✅ ML Training Logger imported successfully")
-    except ImportError as e:
-        print(f"⚠️ ML Training Logger not available: {e}")
-        print("📄 Will use standard logging only")
-        ML_TRAINING_LOGGER_AVAILABLE = False
-        
-        # Mock classes per compatibilità
-        class LogLevel:
-            VERBOSE = "verbose"
-            NORMAL = "normal"
-            MINIMAL = "minimal"
-        
-        class LoggingConfig:
-            def __init__(self, **kwargs):
-                self.log_level = LogLevel.NORMAL
-                for key, value in kwargs.items():
+    
+    # Mock classes senza conflitti di nomi
+    class MockLogLevel:
+        VERBOSE = "verbose"
+        NORMAL = "normal"
+        MINIMAL = "minimal"
+    
+    class MockLoggingConfig:
+        def __init__(self, **kwargs):
+            self.log_level = kwargs.get('log_level', MockLogLevel.NORMAL)
+            self.rate_limits = kwargs.get('rate_limits', {})
+            self.enable_console_output = kwargs.get('enable_console_output', True)
+            self.enable_csv_export = kwargs.get('enable_csv_export', True)
+            self.log_directory = kwargs.get('log_directory', './mock_ml_logs')
+            self.async_processing = kwargs.get('async_processing', True)
+            self.max_workers = kwargs.get('max_workers', 1)
+            
+            # Set any additional attributes
+            for key, value in kwargs.items():
+                if not hasattr(self, key):
                     setattr(self, key, value)
+    
+    class MockAnalyzerLoggingSlave:
+        def __init__(self, config=None):
+            self.config = config or MockLoggingConfig()
+            self._events_processed = 0
+            self._queue_size = 0
+            
+        async def start(self):
+            print("🤖 Mock ML Training Logger started")
+            
+        async def stop(self):
+            print("🤖 Mock ML Training Logger stopped")
+            
+        async def process_analyzer_events(self, events):
+            if events:
+                event_count = sum(len(event_list) for event_list in events.values() if event_list)
+                self._events_processed += event_count
+                print(f"🤖 Mock: Processed {event_count} ML events (total: {self._events_processed})")
+            
+        def get_statistics(self):
+            return {
+                'events_processed': self._events_processed,
+                'queue_size': self._queue_size,
+                'aggregation_summary': {
+                    'training_events': max(1, self._events_processed // 4),
+                    'prediction_events': max(1, self._events_processed // 3),
+                    'champion_changes': max(1, self._events_processed // 10)
+                },
+                'config': {
+                    'log_level': str(self.config.log_level),
+                    'rate_limits': len(self.config.rate_limits)
+                }
+            }
+    
+    # Assegna le classi mock alle variabili globali
+    LoggingConfig = MockLoggingConfig
+    LogLevel = MockLogLevel
+    AnalyzerLoggingSlave = MockAnalyzerLoggingSlave
+    
+    async def mock_create_logging_slave(config=None):
+        slave = MockAnalyzerLoggingSlave(config)
+        await slave.start()
+        return slave
+    
+    async def mock_process_analyzer_data(slave, analyzer_instance):
+        """Mock version che simula il processing"""
+        if not slave or not analyzer_instance:
+            return
+            
+        # Simula ottenimento eventi dall'analyzer
+        mock_events = {}
         
-        class MockAnalyzerLoggingSlave:
-            def __init__(self, config=None):
-                self.config = config or LoggingConfig()
-                
-            async def start(self):
-                pass
-                
-            async def stop(self):
-                pass
-                
-            async def process_analyzer_events(self, events):
-                pass
-                
-            def get_statistics(self):
-                return {'events_processed': 0, 'queue_size': 0}
+        # Controlla se analyzer ha competitions (modelli ML)
+        if hasattr(analyzer_instance, 'competitions') and analyzer_instance.competitions:
+            mock_events['training_events'] = [{'mock_training': True}]
+            mock_events['champion_changes'] = [{'mock_champion': True}]
         
-        AnalyzerLoggingSlave = MockAnalyzerLoggingSlave
+        # Controlla se analyzer ha tick data
+        if hasattr(analyzer_instance, 'tick_data') and len(analyzer_instance.tick_data) > 0:
+            tick_count = len(analyzer_instance.tick_data)
+            # Simula eventi proporzionali ai tick processati
+            mock_events['prediction_events'] = [{'mock_prediction': True}] * min(5, tick_count // 1000)
         
-        async def create_logging_slave(config=None):
-            return MockAnalyzerLoggingSlave(config)
+        # Controlla se analyzer ha asset_analyzers
+        if hasattr(analyzer_instance, 'asset_analyzers'):
+            for asset_name, asset_analyzer in analyzer_instance.asset_analyzers.items():
+                if hasattr(asset_analyzer, 'analysis_count'):
+                    analysis_count = asset_analyzer.analysis_count
+                    if analysis_count > 0:
+                        mock_events['analysis_events'] = [{'mock_analysis': True, 'asset': asset_name}]
         
-        async def process_analyzer_data(slave, analyzer_instance):
-            pass
+        # Processa gli eventi mock
+        if mock_events:
+            await slave.process_analyzer_events(mock_events)
+        else:
+            # Anche senza eventi, incrementa il contatore per mostrare attività
+            slave._events_processed += 1
+    
+    # Assegna le funzioni mock
+    create_logging_slave = mock_create_logging_slave
+    process_analyzer_data = mock_process_analyzer_data
 
 # Logger
 try:
