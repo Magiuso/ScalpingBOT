@@ -38,6 +38,7 @@ import shutil
 import MetaTrader5 as mt5  # Per interfaccia MT5
 import psutil
 import time
+import traceback
 warnings.filterwarnings('ignore')
 
 # ================== ANALYZER CONFIGURATION SYSTEM ==================
@@ -911,15 +912,14 @@ except ImportError as e:
         return AnalyzerLoggingSlave(config)
     
     async def process_analyzer_data(slave, analyzer):  # type: ignore
-        pass
+        """Process analyzer data through slave - placeholder implementation"""
+        if hasattr(analyzer, 'logger') and analyzer.logger:
+            events = analyzer.logger.get_all_events_for_slave()
+            if events:
+                await slave.process_analyzer_events(events)
+                analyzer.logger.clear_events_buffer()
 
 # ================== SISTEMA DI LOGGING AVANZATO ==================
-
-from collections import deque, defaultdict
-from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Dict, List, Optional, Any
-import logging
 
 class AnalyzerLogger:
     """Sistema di logging avanzato per l'Analyzer - VERSIONE CORRETTA MEMORY-SAFE"""
@@ -939,6 +939,13 @@ class AnalyzerLogger:
         self._error_events_buffer: deque = deque(maxlen=300)
         self._training_events_buffer: deque = deque(maxlen=200)
         self._mt5_events_buffer: deque = deque(maxlen=1000)
+        
+        # Additional buffers for slave module integration
+        self._performance_events_buffer: List[Dict] = []
+        self._system_events_buffer: List[Dict] = []
+        self._diagnostic_events_buffer: List[Dict] = []
+        self._emergency_events_buffer: List[Dict] = []
+        self._validation_events_buffer: List[Dict] = []
         
         # Rotazione mensile mantenuta per compatibilità
         self.current_month = datetime.now().strftime("%Y-%m")
@@ -1161,13 +1168,27 @@ class AnalyzerLogger:
         if self._shutdown_initiated:
             return {}
         
-        return {
+        events = {
             'predictions': list(self._prediction_events_buffer),
             'champion_changes': list(self._champion_events_buffer),
             'errors': list(self._error_events_buffer),
             'training': list(self._training_events_buffer),
             'mt5_communications': list(self._mt5_events_buffer)
         }
+        
+        # Add new buffer types if they exist
+        if hasattr(self, '_performance_events_buffer'):
+            events['performance'] = list(self._performance_events_buffer)
+        if hasattr(self, '_system_events_buffer'):
+            events['system'] = list(self._system_events_buffer)
+        if hasattr(self, '_diagnostic_events_buffer'):
+            events['diagnostics'] = list(self._diagnostic_events_buffer)
+        if hasattr(self, '_emergency_events_buffer'):
+            events['emergency'] = list(self._emergency_events_buffer)
+        if hasattr(self, '_validation_events_buffer'):
+            events['validation'] = list(self._validation_events_buffer)
+            
+        return events
     
     def clear_events_buffer(self, event_types: Optional[List[str]] = None) -> None:
         """Clear event buffers after slave module processing"""
@@ -1182,19 +1203,37 @@ class AnalyzerLogger:
             self._error_events_buffer.clear()
             self._training_events_buffer.clear()
             self._mt5_events_buffer.clear()
+            
+            # Clear new buffers if they exist
+            if hasattr(self, '_performance_events_buffer'):
+                self._performance_events_buffer.clear()
+            if hasattr(self, '_system_events_buffer'):
+                self._system_events_buffer.clear()
+            if hasattr(self, '_diagnostic_events_buffer'):
+                self._diagnostic_events_buffer.clear()
+            if hasattr(self, '_emergency_events_buffer'):
+                self._emergency_events_buffer.clear()
+            if hasattr(self, '_validation_events_buffer'):
+                self._validation_events_buffer.clear()
         else:
             # Clear specific buffers
+            buffer_mapping = {
+                'predictions': '_prediction_events_buffer',
+                'champion_changes': '_champion_events_buffer',
+                'errors': '_error_events_buffer',
+                'training': '_training_events_buffer',
+                'mt5_communications': '_mt5_events_buffer',
+                'performance': '_performance_events_buffer',
+                'system': '_system_events_buffer',
+                'diagnostics': '_diagnostic_events_buffer',
+                'emergency': '_emergency_events_buffer',
+                'validation': '_validation_events_buffer'
+            }
+            
             for event_type in event_types:
-                if event_type == 'predictions':
-                    self._prediction_events_buffer.clear()
-                elif event_type == 'champion_changes':
-                    self._champion_events_buffer.clear()
-                elif event_type == 'errors':
-                    self._error_events_buffer.clear()
-                elif event_type == 'training':
-                    self._training_events_buffer.clear()
-                elif event_type == 'mt5_communications':
-                    self._mt5_events_buffer.clear()
+                buffer_name = buffer_mapping.get(event_type)
+                if buffer_name and hasattr(self, buffer_name):
+                    getattr(self, buffer_name).clear()
     
     def get_buffer_status(self) -> Dict[str, Dict[str, Any]]:
         """Ottieni stato corrente dei buffer"""
@@ -1227,6 +1266,31 @@ class AnalyzerLogger:
                 'current_size': len(self._mt5_events_buffer),
                 'max_size': self._mt5_events_buffer.maxlen or 0,
                 'utilization_percent': (len(self._mt5_events_buffer) / (self._mt5_events_buffer.maxlen or 1)) * 100
+            },
+            'performance': {
+                'current_size': len(self._performance_events_buffer),
+                'max_size': 5000,  # As defined in the method
+                'utilization_percent': (len(self._performance_events_buffer) / 5000) * 100
+            },
+            'system': {
+                'current_size': len(self._system_events_buffer),
+                'max_size': 2000,  # As defined in the method
+                'utilization_percent': (len(self._system_events_buffer) / 2000) * 100
+            },
+            'diagnostics': {
+                'current_size': len(self._diagnostic_events_buffer),
+                'max_size': 200,  # As defined in existing method
+                'utilization_percent': (len(self._diagnostic_events_buffer) / 200) * 100
+            },
+            'emergency': {
+                'current_size': len(self._emergency_events_buffer),
+                'max_size': 1000,  # As defined in the method
+                'utilization_percent': (len(self._emergency_events_buffer) / 1000) * 100
+            },
+            'validation': {
+                'current_size': len(self._validation_events_buffer),
+                'max_size': 1000,  # Default value
+                'utilization_percent': (len(self._validation_events_buffer) / 1000) * 100
             }
         }
     
@@ -1242,12 +1306,22 @@ class AnalyzerLogger:
             'errors': len(self._error_events_buffer),
             'training': len(self._training_events_buffer),
             'mt5_communications': len(self._mt5_events_buffer),
+            'performance': len(self._performance_events_buffer),
+            'system': len(self._system_events_buffer),
+            'diagnostics': len(self._diagnostic_events_buffer),
+            'emergency': len(self._emergency_events_buffer),
+            'validation': len(self._validation_events_buffer),
             'total_flushed': (
                 len(self._prediction_events_buffer) +
                 len(self._champion_events_buffer) +
                 len(self._error_events_buffer) +
                 len(self._training_events_buffer) +
-                len(self._mt5_events_buffer)
+                len(self._mt5_events_buffer) +
+                len(self._performance_events_buffer) +
+                len(self._system_events_buffer) +
+                len(self._diagnostic_events_buffer) +
+                len(self._emergency_events_buffer) +
+                len(self._validation_events_buffer)
             ),
             'flush_timestamp': datetime.now()
         }
@@ -1274,14 +1348,24 @@ class AnalyzerLogger:
                 'champion_changes': len(self._champion_events_buffer),
                 'errors': len(self._error_events_buffer),
                 'training': len(self._training_events_buffer),
-                'mt5_communications': len(self._mt5_events_buffer)
+                'mt5_communications': len(self._mt5_events_buffer),
+                'performance': len(self._performance_events_buffer),
+                'system': len(self._system_events_buffer),
+                'diagnostics': len(self._diagnostic_events_buffer),
+                'emergency': len(self._emergency_events_buffer),
+                'validation': len(self._validation_events_buffer)
             },
             'total_events': (
                 len(self._prediction_events_buffer) +
                 len(self._champion_events_buffer) +
                 len(self._error_events_buffer) +
                 len(self._training_events_buffer) +
-                len(self._mt5_events_buffer)
+                len(self._mt5_events_buffer) +
+                len(self._performance_events_buffer) +
+                len(self._system_events_buffer) +
+                len(self._diagnostic_events_buffer) +
+                len(self._emergency_events_buffer) +
+                len(self._validation_events_buffer)
             )
         }
         
@@ -1299,6 +1383,13 @@ class AnalyzerLogger:
         self._error_events_buffer.clear()
         self._training_events_buffer.clear()
         self._mt5_events_buffer.clear()
+        
+        # Clear additional buffers
+        self._performance_events_buffer.clear()
+        self._system_events_buffer.clear()
+        self._diagnostic_events_buffer.clear()
+        self._emergency_events_buffer.clear()
+        self._validation_events_buffer.clear()
         
         # Clear dictionaries
         self.loggers.clear()
@@ -1333,6 +1424,57 @@ class AnalyzerLogger:
     def _rotate_csv_files(self) -> None:
         """Legacy method - disabled during cleanup phase"""
         pass
+    
+    def _store_performance_event(self, event_type: str, event_data: Dict) -> None:
+        """Store performance events in memory for future processing by slave module"""
+        if not hasattr(self, '_performance_events_buffer'):
+            self._performance_events_buffer = []
+        
+        event_entry = {
+            'timestamp': datetime.now(),
+            'event_type': event_type,
+            'data': event_data
+        }
+        
+        self._performance_events_buffer.append(event_entry)
+        
+        # Keep buffer size manageable
+        if len(self._performance_events_buffer) > 5000:
+            self._performance_events_buffer = self._performance_events_buffer[-2500:]
+    
+    def _store_system_event(self, event_type: str, event_data: Dict) -> None:
+        """Store system events in memory for future processing by slave module"""
+        if not hasattr(self, '_system_events_buffer'):
+            self._system_events_buffer = []
+        
+        event_entry = {
+            'timestamp': datetime.now(),
+            'event_type': event_type,
+            'data': event_data
+        }
+        
+        self._system_events_buffer.append(event_entry)
+        
+        # Keep buffer size manageable
+        if len(self._system_events_buffer) > 2000:
+            self._system_events_buffer = self._system_events_buffer[-1000:]
+    
+    def _store_error_event(self, event_type: str, event_data: Dict) -> None:
+        """Store error events in memory for future processing by slave module"""
+        if not hasattr(self, '_error_events_buffer'):
+            self._error_events_buffer = []
+        
+        event_entry = {
+            'timestamp': datetime.now(),
+            'event_type': event_type,
+            'data': event_data
+        }
+        
+        self._error_events_buffer.append(event_entry)
+        
+        # Keep buffer size manageable
+        if len(self._error_events_buffer) > 1000:
+            self._error_events_buffer = self._error_events_buffer[-500:]
 
 # ================== LOGGING INTEGRATION ==================
 
@@ -1892,18 +2034,21 @@ class LearningDiagnostics:
         
         # Log critico per fasi importanti
         if phase_info.get('phase') == 'learning_complete':
-            self.logger.loggers['system'].critical(
-                f"🎓 LEARNING COMPLETE | {self.asset} | "
-                f"Ticks: {self.total_ticks_processed} | "
-                f"Duration: {phase_info.get('duration_hours', 0):.2f}h | "
-                f"Memory: {phase_record['memory_usage']:.1f}%"
-            )
+            self._store_diagnostic_event('learning_complete', {
+                'asset': self.asset,
+                'total_ticks': self.total_ticks_processed,
+                'duration_hours': phase_info.get('duration_hours', 0),
+                'memory_usage': phase_record['memory_usage'],
+                'phase_info': phase_info,
+                'severity': 'critical'
+            })
         elif phase_info.get('phase') == 'learning_stalled':
-            self.logger.loggers['emergency'].critical(
-                f"🚨 LEARNING STALLED | {self.asset} | "
-                f"Stuck at: {self.total_ticks_processed} ticks | "
-                f"Reason: {phase_info.get('reason', 'unknown')}"
-            )
+            self._store_emergency_event('learning_stalled', {
+                'asset': self.asset,
+                'stuck_at_ticks': self.total_ticks_processed,
+                'reason': phase_info.get('reason', 'unknown'),
+                'phase_info': phase_info
+            })
     
     def log_data_structure_analysis(self, analyzer_instance) -> Dict[str, Any]:
         """Analizza e logga lo stato delle strutture dati - VERSIONE PULITA"""
@@ -2113,6 +2258,57 @@ class LearningDiagnostics:
             
             self._diagnostic_events_buffer = critical_events + recent_checks
     
+    def _store_emergency_event(self, event_type: str, event_data: Dict) -> None:
+        """Store emergency events in memory for future processing by slave module"""
+        if not hasattr(self, '_emergency_events_buffer'):
+            self._emergency_events_buffer = []
+        
+        event_entry = {
+            'timestamp': datetime.now(),
+            'event_type': event_type,
+            'data': event_data
+        }
+        
+        self._emergency_events_buffer.append(event_entry)
+        
+        # Keep buffer size manageable
+        if len(self._emergency_events_buffer) > 100:
+            self._emergency_events_buffer = self._emergency_events_buffer[-50:]
+    
+    def _store_performance_event(self, event_type: str, event_data: Dict) -> None:
+        """Store performance events in memory for future processing by slave module"""
+        if not hasattr(self, '_performance_events_buffer'):
+            self._performance_events_buffer = []
+        
+        event_entry = {
+            'timestamp': datetime.now(),
+            'event_type': event_type,
+            'data': event_data
+        }
+        
+        self._performance_events_buffer.append(event_entry)
+        
+        # Keep buffer size manageable
+        if len(self._performance_events_buffer) > 1000:
+            self._performance_events_buffer = self._performance_events_buffer[-500:]
+    
+    def _store_error_event(self, event_type: str, event_data: Dict) -> None:
+        """Store error events in memory for future processing by slave module"""
+        if not hasattr(self, '_error_events_buffer'):
+            self._error_events_buffer = []
+        
+        event_entry = {
+            'timestamp': datetime.now(),
+            'event_type': event_type,
+            'data': event_data
+        }
+        
+        self._error_events_buffer.append(event_entry)
+        
+        # Keep buffer size manageable
+        if len(self._error_events_buffer) > 200:
+            self._error_events_buffer = self._error_events_buffer[-100:]
+    
     def _log_processing_milestone(self) -> None:
         """Logga milestone di processing ogni 1000 ticks"""
         
@@ -2130,13 +2326,14 @@ class LearningDiagnostics:
             'failed_operations': self.failed_operations
         }
         
-        self.logger.loggers['system'].info(
-            f"📈 PROCESSING MILESTONE | {self.asset} | "
-            f"Ticks: {stats['total_ticks']:,} | "
-            f"Rate: {stats['current_tick_rate']:.2f}/s | "
-            f"AvgTime: {stats['avg_processing_time']:.3f}s | "
-            f"Memory: {stats['memory_usage']:.1f}%"
-        )
+        self._store_performance_event('processing_milestone', {
+            'asset': self.asset,
+            'total_ticks': stats['total_ticks'],
+            'tick_rate': stats['current_tick_rate'],
+            'avg_processing_time': stats['avg_processing_time'],
+            'memory_usage': stats['memory_usage'],
+            'full_stats': stats
+        })
         
         # Controlla trend peggiorativi
         if stats['avg_processing_time'] > 1.0:
@@ -2152,24 +2349,12 @@ class LearningDiagnostics:
             'tick_count': getattr(self, 'total_ticks_processed', 0)
         }
         
-        # FIX: Controlla se il logger esiste prima di usarlo
-        try:
-            if hasattr(self, 'logger') and hasattr(self.logger, 'loggers'):
-                if 'emergency' in self.logger.loggers:
-                    self.logger.loggers['emergency'].critical(
-                        f"Performance bottleneck detected: {bottleneck_type}", 
-                        extra={'details': details}
-                    )
-                elif 'errors' in self.logger.loggers:
-                    self.logger.loggers['errors'].error(
-                        f"Performance bottleneck: {bottleneck_type} - {details}"
-                    )
-                else:
-                    # Fallback: usa print se non ci sono logger disponibili
-                    print(f"⚠️ Performance bottleneck: {bottleneck_type} - {details}")
-            else:
-                # Logger non disponibile, usa print
-                print(f"⚠️ Performance bottleneck: {bottleneck_type} - {details}")
+        # Store performance bottleneck event
+        self._store_emergency_event('performance_bottleneck', {
+            'bottleneck_type': bottleneck_type,
+            'details': details,
+            'severity': 'critical'
+        })
         except Exception:
             # Catch-all per evitare che il monitoring thread si blocchi
             pass
@@ -2232,11 +2417,10 @@ class LearningDiagnostics:
             except Exception as e:
                 # FIX: Gestione sicura delle eccezioni nel monitoring thread
                 try:
-                    if (hasattr(self, 'logger') and hasattr(self.logger, 'loggers') 
-                        and 'errors' in self.logger.loggers):
-                        self.logger.loggers['errors'].error(f"Monitor thread error: {e}")
-                    else:
-                        print(f"⚠️ Monitor thread error: {e}")
+                    self._store_error_event('monitor_thread_error', {
+                        'error': str(e),
+                        'traceback': traceback.format_exc()
+                    })
                 except Exception:
                     # Ultimo fallback per evitare crash del thread
                     print(f"⚠️ Monitor error (fallback): {e}")
@@ -2744,12 +2928,16 @@ class EmergencyStopSystem:
         algorithm.emergency_stop_triggered = True
         self.stopped_algorithms.add(algorithm_key)
         
-        # Log dettagliato
-        self.logger.loggers['emergency'].critical(
-            f"🚨 EMERGENCY STOP TRIGGERED | {algorithm_key} | "
-            f"Triggers: {triggers} | "
-            f"Final Score: {algorithm.final_score:.2f}"
-        )
+        # Store emergency stop event
+        self._store_emergency_event('emergency_stop_triggered', {
+            'algorithm_key': algorithm_key,
+            'triggers': triggers,
+            'final_score': algorithm.final_score,
+            'algorithm_data': {
+                'name': algorithm.name,
+                'model_type': algorithm.model_type.value if hasattr(algorithm.model_type, 'value') else str(algorithm.model_type)
+            }
+        })
         
         # Notifica per analisi
         stop_event = {
@@ -2819,6 +3007,7 @@ class EmergencyStopSystem:
             for event_type in event_types:
                 if event_type == 'emergency_events' and hasattr(self, '_emergency_events_buffer'):
                     self._emergency_events_buffer.clear()
+
 class MT5Interface:
     """Interfaccia per comunicazione con MetaTrader 5 - VERSIONE PULITA"""
     
@@ -7201,13 +7390,17 @@ class AssetAnalyzer:
                             else:
                                 self.ml_models[algorithm_name] = model_data['weights']
                             
-                            self.logger.loggers['system'].info(
-                                f"Loaded preserved model for {algorithm_name} from {best_preserved['timestamp']}"
-                            )
+                            self.logger._store_system_event('model_loaded', {
+                                'algorithm_name': algorithm_name,
+                                'preserved_timestamp': best_preserved['timestamp'],
+                                'model_data': best_preserved
+                            })
                         except Exception as e:
-                            self.logger.loggers['errors'].error(
-                                f"Failed to load preserved model {algorithm_name}: {e}"
-                            )
+                            self.logger._store_error_event('model_load_failed', {
+                                'algorithm_name': algorithm_name,
+                                'error': str(e),
+                                'traceback': traceback.format_exc()
+                            })
     
     def process_tick(self, timestamp: datetime, price: float, volume: float, 
                     bid: Optional[float] = None, ask: Optional[float] = None, additional_data: Optional[Dict] = None) -> Dict[str, Any]:
@@ -14498,6 +14691,11 @@ class AdvancedMarketAnalyzer:
         
         # Global logger con accesso sicuro
         self.logger = None
+        
+        # ✅ NUOVO: Analyzer Logging Slave Module initialization
+        self.logging_slave = None
+        self.slave_processing_interval = 60.0  # Process events every 60 seconds
+        self.last_slave_processing = datetime.now()
         self._logger_available = False
         
         try:
@@ -14566,6 +14764,69 @@ class AdvancedMarketAnalyzer:
             pass
         except Exception as e:
             self._safe_log('errors', 'error', f"Error during analyzer loading: {e}")
+    
+    async def initialize_logging_slave(self):
+        """Initialize the Analyzer logging slave module"""
+        try:
+            from modules.Analyzer_Logging_SlaveModule import (
+                AnalyzerLoggingSlave, LoggingConfig, LogLevel
+            )
+            
+            # Create logging config
+            logging_config = LoggingConfig(
+                log_level=LogLevel.NORMAL,
+                rate_limits={
+                    'process_tick': 1000,      # Log every 1000 ticks
+                    'predictions': 100,        # Log every 100 predictions
+                    'validations': 50,         # Log every 50 validations
+                    'diagnostics': 500,        # Log every 500 diagnostics
+                    'emergency_events': 1,     # Always log emergency events
+                    'champion_changes': 1,     # Always log champion changes
+                    'performance_metrics': 100 # Log every 100 performance metrics
+                },
+                enable_console_output=True,
+                enable_file_output=True,
+                enable_csv_export=True,
+                async_processing=True,
+                batch_size=50,
+                max_queue_size=10000,
+                log_directory=f"./analyzer_logs/main_system"
+            )
+            
+            # Create and start slave
+            self.logging_slave = AnalyzerLoggingSlave(logging_config)
+            await self.logging_slave.start()
+            
+            self._safe_log('system', 'info', "✅ Analyzer Logging Slave module initialized")
+            
+        except ImportError as e:
+            self._safe_log('errors', 'error', f"❌ Failed to import logging slave module: {e}")
+            self.logging_slave = None
+        except Exception as e:
+            self._safe_log('errors', 'error', f"❌ Failed to initialize logging slave: {e}")
+            self.logging_slave = None
+    
+    async def cleanup_logging_slave(self):
+        """Clean up logging slave module"""
+        if self.logging_slave:
+            try:
+                # Process any remaining events from all asset analyzers
+                for asset, analyzer in self.asset_analyzers.items():
+                    if hasattr(analyzer, 'logger') and analyzer.logger:
+                        events = analyzer.logger.get_all_events_for_slave()
+                        if events:
+                            await self.logging_slave.process_analyzer_events(events)
+                            analyzer.logger.clear_events_buffer()
+                
+                # Stop slave
+                await self.logging_slave.stop()
+                
+                # Get final statistics
+                stats = self.logging_slave.get_statistics()
+                self._safe_log('system', 'info', f"📊 Logging slave final stats: {stats}")
+                
+            except Exception as e:
+                self._safe_log('errors', 'error', f"Error during logging slave cleanup: {e}")
     
     def add_asset(self, asset: str) -> AssetAnalyzer:
         """Aggiunge un nuovo asset per l'analisi - VERSIONE COMPLETA"""
@@ -14662,6 +14923,10 @@ class AdvancedMarketAnalyzer:
                     'timestamp': timestamp,
                     'prediction': result['prediction']
                 })
+            
+            # ✅ NUOVO: Process accumulated events through slave module periodically
+            if self.logging_slave and (datetime.now() - self.last_slave_processing).total_seconds() > self.slave_processing_interval:
+                asyncio.create_task(self._process_events_through_slave())
             
             return result if result else {'status': 'processed', 'asset': asset}
             
@@ -14810,6 +15075,79 @@ class AdvancedMarketAnalyzer:
         }
         
         return stats
+    
+    async def _process_events_through_slave(self):
+        """Process accumulated events through the logging slave module"""
+        if not self.logging_slave:
+            return
+        
+        try:
+            # Collect events from all asset analyzers
+            all_events = {}
+            
+            for asset, analyzer in self.asset_analyzers.items():
+                if hasattr(analyzer, 'logger') and analyzer.logger:
+                    asset_events = analyzer.logger.get_all_events_for_slave()
+                    for event_type, events in asset_events.items():
+                        if event_type not in all_events:
+                            all_events[event_type] = []
+                        # Add asset context to each event
+                        for event in events:
+                            event['asset'] = asset
+                            all_events[event_type].append(event)
+            
+            # Add global events from this AdvancedMarketAnalyzer
+            global_events = self.get_all_events()
+            for event_type, events in global_events.items():
+                if event_type not in all_events:
+                    all_events[event_type] = []
+                all_events[event_type].extend(events)
+            
+            # Process through slave if we have events
+            if all_events:
+                await self.logging_slave.process_analyzer_events(all_events)
+                
+                # Clear processed events from all sources
+                for asset, analyzer in self.asset_analyzers.items():
+                    if hasattr(analyzer, 'logger') and analyzer.logger:
+                        analyzer.logger.clear_events_buffer()
+                
+                self.clear_events()
+                
+                # Update last processing time
+                self.last_slave_processing = datetime.now()
+                
+        except Exception as e:
+            self._safe_log('errors', 'error', f"Error processing events through slave: {e}")
+    
+    def get_slave_status(self) -> Dict[str, Any]:
+        """Get current status of logging slave module"""
+        if not self.logging_slave:
+            return {'status': 'not_initialized'}
+        
+        try:
+            stats = self.logging_slave.get_statistics()
+            return {
+                'status': 'active',
+                'statistics': stats,
+                'last_processing': self.last_slave_processing.isoformat(),
+                'processing_interval': self.slave_processing_interval
+            }
+        except Exception as e:
+            return {
+                'status': 'error',
+                'error': str(e)
+            }
+    
+    def set_slave_processing_interval(self, interval_seconds: float):
+        """Update slave processing interval"""
+        if interval_seconds > 0:
+            old_interval = self.slave_processing_interval
+            self.slave_processing_interval = interval_seconds
+            self._store_event('slave_interval_updated', {
+                'new_interval': interval_seconds,
+                'old_interval': old_interval
+            })
     
     def receive_observer_feedback(self, asset: str, prediction_id: str, 
                                 feedback_data: Dict[str, Any]) -> None:
