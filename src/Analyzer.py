@@ -15020,6 +15020,9 @@ class AdvancedMarketAnalyzer:
             # Update global stats
             self._update_global_stats()
             
+            # Update ML display metrics
+            self._update_ml_display_metrics(asset)
+            
             # ✅ NUOVO: Store significant events  
             if result and result.get('status') == 'learning_complete':
                 self._store_event('learning_completed', {
@@ -15214,6 +15217,10 @@ class AdvancedMarketAnalyzer:
             # Emit the event
             self.ml_event_collector.emit_event(ml_event)
             
+            # Update display for important events
+            if event_type in ['champion_change', 'emergency_stop', 'learning_progress', 'validation_complete']:
+                self._update_ml_display_metrics()
+            
         except Exception as e:
             # Silent fail to prevent crashes
             self._safe_log('errors', 'warning', f"Failed to emit ML event {event_type}: {e}")
@@ -15228,26 +15235,54 @@ class AdvancedMarketAnalyzer:
             performance_stats = self.get_performance_stats()
             health_score = self._calculate_global_health()['score']
             
-            # Prepare metrics for display
-            display_metrics = {
-                'total_assets': len(self.asset_analyzers),
-                'active_assets': performance_stats['active_assets'],
-                'ticks_processed': performance_stats['ticks_processed'],
-                'ticks_per_second': performance_stats['ticks_per_second'],
-                'avg_latency_ms': performance_stats['avg_latency_ms'],
-                'system_health_score': health_score,
-                'uptime_hours': performance_stats['uptime_seconds'] / 3600,
-                'events_generated': performance_stats['events_generated']
-            }
+            # Calculate learning progress and champions
+            learning_progress = 0.0
+            champions_active = 0
+            total_ticks = performance_stats.get('ticks_processed', 0)
             
-            # Add asset-specific metrics if provided
-            if asset and asset in self.asset_analyzers:
-                analyzer = self.asset_analyzers[asset]
-                display_metrics.update({
-                    'current_asset': asset,
-                    'asset_ticks': len(analyzer.tick_data) if hasattr(analyzer, 'tick_data') else 0,
-                    'asset_learning_phase': getattr(analyzer, 'learning_phase', True)
-                })
+            # Get model information from asset analyzers
+            models_info = {}
+            for asset_name, analyzer in self.asset_analyzers.items():
+                # Get model competitions if available
+                if hasattr(analyzer, 'competitions'):
+                    for model_type, competition in analyzer.competitions.items():
+                        if hasattr(competition, 'champion') and competition.champion:
+                            model_name = f"{asset_name}_{model_type.value}"
+                            champion_alg = competition.algorithms.get(competition.champion)
+                            if champion_alg:
+                                models_info[model_name] = {
+                                    'progress': min(100.0, (total_ticks / 10000) * 100),  # Approximate progress
+                                    'accuracy': champion_alg.accuracy_rate * 100 if hasattr(champion_alg, 'accuracy_rate') else 0.0,
+                                    'status': 'Training' if getattr(analyzer, 'learning_phase', True) else 'Complete',
+                                    'predictions': champion_alg.total_predictions if hasattr(champion_alg, 'total_predictions') else 0,
+                                    'is_champion': True
+                                }
+                                champions_active += 1
+                
+                # Calculate overall learning progress
+                if hasattr(analyzer, 'learning_phase') and analyzer.learning_phase:
+                    # Simple progress calculation based on ticks processed
+                    asset_ticks = len(analyzer.tick_data) if hasattr(analyzer, 'tick_data') else 0
+                    learning_progress = max(learning_progress, min(100.0, (asset_ticks / 50000) * 100))
+            
+            # Update individual model progress
+            for model_name, model_data in models_info.items():
+                self.ml_display_manager.update_model_progress(
+                    model_name=model_name,
+                    **model_data
+                )
+            
+            # Prepare main display metrics
+            display_metrics = {
+                'learning_progress': learning_progress,
+                'duration_seconds': int(performance_stats.get('uptime_seconds', 0)),
+                'ticks_processed': total_ticks,
+                'processing_rate': performance_stats.get('ticks_per_second', 0.0),
+                'champions_active': champions_active,
+                'health_score': health_score,
+                'asset_symbol': asset or list(self.asset_analyzers.keys())[0] if self.asset_analyzers else 'UNKNOWN',
+                'system_status': 'LEARNING' if any(getattr(a, 'learning_phase', False) for a in self.asset_analyzers.values()) else 'RUNNING'
+            }
             
             # Update display
             self.ml_display_manager.update_metrics(**display_metrics)
@@ -15450,6 +15485,9 @@ class AdvancedMarketAnalyzer:
                     (datetime.now() - self.global_stats['system_start_time']).total_seconds() / 3600
                 )
             })
+            
+            # Update ML display metrics for all assets
+            self._update_ml_display_metrics()
             
         except Exception as e:
             self._safe_log('errors', 'error', f"Error updating global stats: {e}")
