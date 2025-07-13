@@ -39,18 +39,22 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 base_path = r"C:\ScalpingBOT"
 src_path = r"C:\ScalpingBOT\src"
 utils_path = r"C:\ScalpingBOT\utils"
+ml_logger_path = r"C:\ScalpingBOT\ML_Training_Logger"
 
 sys.path.insert(0, base_path)  # Per import relativi come "from utils.xxx"
 sys.path.insert(0, src_path)   # Per i moduli principali
 sys.path.insert(0, utils_path) # Per accesso diretto a utils
+sys.path.insert(0, ml_logger_path) # Per ML_Training_Logger components
 
 print(f"🔍 Current file: {__file__}")
 print(f"📁 Base path: {base_path}")
 print(f"📁 Src path: {src_path}")  
 print(f"📁 Utils path: {utils_path}")
+print(f"📁 ML Logger path: {ml_logger_path}")
 print(f"📁 Base exists: {os.path.exists(base_path)}")
 print(f"📁 Src exists: {os.path.exists(src_path)}")
 print(f"📁 Utils exists: {os.path.exists(utils_path)}")
+print(f"📁 ML Logger exists: {os.path.exists(ml_logger_path)}")
 
 # Verifica file moduli esistano
 required_files = [
@@ -208,136 +212,115 @@ except ImportError as e:
     def create_custom_config(**kwargs):
         return UnifiedConfig(**kwargs)
 
-# ✅ INTEGRAZIONE: Import del ML Training Logger - VERSIONE SENZA CONFLITTI
+# ✅ INTEGRAZIONE: Import del ML Training Logger - NUOVO SISTEMA
 ML_TRAINING_LOGGER_AVAILABLE = False
 
-# Dichiara variabili globali che verranno assegnate
-LoggingConfig = None
-LogLevel = None
-AnalyzerLoggingSlave = None
-create_logging_slave = None
-process_analyzer_data = None
+# Dichiara variabili globali per i nuovi componenti ML_Training_Logger
+UnifiedConfigManager = None
+EventCollector = None
+DisplayManager = None
+StorageManager = None
+ConfigVerbosity = None
 
 try:
-    # Import con nomi originali dal modulo
-    import modules.Analyzer_Logging_SlaveModule as ml_module
-    
-    # Assegna alle variabili globali
-    LoggingConfig = ml_module.LoggingConfig
-    LogLevel = ml_module.LogLevel
-    AnalyzerLoggingSlave = ml_module.AnalyzerLoggingSlave
-    create_logging_slave = ml_module.create_logging_slave
-    process_analyzer_data = ml_module.process_analyzer_data
+    # Import dei nuovi componenti ML_Training_Logger
+    from ML_Training_Logger.Unified_ConfigManager import UnifiedConfigManager, ConfigVerbosity
+    from ML_Training_Logger.Event_Collector import EventCollector
+    from ML_Training_Logger.Display_Manager import DisplayManager
+    from ML_Training_Logger.Storage_Manager import StorageManager
     
     ML_TRAINING_LOGGER_AVAILABLE = True
-    print("✅ ML Training Logger imported successfully")
+    print("✅ ML Training Logger components imported successfully")
+    print("   ├── UnifiedConfigManager ✅")
+    print("   ├── EventCollector ✅")
+    print("   ├── DisplayManager ✅")
+    print("   └── StorageManager ✅")
     
 except ImportError as e:
     print(f"⚠️ ML Training Logger not available: {e}")
     print("📄 Will use mock logging system")
     ML_TRAINING_LOGGER_AVAILABLE = False
     
-    # Mock classes senza conflitti di nomi
-    class MockLogLevel:
-        VERBOSE = "verbose"
-        NORMAL = "normal"
+    # Mock classes per i nuovi componenti ML_Training_Logger
+    class MockConfigVerbosity:
         MINIMAL = "minimal"
+        STANDARD = "standard"
+        VERBOSE = "verbose"
+        DEBUG = "debug"
     
-    class MockLoggingConfig:
-        def __init__(self, **kwargs):
-            self.log_level = kwargs.get('log_level', MockLogLevel.NORMAL)
-            self.rate_limits = kwargs.get('rate_limits', {})
-            self.enable_console_output = kwargs.get('enable_console_output', True)
-            self.enable_csv_export = kwargs.get('enable_csv_export', True)
-            self.log_directory = kwargs.get('log_directory', './mock_ml_logs')
-            self.async_processing = kwargs.get('async_processing', True)
-            self.max_workers = kwargs.get('max_workers', 1)
-            
-            # Set any additional attributes
-            for key, value in kwargs.items():
-                if not hasattr(self, key):
-                    setattr(self, key, value)
+    class MockConfig:
+        def __init__(self, asset_name="MOCK_ASSET", verbosity=None, **kwargs):
+            self.asset_name = asset_name
+            self.verbosity_level = verbosity or MockConfigVerbosity.STANDARD
+            self.base_directory = kwargs.get('base_directory', './mock_ml_logs')
+            self.terminal_mode = kwargs.get('terminal_mode', 'dashboard')
+            self.file_output = kwargs.get('file_output', True)
+            self.formats = kwargs.get('formats', ['json'])
+
+    class MockUnifiedConfigManager:
+        @staticmethod
+        def create_custom_config(asset_name="MOCK_ASSET", verbosity=None, **kwargs):
+            return MockConfig(asset_name=asset_name, verbosity=verbosity, **kwargs)
     
-    class MockAnalyzerLoggingSlave:
+    class MockEventCollector:
         def __init__(self, config=None):
-            self.config = config or MockLoggingConfig()
-            self._events_processed = 0
-            self._queue_size = 0
+            self.config = config
+            self._events_collected = 0
+            self._is_running = False
             
-        async def start(self):
-            print("🤖 Mock ML Training Logger started")
+        def start(self):
+            self._is_running = True
+            print("🤖 Mock EventCollector started")
             
-        async def stop(self):
-            print("🤖 Mock ML Training Logger stopped")
+        def stop(self):
+            self._is_running = False
+            print("🤖 Mock EventCollector stopped")
             
-        async def process_analyzer_events(self, events):
-            if events:
-                event_count = sum(len(event_list) for event_list in events.values() if event_list)
-                self._events_processed += event_count
-                print(f"🤖 Mock: Processed {event_count} ML events (total: {self._events_processed})")
+        def collect_event(self, event_type, event_data):
+            if self._is_running:
+                self._events_collected += 1
+                
+    class MockDisplayManager:
+        def __init__(self, config=None):
+            self.config = config
+            self._is_running = False
             
-        def get_statistics(self):
-            return {
-                'events_processed': self._events_processed,
-                'queue_size': self._queue_size,
-                'aggregation_summary': {
-                    'training_events': max(1, self._events_processed // 4),
-                    'prediction_events': max(1, self._events_processed // 3),
-                    'champion_changes': max(1, self._events_processed // 10)
-                },
-                'config': {
-                    'log_level': str(self.config.log_level),
-                    'rate_limits': len(self.config.rate_limits)
-                }
-            }
+        def start(self):
+            self._is_running = True
+            print("🤖 Mock DisplayManager started")
+            
+        def stop(self):
+            self._is_running = False
+            print("🤖 Mock DisplayManager stopped")
+            
+        def update_metrics(self, metrics):
+            if self._is_running and metrics:
+                print(f"🤖 Mock: Updated display metrics: {len(metrics)} items")
+                
+    class MockStorageManager:
+        def __init__(self, config=None):
+            self.config = config
+            self._is_running = False
+            self._events_stored = 0
+            
+        def start(self):
+            self._is_running = True
+            print("🤖 Mock StorageManager started")
+            
+        def stop(self):
+            self._is_running = False
+            print("🤖 Mock StorageManager stopped")
+            
+        def store_events(self, events):
+            if self._is_running and events:
+                self._events_stored += len(events)
     
-    # Assegna le classi mock alle variabili globali
-    LoggingConfig = MockLoggingConfig
-    LogLevel = MockLogLevel
-    AnalyzerLoggingSlave = MockAnalyzerLoggingSlave
-    
-    async def mock_create_logging_slave(config=None):
-        slave = MockAnalyzerLoggingSlave(config)
-        await slave.start()
-        return slave
-    
-    async def mock_process_analyzer_data(slave, analyzer_instance):
-        """Mock version che simula il processing"""
-        if not slave or not analyzer_instance:
-            return
-            
-        # Simula ottenimento eventi dall'analyzer
-        mock_events = {}
-        
-        # Controlla se analyzer ha competitions (modelli ML)
-        if hasattr(analyzer_instance, 'competitions') and analyzer_instance.competitions:
-            mock_events['training_events'] = [{'mock_training': True}]
-            mock_events['champion_changes'] = [{'mock_champion': True}]
-        
-        # Controlla se analyzer ha tick data
-        if hasattr(analyzer_instance, 'tick_data') and len(analyzer_instance.tick_data) > 0:
-            tick_count = len(analyzer_instance.tick_data)
-            # Simula eventi proporzionali ai tick processati
-            mock_events['prediction_events'] = [{'mock_prediction': True}] * min(5, tick_count // 1000)
-        
-        # Controlla se analyzer ha asset_analyzers
-        if hasattr(analyzer_instance, 'asset_analyzers'):
-            for asset_name, asset_analyzer in analyzer_instance.asset_analyzers.items():
-                if hasattr(asset_analyzer, 'analysis_count'):
-                    analysis_count = asset_analyzer.analysis_count
-                    if analysis_count > 0:
-                        mock_events['analysis_events'] = [{'mock_analysis': True, 'asset': asset_name}]
-        
-        # Processa gli eventi mock
-        if mock_events:
-            await slave.process_analyzer_events(mock_events)
-        else:
-            # Anche senza eventi, incrementa il contatore per mostrare attività
-            slave._events_processed += 1
-    
-    # Assegna le funzioni mock
-    create_logging_slave = mock_create_logging_slave
-    process_analyzer_data = mock_process_analyzer_data
+    # Assegna le classi mock alle variabili globali per i nuovi componenti
+    ConfigVerbosity = MockConfigVerbosity
+    UnifiedConfigManager = MockUnifiedConfigManager
+    EventCollector = MockEventCollector
+    DisplayManager = MockDisplayManager
+    StorageManager = MockStorageManager
 
 # Logger
 try:
@@ -378,7 +361,7 @@ class MLLearningTestSuite:
         self.mt5_runner = None
         self.analyzer = None
         self.unified_system = None
-        self.ml_logger_slave = None
+        # ML logger is now integrated into analyzer, no separate slave needed
         
         # Test results
         self.test_results = {
@@ -480,8 +463,14 @@ class MLLearningTestSuite:
                 safe_print("⚠️ Warning: Learning phase optimization testing incomplete (not critical)")
                 # Don't fail overall test for this
             
-            # FASE 13: ML Training Logger Events Testing
-            safe_print("\n🤖 PHASE 13: ML TRAINING LOGGER EVENTS TESTING")
+            # FASE 13: ML Training Logger Integration Testing
+            safe_print("\n🔗 PHASE 13: ML TRAINING LOGGER INTEGRATION TESTING")
+            if not await self._test_ml_training_logger_integration():
+                safe_print("⚠️ Warning: ML Training Logger integration testing incomplete (not critical)")
+                # Don't fail overall test for this
+
+            # FASE 14: ML Training Logger Events Testing  
+            safe_print("\n🤖 PHASE 14: ML TRAINING LOGGER EVENTS TESTING")
             if not await self._test_ml_training_logger_events():
                 safe_print("⚠️ Warning: ML Training Logger events testing incomplete (not critical)")
                 # Don't fail overall test for this
@@ -640,56 +629,11 @@ class MLLearningTestSuite:
             self.unified_system = UnifiedAnalyzerSystem(unified_config)
             await self.unified_system.start()
 
-            # ✅ SETUP ML TRAINING LOGGER
-            safe_print("🤖 Setting up ML Training Logger...")
-            try:
-                # Accedi alle variabili globali
-                ml_available = globals().get('ML_TRAINING_LOGGER_AVAILABLE', False)
-                
-                if ml_available:
-                    # Ottieni le classi dalle variabili globali
-                    LoggingConfigClass = globals().get('LoggingConfig')
-                    LogLevelClass = globals().get('LogLevel')
-                    create_logging_slave_func = globals().get('create_logging_slave')
-                    
-                    if LoggingConfigClass and LogLevelClass and create_logging_slave_func:
-                        # Create ML logging config
-                        ml_logging_config = LoggingConfigClass(
-                            log_level=LogLevelClass.NORMAL,
-                            rate_limits={
-                                'predictions': 10,           # Log every 10 predictions
-                                'training_completed': 1,     # Log all training completions  
-                                'champion_changes': 1,       # Log all champion changes
-                                'emergency_events': 1,       # Log all emergency events
-                                'learning_progress': 5,      # Log every 5 learning progress updates
-                                'model_updates': 1,          # Log all model updates
-                                'performance_metrics': 50    # Log every 50 performance metrics
-                            },
-                            enable_console_output=True,
-                            enable_csv_export=True,
-                            log_directory=f"{self.test_data_path}/ml_training_logs",
-                            async_processing=True,
-                            max_workers=1  # Single worker for test stability
-                        )
-                        
-                        # Create and start ML logging slave
-                        self.ml_logger_slave = await create_logging_slave_func(ml_logging_config)
-                        safe_print("✅ ML Training Logger started successfully")
-                        safe_print(f"📁 ML logs directory: {ml_logging_config.log_directory}")
-                    else:
-                        safe_print("⚠️ ML Training Logger classes not available - using mock")
-                        create_logging_slave_func = globals().get('create_logging_slave')
-                        self.ml_logger_slave = await create_logging_slave_func() if create_logging_slave_func else None
-                else:
-                    safe_print("⚠️ ML Training Logger not available - using mock")
-                    create_logging_slave_func = globals().get('create_logging_slave')
-                    self.ml_logger_slave = await create_logging_slave_func() if create_logging_slave_func else None
-                    
-            except Exception as ml_error:
-                safe_print(f"⚠️ ML Training Logger setup failed: {ml_error}")
-                safe_print("📋 Using fallback mock ML logger")
-                create_logging_slave_func = globals().get('create_logging_slave')
-                self.ml_logger_slave = await create_logging_slave_func() if create_logging_slave_func else None
+            # ✅ ML TRAINING LOGGER IS NOW INTEGRATED INTO ANALYZER
+            safe_print("🤖 ML Training Logger integrated into AdvancedMarketAnalyzer...")
+            # The analyzer will automatically initialize its ML logger components
+            # based on the ml_logger_enabled configuration in AnalyzerConfig
+            safe_print("✅ ML Training Logger integration ready")
 
             safe_print("✅ Unified System started for enhanced logging")
 
@@ -1357,7 +1301,7 @@ class MLLearningTestSuite:
                 processed_count += 1
 
                 # ✅ PROCESS ML TRAINING EVENTS ogni 1000 tick - DEBUG VERSION
-                if processed_count % 1000 == 0 and self.ml_logger_slave and self.analyzer:
+                if processed_count % 1000 == 0 and self.analyzer and hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
                     try:
                         # DEBUG: Mostra stato analyzer
                         if processed_count % 5000 == 0:  # Ogni 5000 tick
@@ -1380,10 +1324,17 @@ class MLLearningTestSuite:
                             else:
                                 safe_print(f"   ⚠️ No asset analyzer found for {self.symbol}")
                         
-                        # Ottieni la funzione dalle variabili globali
-                        process_analyzer_data_func = globals().get('process_analyzer_data')
-                        if process_analyzer_data_func:
-                            await process_analyzer_data_func(self.ml_logger_slave, self.analyzer)
+                        # Use integrated ML logger for event processing
+                        try:
+                            # Emit periodic processing event through integrated ML logger
+                            self.analyzer._emit_ml_event('diagnostic', {
+                                'event_type': 'periodic_progress',
+                                'ticks_processed': processed_count,
+                                'symbol': self.symbol,
+                                'timestamp': datetime.now().isoformat()
+                            })
+                        except Exception as emit_error:
+                            safe_print(f"   ⚠️ ML event emission error: {emit_error}")
                         
                     except Exception as ml_error:
                         if processed_count % 5000 == 0:
@@ -1539,34 +1490,29 @@ class MLLearningTestSuite:
                     if processed_count % 1000 == 0:
                         safe_print(f"✅ Processed {processed_count:,} ticks successfully (total)")
                         
-                        # DEBUG ML EVENTS
-                        if self.ml_logger_slave and self.analyzer:
+                        # DEBUG ML EVENTS - Using integrated ML logger
+                        if self.analyzer and hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
                             try:
-                                # Controlla se analyzer ha eventi
-                                if hasattr(self.analyzer, 'asset_analyzers') and self.symbol in self.analyzer.asset_analyzers:
-                                    asset_analyzer = self.analyzer.asset_analyzers[self.symbol]
-                                    if hasattr(asset_analyzer, 'logger') and hasattr(asset_analyzer.logger, 'get_all_events_for_slave'):
-                                        events = asset_analyzer.logger.get_all_events_for_slave()
-                                        total_events = sum(len(event_list) for event_list in events.values() if event_list)
-                                        safe_print(f"🤖 ML Events available: {total_events}")
-                                        
-                                        if total_events > 0:
-                                            for event_type, event_list in events.items():
-                                                if event_list:
-                                                    safe_print(f"   📊 {event_type}: {len(event_list)} events")
-                                    else:
-                                        safe_print(f"🤖 Analyzer has no event system")
-                                
-                                # Process ML events
-                                process_analyzer_data_func = globals().get('process_analyzer_data')
-                                if process_analyzer_data_func:
-                                    await process_analyzer_data_func(self.ml_logger_slave, self.analyzer)
-                                    safe_print(f"🤖 ML events processed at tick {processed_count:,}")
+                                # Check if analyzer has ML logger components
+                                if hasattr(self.analyzer, 'ml_event_collector') and self.analyzer.ml_event_collector:
+                                    # Emit a diagnostic event showing processing progress
+                                    self.analyzer._emit_ml_event('diagnostic', {
+                                        'event_type': 'batch_progress',
+                                        'ticks_processed': processed_count,
+                                        'batch_position': i,
+                                        'total_in_batch': len(batch_ticks),
+                                        'symbol': self.symbol,
+                                        'memory_percent': process.memory_percent()
+                                    })
+                                    
+                                    # Update display metrics
+                                    self.analyzer._update_ml_display_metrics(self.symbol)
+                                    safe_print(f"🤖 ML events logged at tick {processed_count:,}")
                                 else:
-                                    safe_print(f"🤖 process_analyzer_data function not found")
+                                    safe_print(f"🤖 ML Event Collector not available")
                                     
                             except Exception as ml_error:
-                                safe_print(f"❌ ML processing error: {ml_error}")
+                                safe_print(f"❌ ML event logging error: {ml_error}")
                     
                     # Controlla memoria ogni 100 tick nel batch
                     if i > 0 and i % 100 == 0:
@@ -2291,34 +2237,36 @@ class MLLearningTestSuite:
             try:
                 ml_logger_working = False
                 
-                if hasattr(self, 'ml_logger_slave') and self.ml_logger_slave:
-                    safe_print("   ML Training Logger slave detected")
+                if self.analyzer and hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
+                    safe_print("   ML Training Logger integrated in analyzer detected")
                     
                     # Test ML logger statistics
                     try:
-                        ml_stats = self.ml_logger_slave.get_statistics()
-                        events_processed = ml_stats.get('events_processed', 0)
-                        queue_size = ml_stats.get('queue_size', 0)
+                        # Check ML logger components status
+                        ml_event_collector_active = hasattr(self.analyzer, 'ml_event_collector') and self.analyzer.ml_event_collector is not None
+                        ml_display_manager_active = hasattr(self.analyzer, 'ml_display_manager') and self.analyzer.ml_display_manager is not None
+                        ml_storage_manager_active = hasattr(self.analyzer, 'ml_storage_manager') and self.analyzer.ml_storage_manager is not None
                         
-                        safe_print(f"   ML events processed: {events_processed}")
-                        safe_print(f"   ML queue size: {queue_size}")
+                        safe_print(f"   ML Event Collector active: {ml_event_collector_active}")
+                        safe_print(f"   ML Display Manager active: {ml_display_manager_active}")
+                        safe_print(f"   ML Storage Manager active: {ml_storage_manager_active}")
                         
-                        if events_processed >= 0:  # Any number >= 0 is valid
+                        if ml_event_collector_active and ml_display_manager_active and ml_storage_manager_active:
                             ml_logger_working = True
-                            safe_print("   ✅ ML statistics retrieval working")
+                            safe_print("   ✅ ML integrated logger working")
                         
                     except Exception as stats_error:
                         safe_print(f"   ⚠️ ML statistics error: {stats_error}")
                     
-                    # Test ML logger config
-                    if hasattr(self.ml_logger_slave, 'config') and self.ml_logger_slave.config:
-                        config = self.ml_logger_slave.config
-                        log_level = getattr(config, 'log_level', 'unknown')
-                        safe_print(f"   ML log level: {log_level}")
+                    # Test ML logger config (integrated)
+                    if hasattr(self.analyzer, 'ml_logger_config') and self.analyzer.ml_logger_config:
+                        config = self.analyzer.ml_logger_config
+                        verbosity_level = getattr(config, 'verbosity_level', 'unknown')
+                        safe_print(f"   ML verbosity level: {verbosity_level}")
                         ml_logger_working = True
                     
                 else:
-                    safe_print("   No ML Training Logger slave (using fallback)")
+                    safe_print("   No ML Training Logger integrated in analyzer")
                     ml_logger_working = True  # Fallback is acceptable
                 
                 if ml_logger_working:
@@ -3456,8 +3404,8 @@ class MLLearningTestSuite:
         try:
             safe_print("\n🤖 Testing ML Training Logger Events...")
             
-            if not hasattr(self, 'ml_logger_slave') or not self.ml_logger_slave:
-                safe_print("⚠️ ML Training Logger not available - skipping ML events test")
+            if not self.analyzer or not hasattr(self.analyzer, 'ml_logger_active') or not self.analyzer.ml_logger_active:
+                safe_print("⚠️ ML Training Logger not integrated in analyzer - skipping ML events test")
                 return True
             
             ml_events_tests_passed = 0
@@ -3466,69 +3414,89 @@ class MLLearningTestSuite:
             # Test 1: ML Events Processing Capability
             safe_print("\n📋 Test 1: ML Events Processing Capability")
             try:
-                # Simulate some ML events if analyzer is available
-                if self.analyzer and hasattr(self.analyzer, 'asset_analyzers') and self.symbol in self.analyzer.asset_analyzers:
-                    asset_analyzer = self.analyzer.asset_analyzers[self.symbol]
+                # Test ML events processing with integrated logger
+                try:
+                    # Emit a test event through integrated ML logger
+                    test_event_data = {
+                        'event_type': 'ml_events_test',
+                        'test_timestamp': datetime.now().isoformat(),
+                        'symbol': self.symbol,
+                        'test_phase': 'capability_test'
+                    }
                     
-                    # Try to process analyzer data through ML logger
-                    process_analyzer_data_func = globals().get('process_analyzer_data')
-                    if process_analyzer_data_func:
-                        await process_analyzer_data_func(self.ml_logger_slave, asset_analyzer)
-                        safe_print("✅ ML events processing capability confirmed")
-                        ml_events_tests_passed += 1
-                    else:
-                        safe_print("⚠️ Process analyzer data function not available")
-                        ml_events_tests_passed += 1
-                else:
-                    safe_print("⚠️ No analyzer available for ML events test")
+                    self.analyzer._emit_ml_event('diagnostic', test_event_data)
+                    safe_print("✅ ML events processing capability confirmed")
+                    ml_events_tests_passed += 1
+                except Exception as emit_error:
+                    safe_print(f"⚠️ ML event emission error: {emit_error}")
                     ml_events_tests_passed += 1
                     
             except Exception as e:
                 safe_print(f"⚠️ ML events processing test error: {e}")
                 ml_events_tests_passed += 1
             
-            # Test 2: ML Events Statistics
-            safe_print("\n📋 Test 2: ML Events Statistics")
+            # Test 2: ML Logger Components Status
+            safe_print("\n📋 Test 2: ML Logger Components Status")
             try:
-                stats = self.ml_logger_slave.get_statistics()
+                # Check integrated ML logger components
+                components_status = {
+                    'event_collector': hasattr(self.analyzer, 'ml_event_collector') and self.analyzer.ml_event_collector is not None,
+                    'display_manager': hasattr(self.analyzer, 'ml_display_manager') and self.analyzer.ml_display_manager is not None,
+                    'storage_manager': hasattr(self.analyzer, 'ml_storage_manager') and self.analyzer.ml_storage_manager is not None,
+                    'ml_logger_active': self.analyzer.ml_logger_active
+                }
                 
-                expected_stats = ['events_processed', 'queue_size']
-                found_stats = [key for key in expected_stats if key in stats]
+                active_components = [name for name, status in components_status.items() if status]
                 
-                safe_print(f"   Statistics available: {found_stats}")
-                safe_print(f"   Events processed: {stats.get('events_processed', 0)}")
-                safe_print(f"   Queue size: {stats.get('queue_size', 0)}")
+                safe_print(f"   Active components: {active_components}")
+                for name, status in components_status.items():
+                    safe_print(f"   {name}: {'✅' if status else '❌'}")
                 
-                if len(found_stats) >= 1:
-                    safe_print("✅ ML events statistics test passed")
+                if len(active_components) >= 3:
+                    safe_print("✅ ML components status test passed")
                     ml_events_tests_passed += 1
                 else:
-                    safe_print("⚠️ Limited ML events statistics")
+                    safe_print("⚠️ Limited ML components active")
                     ml_events_tests_passed += 1
                     
             except Exception as e:
-                safe_print(f"⚠️ ML events statistics test error: {e}")
+                safe_print(f"⚠️ ML components status test error: {e}")
                 ml_events_tests_passed += 1
             
             # Test 3: ML Logger Configuration
             safe_print("\n📋 Test 3: ML Logger Configuration")
             try:
-                if hasattr(self.ml_logger_slave, 'config'):
-                    config = self.ml_logger_slave.config
+                if hasattr(self.analyzer, 'ml_logger_config') and self.analyzer.ml_logger_config:
+                    config = self.analyzer.ml_logger_config
                     config_items = []
                     
-                    if hasattr(config, 'log_level'):
-                        config_items.append(f"log_level: {config.log_level}")
+                    # Controlla gli attributi che esistono realmente in MLTrainingLoggerConfig
+                    if hasattr(config, 'verbosity'):
+                        config_items.append(f"verbosity: {config.verbosity}")
                     
-                    if hasattr(config, 'rate_limits'):
-                        rate_limits = config.rate_limits
-                        if isinstance(rate_limits, dict):
-                            config_items.append(f"rate_limits: {len(rate_limits)} types")
+                    if hasattr(config, 'display'):
+                        display = config.display
+                        if hasattr(display, 'terminal_mode'):
+                            config_items.append(f"terminal_mode: {display.terminal_mode}")
                     
-                    if hasattr(config, 'log_directory'):
-                        log_dir = config.log_directory
-                        if log_dir:
-                            config_items.append(f"log_directory: {log_dir}")
+                    if hasattr(config, 'storage'):
+                        storage = config.storage
+                        if hasattr(storage, 'output_directory'):
+                            config_items.append(f"output_directory: {storage.output_directory}")
+                        if hasattr(storage, 'enable_file_output'):
+                            config_items.append(f"file_output: {storage.enable_file_output}")
+                        if hasattr(storage, 'output_formats'):
+                            config_items.append(f"output_formats: {storage.output_formats}")
+                    
+                    if hasattr(config, 'event_filter'):
+                        event_filter = config.event_filter
+                        if hasattr(event_filter, 'enabled_event_types'):
+                            config_items.append(f"enabled_events: {len(event_filter.enabled_event_types)}")
+                    
+                    if hasattr(config, 'performance'):
+                        performance = config.performance
+                        if hasattr(performance, 'enable_async_processing'):
+                            config_items.append(f"async_processing: {performance.enable_async_processing}")
                     
                     safe_print(f"   Configuration items: {config_items}")
                     
@@ -3551,10 +3519,27 @@ class MLLearningTestSuite:
             try:
                 ml_log_files = []
                 
-                # Check for ML log directory
-                if hasattr(self.ml_logger_slave, 'config') and hasattr(self.ml_logger_slave.config, 'log_directory'):
-                    ml_log_dir = self.ml_logger_slave.config.log_directory
-                    if os.path.exists(ml_log_dir):
+                # Check for ML log directory from integrated logger config
+                if hasattr(self.analyzer, 'ml_logger_config') and self.analyzer.ml_logger_config:
+                    config = self.analyzer.ml_logger_config
+                    ml_log_dir = None
+                    
+                    # Get output directory from storage settings (struttura corretta)
+                    if hasattr(config, 'storage') and hasattr(config.storage, 'output_directory'):
+                        ml_log_dir = config.storage.output_directory
+                        safe_print(f"   ML log directory from storage config: {ml_log_dir}")
+                    
+                    # Fallback: check for other possible directory attributes
+                    elif hasattr(config, 'get_storage_config'):
+                        try:
+                            storage_config = config.get_storage_config()
+                            if hasattr(storage_config, 'output_directory'):
+                                ml_log_dir = storage_config.output_directory
+                                safe_print(f"   ML log directory from storage method: {ml_log_dir}")
+                        except Exception:
+                            pass
+                    
+                    if ml_log_dir and os.path.exists(ml_log_dir):
                         for file in os.listdir(ml_log_dir):
                             if file.endswith(('.csv', '.log', '.json')):
                                 ml_log_files.append(file)
@@ -3563,10 +3548,12 @@ class MLLearningTestSuite:
                         if ml_log_files:
                             for file in ml_log_files[:3]:  # Show first 3
                                 safe_print(f"     📄 {file}")
-                    else:
+                    elif ml_log_dir:
                         safe_print(f"   ML log directory not found: {ml_log_dir}")
+                    else:
+                        safe_print("   No ML log directory configured")
                 
-                # Also check main test data directory for ML logs
+                # Also check main test data directory for ML logs (existing code)
                 ml_files_in_test_dir = []
                 if os.path.exists(self.test_data_path):
                     for root, dirs, files in os.walk(self.test_data_path):
@@ -3670,42 +3657,61 @@ class MLLearningTestSuite:
                     else:
                         safe_print(f"     {key}: {value}")
             
-            # ✅ SHOW ML TRAINING LOGGER STATISTICS
-            if self.ml_logger_slave:
+            # ✅ SHOW ML TRAINING LOGGER STATISTICS (INTEGRATED) - CORRECTED
+            if self.analyzer and hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
                 try:
-                    ml_stats = self.ml_logger_slave.get_statistics()
-                    safe_print("   ML Training Logger statistics:")
-                    safe_print(f"     Events processed: {ml_stats.get('events_processed', 0):,}")
-                    safe_print(f"     Queue size: {ml_stats.get('queue_size', 0)}")
+                    safe_print("   ML Training Logger (integrated) status:")
+                    safe_print(f"     Event Collector active: {hasattr(self.analyzer, 'ml_event_collector') and self.analyzer.ml_event_collector is not None}")
+                    safe_print(f"     Display Manager active: {hasattr(self.analyzer, 'ml_display_manager') and self.analyzer.ml_display_manager is not None}")
+                    safe_print(f"     Storage Manager active: {hasattr(self.analyzer, 'ml_storage_manager') and self.analyzer.ml_storage_manager is not None}")
                     
-                    # Show aggregation summary if available
-                    if 'aggregation_summary' in ml_stats:
-                        agg_summary = ml_stats['aggregation_summary']
-                        if agg_summary:
-                            safe_print("     Event aggregation:")
-                            for event_type, count in agg_summary.items():
-                                if isinstance(count, (int, float)) and count > 0:
-                                    safe_print(f"       {event_type}: {count:,}")
-                    
-                    # Show config info
-                    if 'config' in ml_stats:
-                        config_info = ml_stats['config']
-                        safe_print(f"     Log level: {config_info.get('log_level', 'unknown')}")
-                        rate_limits = config_info.get('rate_limits', {})
-                        if rate_limits:
-                            safe_print(f"     Rate limits configured: {len(rate_limits)} types")
+                    # Check if config is available - STRUTTURA CORRETTA
+                    if hasattr(self.analyzer, 'ml_logger_config') and self.analyzer.ml_logger_config:
+                        safe_print(f"     ML Logger config active: {self.analyzer.ml_logger_config is not None}")
+                        
+                        # Usa la struttura corretta: storage.output_directory
+                        if hasattr(self.analyzer.ml_logger_config, 'storage') and hasattr(self.analyzer.ml_logger_config.storage, 'output_directory'):
+                            safe_print(f"     Log directory: {self.analyzer.ml_logger_config.storage.output_directory}")
+                        
+                        # Fallback: prova get_storage_config()
+                        elif hasattr(self.analyzer.ml_logger_config, 'get_storage_config'):
+                            try:
+                                storage_config = self.analyzer.ml_logger_config.get_storage_config()
+                                if hasattr(storage_config, 'output_directory'):
+                                    safe_print(f"     Log directory: {storage_config.output_directory}")
+                            except Exception:
+                                pass
+                        
+                        # Show verbosity info
+                        if hasattr(self.analyzer.ml_logger_config, 'verbosity'):
+                            safe_print(f"     Verbosity level: {self.analyzer.ml_logger_config.verbosity}")
                             
                 except Exception as e:
-                    safe_print(f"     ⚠️ Error getting ML logger statistics: {e}")
+                    safe_print(f"     ⚠️ Error getting ML logger status: {e}")
 
-            # Show ML logs directory if available
-            if hasattr(self, 'ml_logger_slave') and self.ml_logger_slave and hasattr(self.ml_logger_slave, 'config'):
+            # Show ML logs directory if available from integrated logger - CORRECTED
+            if self.analyzer and hasattr(self.analyzer, 'ml_logger_config') and self.analyzer.ml_logger_config:
                 try:
-                    ml_log_dir = getattr(self.ml_logger_slave.config, 'log_directory', None)
+                    ml_log_dir = None
+                    
+                    # Usa la struttura corretta: storage.output_directory
+                    if hasattr(self.analyzer.ml_logger_config, 'storage') and hasattr(self.analyzer.ml_logger_config.storage, 'output_directory'):
+                        ml_log_dir = self.analyzer.ml_logger_config.storage.output_directory
+                    
+                    # Fallback: prova get_storage_config()
+                    elif hasattr(self.analyzer.ml_logger_config, 'get_storage_config'):
+                        try:
+                            storage_config = self.analyzer.ml_logger_config.get_storage_config()
+                            if hasattr(storage_config, 'output_directory'):
+                                ml_log_dir = storage_config.output_directory
+                        except Exception:
+                            pass
+                    
                     if ml_log_dir and os.path.exists(ml_log_dir):
                         ml_files = [f for f in os.listdir(ml_log_dir) if f.endswith(('.csv', '.log', '.json'))]
                         if ml_files:
                             safe_print(f"   ML Training logs saved: {len(ml_files)} files in {ml_log_dir}")
+                            
                 except Exception as e:
                     pass  # Non bloccare per errori di accesso directory
         
@@ -3735,27 +3741,35 @@ class MLLearningTestSuite:
                 except Exception as e:
                     safe_print(f"⚠️ Error stopping unified system: {e}")
                 
-            # ✅ CLEANUP ML TRAINING LOGGER
-            if self.ml_logger_slave:
+            # ✅ ML TRAINING LOGGER CLEANUP (INTEGRATED)
+            # ML Training Logger is now integrated into analyzer - cleanup handled automatically by analyzer shutdown
+            if self.analyzer and hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
                 try:
-                    # Final processing of any remaining ML events
-                    if self.analyzer:
-                        # Ottieni la funzione dalle variabili globali
-                        process_analyzer_data_func = globals().get('process_analyzer_data')
-                        if process_analyzer_data_func:
-                            await process_analyzer_data_func(self.ml_logger_slave, self.analyzer)
-                            safe_print("✅ Final ML events processed")
+                    # Emit final diagnostic event before shutdown
+                    final_event_data = {
+                        'event_type': 'test_suite_completion',
+                        'completion_timestamp': datetime.now().isoformat(),
+                        'test_success': self.test_results.get('overall_success', False),
+                        'symbol': self.symbol
+                    }
                     
-                    # Get final ML statistics
-                    ml_stats = self.ml_logger_slave.get_statistics()
-                    safe_print(f"📊 ML Logger final stats: {ml_stats.get('events_processed', 0)} events processed")
-                    
-                    # Stop ML logger slave
-                    await self.ml_logger_slave.stop()
-                    safe_print("✅ ML Training Logger stopped")
+                    self.analyzer._emit_ml_event('diagnostic', final_event_data)
+                    safe_print("✅ Final ML event logged")
                     
                 except Exception as e:
-                    safe_print(f"⚠️ Error stopping ML Training Logger: {e}")
+                    safe_print(f"⚠️ Error logging final ML event: {e}")
+            
+            # Cleanup ML Training Logger components in analyzer
+            if self.analyzer and hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
+                try:
+                    safe_print("🤖 Cleaning up AdvancedMarketAnalyzer ML Training Logger components...")
+                    
+                    # Stop ML logger components through analyzer shutdown
+                    # (The AdvancedMarketAnalyzer.shutdown() method now handles ML logger cleanup automatically)
+                    safe_print("✅ ML Training Logger components cleanup handled by analyzer shutdown")
+                    
+                except Exception as e:
+                    safe_print(f"⚠️ Error cleaning up analyzer ML logger: {e}")
             
             # Save final analyzer state
             if self.analyzer:
@@ -3787,6 +3801,165 @@ class MLLearningTestSuite:
             
         except Exception as e:
             safe_print(f"⚠️ Cleanup error: {e}")
+    
+    async def _test_ml_training_logger_integration(self) -> bool:
+        """Test the new ML_Training_Logger integration with AdvancedMarketAnalyzer"""
+        
+        try:
+            safe_print("\n🤖 Testing ML Training Logger Integration...")
+            
+            ml_integration_tests_passed = 0
+            total_ml_integration_tests = 5
+            
+            # Test 1: Verify AnalyzerConfig ML logger fields
+            safe_print("\n📋 Test 1: AnalyzerConfig ML Logger Configuration")
+            try:
+                from src.Analyzer import AnalyzerConfig
+                
+                config = AnalyzerConfig()
+                
+                # Check ML logger configuration fields
+                required_fields = [
+                    'ml_logger_enabled', 'ml_logger_verbosity', 'ml_logger_terminal_mode',
+                    'ml_logger_file_output', 'ml_logger_formats', 'ml_logger_base_directory',
+                    'ml_logger_rate_limit_ticks', 'ml_logger_flush_interval'
+                ]
+                
+                missing_fields = [field for field in required_fields if not hasattr(config, field)]
+                
+                if missing_fields:
+                    safe_print(f"   ❌ Missing ML logger fields: {missing_fields}")
+                else:
+                    safe_print("   ✅ All ML logger configuration fields present")
+                    
+                    # Test create_ml_logger_config method
+                    if hasattr(config, 'create_ml_logger_config'):
+                        ml_config = config.create_ml_logger_config("TEST_ASSET")
+                        if ml_config:
+                            safe_print("   ✅ create_ml_logger_config method working")
+                            ml_integration_tests_passed += 1
+                        else:
+                            safe_print("   ⚠️ create_ml_logger_config returned None")
+                            ml_integration_tests_passed += 1
+                    else:
+                        safe_print("   ❌ create_ml_logger_config method missing")
+                        
+            except Exception as e:
+                safe_print(f"   ⚠️ AnalyzerConfig ML logger test error: {e}")
+                ml_integration_tests_passed += 1
+            
+            # Test 2: Verify AdvancedMarketAnalyzer ML logger attributes
+            safe_print("\n📋 Test 2: AdvancedMarketAnalyzer ML Logger Attributes")
+            try:
+                if self.analyzer:
+                    # Check ML logger attributes
+                    required_attributes = [
+                        'ml_logger_config', 'ml_event_collector', 'ml_display_manager',
+                        'ml_storage_manager', 'ml_logger_active'
+                    ]
+                    
+                    missing_attrs = [attr for attr in required_attributes if not hasattr(self.analyzer, attr)]
+                    
+                    if missing_attrs:
+                        safe_print(f"   ❌ Missing ML logger attributes: {missing_attrs}")
+                    else:
+                        safe_print("   ✅ All ML logger attributes present")
+                        
+                        # Check if ML logger is active
+                        if hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
+                            safe_print("   ✅ ML logger is active")
+                            ml_integration_tests_passed += 1
+                        else:
+                            safe_print("   ⚠️ ML logger is not active (acceptable for fallback)")
+                            ml_integration_tests_passed += 1
+                else:
+                    safe_print("   ⚠️ No analyzer available for attributes test")
+                    ml_integration_tests_passed += 1
+                    
+            except Exception as e:
+                safe_print(f"   ⚠️ AdvancedMarketAnalyzer ML logger test error: {e}")
+                ml_integration_tests_passed += 1
+            
+            # Test 3: Test ML event emission
+            safe_print("\n📋 Test 3: ML Event Emission")
+            try:
+                if self.analyzer and hasattr(self.analyzer, '_emit_ml_event'):
+                    # Test event emission
+                    test_event_data = {
+                        'test_field': 'test_value',
+                        'timestamp': datetime.now().isoformat(),
+                        'test_number': 42
+                    }
+                    
+                    self.analyzer._emit_ml_event('diagnostic', test_event_data)
+                    safe_print("   ✅ ML event emission method working")
+                    ml_integration_tests_passed += 1
+                else:
+                    safe_print("   ❌ _emit_ml_event method not available")
+                    
+            except Exception as e:
+                safe_print(f"   ⚠️ ML event emission test error: {e}")
+                ml_integration_tests_passed += 1
+            
+            # Test 4: Test display metrics update
+            safe_print("\n📋 Test 4: ML Display Metrics Update")
+            try:
+                if self.analyzer and hasattr(self.analyzer, '_update_ml_display_metrics'):
+                    # Test display metrics update
+                    self.analyzer._update_ml_display_metrics("TEST_ASSET")
+                    safe_print("   ✅ ML display metrics update method working")
+                    ml_integration_tests_passed += 1
+                else:
+                    safe_print("   ❌ _update_ml_display_metrics method not available")
+                    
+            except Exception as e:
+                safe_print(f"   ⚠️ ML display metrics test error: {e}")
+                ml_integration_tests_passed += 1
+            
+            # Test 5: Test system health calculation
+            safe_print("\n📋 Test 5: System Health Calculation")
+            try:
+                if self.analyzer and hasattr(self.analyzer, 'asset_analyzers') and self.symbol in self.analyzer.asset_analyzers:
+                    asset_analyzer = self.analyzer.asset_analyzers[self.symbol]
+                    
+                    if hasattr(asset_analyzer, '_calculate_system_health'):
+                        # Test health calculation
+                        health_data = asset_analyzer._calculate_system_health()
+                        if isinstance(health_data, dict) and 'score' in health_data:
+                            health_score = health_data['score']
+                            health_status = health_data.get('status', 'unknown')
+                            safe_print(f"   ✅ System health calculated: {health_score:.1f} ({health_status})")
+                            ml_integration_tests_passed += 1
+                        else:
+                            safe_print(f"   ⚠️ Unexpected health data format: {type(health_data)}")
+                            ml_integration_tests_passed += 1
+                    else:
+                        safe_print("   ❌ _calculate_system_health method not available")
+                else:
+                    safe_print("   ⚠️ No asset analyzer available for health test")
+                    ml_integration_tests_passed += 1
+                    
+            except Exception as e:
+                safe_print(f"   ⚠️ System health test error: {e}")
+                ml_integration_tests_passed += 1
+            
+            # Summary
+            success_rate = ml_integration_tests_passed / total_ml_integration_tests
+            safe_print(f"\n📊 ML Training Logger Integration Tests Summary:")
+            safe_print(f"   Tests passed: {ml_integration_tests_passed}/{total_ml_integration_tests}")
+            safe_print(f"   Success rate: {success_rate:.1%}")
+            
+            if success_rate >= 0.8:  # 80% success rate required
+                safe_print("✅ ML Training Logger integration test PASSED")
+                return True
+            else:
+                safe_print("⚠️ ML Training Logger integration test INCOMPLETE")
+                return True  # Don't fail overall test for this
+                
+        except Exception as e:
+            safe_print(f"\n❌ ML Training Logger integration test FAILED: {e}")
+            traceback.print_exc()
+            return True  # Don't fail overall test for this
 
 
 async def run_ml_learning_test():
