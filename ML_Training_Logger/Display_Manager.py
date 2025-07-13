@@ -553,10 +553,15 @@ class DisplayManager:
         
         # Timing for periodic updates
         self.last_full_display = datetime.now()
-        self.full_display_interval = timedelta(seconds=30)  # Full status every 30 seconds
+        self.full_display_interval = timedelta(seconds=5)  # More frequent updates for fixed display
         
         # Performance tracking
         self.update_count = 0
+        
+        # Fixed display state
+        self.table_lines_count = 0  # Number of lines used by fixed table
+        self.log_area_start = 0     # Line where log area starts
+        self.initial_display_shown = False
     
     def _detect_terminal_capabilities(self) -> TerminalCapabilities:
         """Rileva capabilities del terminale"""
@@ -584,14 +589,119 @@ class DisplayManager:
         
         return capabilities
     
+    def _clear_screen(self):
+        """Pulisce lo schermo"""
+        if self.capabilities.supports_cursor_control:
+            print("\033[2J\033[H", end="")  # Clear screen and move to top
+            sys.stdout.flush()
+    
+    def _move_cursor_to(self, line: int, column: int = 1):
+        """Muove cursore a posizione specifica"""
+        if self.capabilities.supports_cursor_control:
+            print(f"\033[{line};{column}H", end="")
+            sys.stdout.flush()
+    
+    def _save_cursor_position(self):
+        """Salva posizione corrente del cursore"""
+        if self.capabilities.supports_cursor_control:
+            print("\033[s", end="")
+            sys.stdout.flush()
+    
+    def _restore_cursor_position(self):
+        """Ripristina posizione salvata del cursore"""
+        if self.capabilities.supports_cursor_control:
+            print("\033[u", end="")
+            sys.stdout.flush()
+    
+    def _clear_from_cursor_to_end(self):
+        """Pulisce da cursore alla fine dello schermo"""
+        if self.capabilities.supports_cursor_control:
+            print("\033[0J", end="")
+            sys.stdout.flush()
+    
+    def _show_initial_fixed_display(self):
+        """Mostra display fisso iniziale"""
+        with self.display_lock:
+            # Render the fixed table
+            status_output = self.renderer.render_full_status(self.current_metrics)
+            status_lines = status_output.split('\n')
+            
+            # Print the fixed table
+            print(status_output)
+            print("=" * 60)
+            print("Event Log (live updates):")
+            print("-" * 60)
+            
+            # Calculate where the log area starts
+            self.table_lines_count = len(status_lines) + 3  # +3 for separators and log header
+            self.log_area_start = self.table_lines_count + 1
+            self.initial_display_shown = True
+            
+            sys.stdout.flush()
+    
+    def _update_fixed_table(self):
+        """Aggiorna solo la tabella fissa senza toccare i log"""
+        if not self.capabilities.supports_cursor_control or not self.initial_display_shown:
+            return
+        
+        with self.display_lock:
+            # Save current cursor position
+            self._save_cursor_position()
+            
+            # Move to top and render table
+            self._move_cursor_to(1, 1)
+            status_output = self.renderer.render_full_status(self.current_metrics)
+            status_lines = status_output.split('\n')
+            
+            # Print table lines, clearing any old content
+            for i, line in enumerate(status_lines):
+                self._move_cursor_to(i + 1, 1)
+                print(f"\033[K{line}")  # Clear line and print
+            
+            # Update separators if needed
+            separator_line = self.table_lines_count - 2
+            self._move_cursor_to(separator_line, 1)
+            print(f"\033[K{'=' * 60}")
+            
+            # Restore cursor position to continue with logs
+            self._restore_cursor_position()
+            sys.stdout.flush()
+    
+    def _handle_terminal_resize(self):
+        """Gestisce ridimensionamento del terminale"""
+        if not self.capabilities.supports_cursor_control:
+            return
+        
+        try:
+            size = shutil.get_terminal_size()
+            old_width = self.capabilities.width
+            old_height = self.capabilities.height
+            
+            self.capabilities.width = size.columns
+            self.capabilities.height = size.lines
+            
+            # If size changed significantly, refresh the display
+            if (abs(size.columns - old_width) > 5 or 
+                abs(size.lines - old_height) > 3):
+                self._clear_screen()
+                self._show_initial_fixed_display()
+        except:
+            pass  # Ignore resize errors
+    
     def start(self):
         """Avvia display manager"""
         if self.is_running or self.display_config.terminal_mode == TerminalMode.SILENT:
             return
         
         self.is_running = True
-        print(f"{TreeSymbols.SUCCESS} ML Training Logger Display Started")
-        print("=" * 60)
+        
+        # Clear screen and setup fixed display if terminal supports it
+        if self.capabilities.supports_cursor_control:
+            self._clear_screen()
+            self._show_initial_fixed_display()
+        else:
+            print(f"{TreeSymbols.SUCCESS} ML Training Logger Display Started")
+            print("=" * 60)
     
     def stop(self):
         """Ferma display manager"""
@@ -599,8 +709,14 @@ class DisplayManager:
             return
         
         self.is_running = False
-        print("\n" + "=" * 60)
-        print(f"{TreeSymbols.SUCCESS} ML Training Logger Display Stopped")
+        
+        # Clean shutdown message
+        if self.capabilities.supports_cursor_control and self.initial_display_shown:
+            print("\n" + "=" * 60)
+            print(f"{TreeSymbols.SUCCESS} ML Training Logger Display Stopped")
+        else:
+            print("\n" + "=" * 60)
+            print(f"{TreeSymbols.SUCCESS} ML Training Logger Display Stopped")
     
     def update_metrics(self, **kwargs):
         """Aggiorna metriche display"""
@@ -612,12 +728,20 @@ class DisplayManager:
             self.current_metrics.recent_events = list(self.recent_events)
             self.update_count += 1
             
-            # Show full status periodically
+            # Update fixed table if supported, otherwise fallback to periodic full status
             now = datetime.now()
-            if (now - self.last_full_display >= self.full_display_interval or 
-                self.update_count % 100 == 0):  # Also every 100 updates
-                self._display_full_status()
-                self.last_full_display = now
+            if self.capabilities.supports_cursor_control and self.initial_display_shown:
+                # Update fixed table frequently for real-time display
+                if (now - self.last_full_display >= self.full_display_interval or 
+                    self.update_count % 100 == 0):  # More frequent updates for fixed display
+                    self._update_fixed_table()
+                    self.last_full_display = now
+            else:
+                # Fallback to old behavior for terminals without cursor control
+                if (now - self.last_full_display >= self.full_display_interval or 
+                    self.update_count % 1000 == 0):
+                    self._display_full_status()
+                    self.last_full_display = now
     
     def display_event(self, event: MLEvent):
         """Visualizza nuovo evento"""
@@ -627,9 +751,17 @@ class DisplayManager:
         with self.display_lock:
             self.recent_events.append(event)
             
-            # Always show individual events in scroll mode
+            # Format event for display
             event_line = self.renderer.render_event(event)
-            print(event_line)
+            
+            if self.capabilities.supports_cursor_control and self.initial_display_shown:
+                # For fixed display, events scroll normally in the log area
+                # No cursor manipulation needed - just print and it will scroll naturally
+                print(event_line)
+            else:
+                # Fallback to traditional display
+                print(event_line)
+            
             sys.stdout.flush()
     
     def _display_full_status(self):
@@ -646,7 +778,10 @@ class DisplayManager:
     
     def force_refresh(self):
         """Forza refresh immediato del display"""
-        self._display_full_status()
+        if self.capabilities.supports_cursor_control and self.initial_display_shown:
+            self._update_fixed_table()
+        else:
+            self._display_full_status()
     
     # Convenience methods for updating specific metrics
     def set_learning_progress(self, progress_percent: float):
@@ -729,8 +864,22 @@ class DisplayManager:
                     'champions_active': self.current_metrics.champions_active,
                     'learning_progress': self.current_metrics.learning_progress,
                     'ticks_processed': self.current_metrics.ticks_processed
+                },
+                'fixed_display': {
+                    'enabled': self.capabilities.supports_cursor_control,
+                    'initial_display_shown': self.initial_display_shown,
+                    'table_lines_count': self.table_lines_count,
+                    'log_area_start': self.log_area_start
                 }
             }
+    
+    def get_display_mode_info(self) -> str:
+        """Ottieni informazioni sulla modalità di display"""
+        if self.capabilities.supports_cursor_control and self.initial_display_shown:
+            return (f"Fixed Display Mode: Table at top (lines 1-{self.table_lines_count}), "
+                   f"scrollable logs from line {self.log_area_start}")
+        else:
+            return "Scroll Display Mode: Traditional scrolling output"
 
 
 # Factory functions

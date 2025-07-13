@@ -55,7 +55,7 @@ class AnalyzerConfig:
     learning_mini_training_interval: int = 1000  # Ogni N tick durante learning
     
     # ========== DATA MANAGEMENT ==========
-    max_tick_buffer_size: int = 100000  # Dimensione buffer tick_data
+    max_tick_buffer_size: int = 150000  # 🔧 Aumentato buffer per evitare collisioni con training threshold
     data_cleanup_days: int = 180  # Giorni di dati da mantenere
     aggregation_windows: List[int] = field(default_factory=lambda: [5, 15, 30, 60])  # Minuti
     
@@ -4957,7 +4957,14 @@ class RollingWindowTrainer:
             if tick['timestamp'] > cutoff_date
         ]
         
+        # 🔧 BACKTESTING FIX: Se il filtro temporale elimina troppi dati, usa tutti i dati disponibili
+        if len(filtered_data) < 1000 and len(tick_data) >= 1000:
+            # Probabilmente siamo in backtesting con dati storici - usa tutti i dati
+            filtered_data = list(tick_data)
+            print(f"[DEBUG] Backtesting mode detected - using all {len(filtered_data)} tick data points")
+        
         if len(filtered_data) < 1000:  # Minimo di dati richiesti
+            print(f"[DEBUG] Training data preparation failed: only {len(filtered_data)} data points available (need 1000+)")
             return {}
         
         # Estrai features
@@ -4986,13 +4993,22 @@ class RollingWindowTrainer:
         }
     
     def _calculate_sma(self, prices: np.ndarray, period: int) -> np.ndarray:
-        """Calcola Simple Moving Average"""
+        """Calcola Simple Moving Average con gestione migliorata dei NaN"""
         if len(prices) < period:
-            return np.full_like(prices, np.nan)
+            # Ritorna array con valori delle medie parziali disponibili
+            sma = np.full_like(prices, np.nan)
+            for i in range(1, len(prices)):
+                sma[i] = np.mean(prices[:i+1])
+            return sma
         
         sma = np.full_like(prices, np.nan)
-        for i in range(period - 1, len(prices)):
-            sma[i] = np.mean(prices[i - period + 1:i + 1])
+        # Per i primi valori, usa media parziale invece di NaN
+        for i in range(len(prices)):
+            if i < period - 1:
+                # Media parziale per evitare troppi NaN
+                sma[i] = np.mean(prices[:i+1])
+            else:
+                sma[i] = np.mean(prices[i - period + 1:i + 1])
         
         return sma
     
@@ -5070,7 +5086,7 @@ class RollingWindowTrainer:
         return result
     
     def _prepare_sr_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
-        """Prepara dataset per Support/Resistance"""
+        """Prepara dataset per Support/Resistance con validazione NaN"""
         prices = data['prices']
         volumes = data['volumes']
         
@@ -5079,21 +5095,44 @@ class RollingWindowTrainer:
         future_window = 20
         
         X, y = [], []
+        skipped_samples = 0
         
         for i in range(window_size, len(prices) - future_window):
             # Features: prezzi, volumi, indicatori
+            price_features = prices[i-window_size:i]
+            volume_features = volumes[i-window_size:i]
+            sma_features = data['sma_20'][i-window_size:i]
+            rsi_features = data['rsi'][i-window_size:i]
+            
+            # 🔧 NUOVO: Validazione NaN per ogni componente
+            if (np.isnan(price_features).any() or 
+                np.isnan(volume_features).any() or 
+                np.isnan(sma_features).any() or 
+                np.isnan(rsi_features).any()):
+                skipped_samples += 1
+                continue  # Salta sample con NaN nelle features
+            
             features = np.concatenate([
-                prices[i-window_size:i],
-                volumes[i-window_size:i],
-                data['sma_20'][i-window_size:i],
-                data['rsi'][i-window_size:i]
+                price_features,
+                volume_features,
+                sma_features,
+                rsi_features
             ])
             
             # Target: massimi e minimi futuri per S/R
             future_prices = prices[i:i+future_window]
+            if np.isnan(future_prices).any():
+                skipped_samples += 1
+                continue  # Salta se future prices hanno NaN
+                
             resistance = np.max(future_prices)
             support = np.min(future_prices)
             current_price = prices[i]
+            
+            # 🔧 NUOVO: Validazione divisione per zero
+            if current_price == 0 or np.isnan(current_price):
+                skipped_samples += 1
+                continue
             
             # Normalizza target
             y_val = np.array([
@@ -5101,8 +5140,21 @@ class RollingWindowTrainer:
                 (resistance - current_price) / current_price
             ])
             
+            # 🔧 NUOVO: Validazione finale target
+            if np.isnan(y_val).any() or np.isinf(y_val).any():
+                skipped_samples += 1
+                continue
+            
             X.append(features)
             y.append(y_val)
+        
+        if skipped_samples > 0:
+            print(f"[DEBUG] S/R Dataset: skipped {skipped_samples} samples with NaN/Inf values")
+        
+        if len(X) == 0:
+            print(f"[ERROR] S/R Dataset: no valid samples generated (all {skipped_samples} samples had NaN/Inf)")
+            # Ritorna arrays vuoti ma validi
+            return np.empty((0, window_size * 4)), np.empty((0, 2))
         
         return np.array(X), np.array(y)
     
@@ -5255,17 +5307,31 @@ class RollingWindowTrainer:
             # Check NaN
             nan_count = int(np.isnan(data).sum())
             if nan_count > 0:
-                if nan_count < data.size * 0.1:  # Meno del 10%
+                if nan_count < data.size * 0.3:  # 🔧 Aumentato soglia dal 10% al 30%
                     # Sostituisci con interpolazione
                     valid_mask = ~np.isnan(data)
                     if valid_mask.any():
-                        mean_val = float(np.nanmean(data))
-                        data = np.where(np.isnan(data), mean_val, data)
-                        training_info['nan_fixes'] = {'count': nan_count, 'method': 'mean_substitution'}
+                        # 🔧 MIGLIORATO: Interpolazione lineare invece di media semplice
+                        if data.ndim == 1:
+                            # Per array 1D, usa interpolazione lineare
+                            valid_indices = np.where(valid_mask)[0]
+                            if len(valid_indices) >= 2:
+                                data = np.interp(np.arange(len(data)), valid_indices, data[valid_indices])
+                            else:
+                                # Fallback alla media se troppo pochi punti validi
+                                mean_val = float(np.nanmean(data))
+                                data = np.where(np.isnan(data), mean_val, data)
+                        else:
+                            # Per array multi-dimensionali, usa media
+                            mean_val = float(np.nanmean(data))
+                            data = np.where(np.isnan(data), mean_val, data)
+                        training_info['nan_fixes'] = {'count': nan_count, 'method': 'interpolation', 'threshold': '30%'}
                     else:
                         raise ValueError(f"{name}: tutti valori sono NaN")
                 else:
-                    raise ValueError(f"{name}: troppi NaN ({nan_count}/{data.size})")
+                    # 🔧 NUOVO: Messaggio più informativo
+                    percentage = (nan_count / data.size) * 100
+                    raise ValueError(f"{name}: troppi NaN ({nan_count}/{data.size} = {percentage:.1f}% > 30%)")
             
             # Check Inf
             inf_count = int(np.isinf(data).sum())
@@ -7583,8 +7649,8 @@ class AssetAnalyzer:
     def _perform_learning_phase_training(self):
         """Esegue mini-training durante la fase di learning con logging strutturato"""
         
-        # 🎯 TRAINING inizia solo con 100K ticks
-        TRAINING_THRESHOLD = 100000
+        # 🎯 TRAINING inizia a 80K ticks per evitare collisione con buffer capacity
+        TRAINING_THRESHOLD = 80000
         if len(self.tick_data) < TRAINING_THRESHOLD:
             return
 
@@ -15020,8 +15086,23 @@ class AdvancedMarketAnalyzer:
             # Update global stats
             self._update_global_stats()
             
-            # Update ML display metrics
-            self._update_ml_display_metrics(asset)
+            # Update ML display metrics only occasionally (every 50th tick)
+            if hasattr(self, '_display_update_counter'):
+                self._display_update_counter += 1
+            else:
+                self._display_update_counter = 1
+            
+            if self._display_update_counter % 50 == 0:
+                self._update_ml_display_metrics(asset)
+                
+                # Log learning progress periodically
+                if self._display_update_counter % 1000 == 0:  # Every 1000 ticks
+                    for asset_name, analyzer in self.asset_analyzers.items():
+                        if hasattr(analyzer, 'learning_phase') and analyzer.learning_phase:
+                            ticks = len(analyzer.tick_data) if hasattr(analyzer, 'tick_data') else 0
+                            progress = getattr(analyzer, 'learning_progress', 0.0) * 100
+                            self._safe_log('training', 'info', 
+                                         f"Learning progress [{asset_name}]: {progress:.1f}% - {ticks:,} ticks processed")
             
             # ✅ NUOVO: Store significant events  
             if result and result.get('status') == 'learning_complete':
@@ -15220,6 +15301,11 @@ class AdvancedMarketAnalyzer:
             # Update display for important events
             if event_type in ['champion_change', 'emergency_stop', 'learning_progress', 'validation_complete']:
                 self._update_ml_display_metrics()
+                
+                # Also log important events to console
+                if event_type in ['champion_change', 'emergency_stop']:
+                    event_msg = enhanced_event_data.get('message', f'{event_type} event occurred')
+                    self._safe_log('training', 'info', f"[IMPORTANT] {event_msg}")
             
         except Exception as e:
             # Silent fail to prevent crashes
@@ -15242,28 +15328,60 @@ class AdvancedMarketAnalyzer:
             
             # Get model information from asset analyzers
             models_info = {}
+            real_champions = 0
+            total_accuracy = 0.0
+            total_predictions = 0
+            
             for asset_name, analyzer in self.asset_analyzers.items():
+                # Get real learning progress from analyzer
+                asset_ticks = len(analyzer.tick_data) if hasattr(analyzer, 'tick_data') else 0
+                required_ticks = getattr(analyzer.config, 'learning_ticks_threshold', 50000) if hasattr(analyzer, 'config') else 50000
+                
+                if hasattr(analyzer, 'learning_phase') and analyzer.learning_phase:
+                    # Calculate progress based on learning requirements
+                    asset_progress = min(100.0, (asset_ticks / required_ticks) * 100)
+                    learning_progress = max(learning_progress, asset_progress)
+                elif hasattr(analyzer, 'learning_phase') and not analyzer.learning_phase:
+                    learning_progress = 100.0  # Learning completed
+                else:
+                    asset_progress = 0.0
+                
                 # Get model competitions if available
                 if hasattr(analyzer, 'competitions'):
                     for model_type, competition in analyzer.competitions.items():
+                        model_name = f"{asset_name}_{model_type.value}"
+                        
                         if hasattr(competition, 'champion') and competition.champion:
-                            model_name = f"{asset_name}_{model_type.value}"
                             champion_alg = competition.algorithms.get(competition.champion)
                             if champion_alg:
+                                # Get real accuracy and predictions
+                                accuracy = getattr(champion_alg, 'accuracy_rate', 0.0) * 100
+                                predictions = getattr(champion_alg, 'total_predictions', 0)
+                                
                                 models_info[model_name] = {
-                                    'progress': min(100.0, (total_ticks / 10000) * 100),  # Approximate progress
-                                    'accuracy': champion_alg.accuracy_rate * 100 if hasattr(champion_alg, 'accuracy_rate') else 0.0,
+                                    'progress': asset_progress,
+                                    'accuracy': accuracy,
                                     'status': 'Training' if getattr(analyzer, 'learning_phase', True) else 'Complete',
-                                    'predictions': champion_alg.total_predictions if hasattr(champion_alg, 'total_predictions') else 0,
+                                    'predictions': predictions,
                                     'is_champion': True
                                 }
-                                champions_active += 1
-                
-                # Calculate overall learning progress
-                if hasattr(analyzer, 'learning_phase') and analyzer.learning_phase:
-                    # Simple progress calculation based on ticks processed
-                    asset_ticks = len(analyzer.tick_data) if hasattr(analyzer, 'tick_data') else 0
-                    learning_progress = max(learning_progress, min(100.0, (asset_ticks / 50000) * 100))
+                                
+                                if accuracy > 0 or predictions > 0:  # Only count real champions
+                                    real_champions += 1
+                                    total_accuracy += accuracy
+                                    total_predictions += predictions
+                        else:
+                            # Model without champion - still in early training
+                            early_progress = min(25.0, (asset_ticks / (required_ticks * 0.1)) * 25)
+                            models_info[model_name] = {
+                                'progress': early_progress,
+                                'accuracy': 0.0,
+                                'status': 'Initializing',
+                                'predictions': 0,
+                                'is_champion': False
+                            }
+            
+            champions_active = len([m for m in models_info.values() if m['is_champion']])
             
             # Update individual model progress
             for model_name, model_data in models_info.items():
@@ -15271,6 +15389,9 @@ class AdvancedMarketAnalyzer:
                     model_name=model_name,
                     **model_data
                 )
+            
+            # Calculate average accuracy from real champions
+            avg_accuracy = (total_accuracy / real_champions) if real_champions > 0 else 0.0
             
             # Prepare main display metrics
             display_metrics = {
