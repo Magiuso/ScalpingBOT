@@ -18,6 +18,8 @@ from dataclasses import dataclass, field, fields
 from collections import deque, defaultdict
 from datetime import datetime, timedelta
 from functools import lru_cache
+from ML_Training_Logger.Config_Manager import EventSeverity
+from ML_Training_Logger.Event_Collector import EventType
 import hashlib
 import json
 import pickle
@@ -173,6 +175,16 @@ class AnalyzerConfig:
     preservation_score_threshold: float = 70.0  # Score minimo preservazione
     preservation_improvement_threshold: float = 0.2  # 20% miglioramento
     
+    # ========== ML TRAINING LOGGER CONFIGURATION ==========
+    ml_logger_enabled: bool = True  # Abilita ML Training Logger
+    ml_logger_verbosity: str = "standard"  # minimal, standard, verbose, debug
+    ml_logger_terminal_mode: str = "dashboard"  # dashboard, scroll, minimal
+    ml_logger_file_output: bool = True  # Abilita output su file
+    ml_logger_formats: List[str] = field(default_factory=lambda: ["json", "csv"])  # Formati output
+    ml_logger_base_directory: str = "./ml_training_logs"  # Directory base log
+    ml_logger_rate_limit_ticks: int = 100  # Rate limit per tick processing
+    ml_logger_flush_interval: float = 5.0  # Intervallo flush su disco (secondi)
+    
     def __post_init__(self):
         """Validazione configurazione"""
         self._validate_config()
@@ -286,6 +298,42 @@ class AnalyzerConfig:
         except Exception as e:
             safe_print(f"❌ Error loading config: {e}, using defaults")
             return cls()
+    
+    def create_ml_logger_config(self, asset_name: str):
+        """Crea configurazione ML Training Logger basata su AnalyzerConfig"""
+        try:
+            from ML_Training_Logger.Unified_ConfigManager import UnifiedConfigManager, ConfigVerbosity
+            
+            # Mappa la verbosity string all'enum
+            verbosity_map = {
+                "minimal": ConfigVerbosity.MINIMAL,
+                "standard": ConfigVerbosity.STANDARD,
+                "verbose": ConfigVerbosity.VERBOSE,
+                "debug": ConfigVerbosity.DEBUG
+            }
+            
+            verbosity = verbosity_map.get(self.ml_logger_verbosity, ConfigVerbosity.STANDARD)
+            
+            # Crea configurazione ML logger
+            ml_config = UnifiedConfigManager.create_custom_config(
+                asset_name=asset_name,
+                verbosity=verbosity,
+                terminal_mode=self.ml_logger_terminal_mode,
+                file_output=self.ml_logger_file_output,
+                formats=self.ml_logger_formats,
+                base_directory=self.ml_logger_base_directory,
+                rate_limit_ticks=self.ml_logger_rate_limit_ticks,
+                flush_interval=self.ml_logger_flush_interval
+            )
+            
+            return ml_config
+            
+        except ImportError as e:
+            safe_print(f"⚠️ ML_Training_Logger not available: {e}")
+            return None
+        except Exception as e:
+            safe_print(f"❌ Error creating ML logger config: {e}")
+            return None
     
     def save_to_file(self, config_path: str) -> None:
         """Salva configurazione su file JSON"""
@@ -14450,6 +14498,14 @@ class AssetAnalyzer:
             'last_check': datetime.now()
         }
     
+    def _calculate_system_health_score(self) -> float:
+        """Calculate system health score as a simple float value"""
+        try:
+            health_data = self._calculate_system_health()
+            return health_data.get('score', 0.0)
+        except Exception:
+            return 0.0
+    
     def get_diagnostics_report(self) -> Dict[str, Any]:
         """Genera report diagnostico completo"""
         return self.diagnostics.generate_diagnostics_report()
@@ -14723,6 +14779,16 @@ class AdvancedMarketAnalyzer:
         except Exception as e:
             print(f"⚠️ Logger initialization failed: {e} - using fallback logging")
         
+        # ✅ NUOVO: ML Training Logger Integration
+        self.ml_logger_config = None
+        self.ml_event_collector = None
+        self.ml_display_manager = None
+        self.ml_storage_manager = None
+        self.ml_logger_active = False
+        
+        # Initialize ML Training Logger components
+        self._initialize_ml_logger()
+        
         # Load existing analyzers
         self._load_existing_analyzers()
         
@@ -14842,6 +14908,47 @@ class AdvancedMarketAnalyzer:
                 
             except Exception as e:
                 self._safe_log('errors', 'error', f"Error during logging slave cleanup: {e}")
+    
+    def _initialize_ml_logger(self):
+        """Initialize ML Training Logger components"""
+        try:
+            # Get default config instance
+            config = get_analyzer_config()
+            
+            if not config.ml_logger_enabled:
+                self._safe_log('system', 'info', "ML Training Logger disabled in configuration")
+                return
+            
+            # Import the MLTrainingLoggerConfig class
+            from ML_Training_Logger.Config_Manager import MLTrainingLoggerConfig
+
+            # Create ML Logger config for main system asset
+            self.ml_logger_config = MLTrainingLoggerConfig.create_preset('standard')
+
+            # Import ML Training Logger components
+            from ML_Training_Logger.Event_Collector import EventCollector
+            from ML_Training_Logger.Display_Manager import DisplayManager
+            from ML_Training_Logger.Storage_Manager import StorageManager
+
+            # Initialize components
+            self.ml_event_collector = EventCollector(self.ml_logger_config)
+            self.ml_display_manager = DisplayManager(self.ml_logger_config)
+            self.ml_storage_manager = StorageManager(self.ml_logger_config)
+            
+            # Start components
+            self.ml_event_collector.start()
+            self.ml_display_manager.start()
+            self.ml_storage_manager.start()
+            
+            self.ml_logger_active = True
+            self._safe_log('system', 'info', "✅ ML Training Logger initialized successfully")
+            
+        except ImportError as e:
+            self._safe_log('errors', 'warning', f"ML Training Logger not available: {e}")
+            self.ml_logger_active = False
+        except Exception as e:
+            self._safe_log('errors', 'error', f"Failed to initialize ML Training Logger: {e}")
+            self.ml_logger_active = False
     
     def add_asset(self, asset: str) -> AssetAnalyzer:
         """Aggiunge un nuovo asset per l'analisi - VERSIONE COMPLETA"""
@@ -15060,6 +15167,94 @@ class AdvancedMarketAnalyzer:
         with self._events_lock:
             for buffer_deque in self._events_buffer.values():
                 buffer_deque.clear()
+    
+    def _emit_ml_event(self, event_type: str, event_data: Dict) -> None:
+        """Emit event to ML Training Logger if active"""
+        if not self.ml_logger_active or not self.ml_event_collector:
+            return
+            
+        try:
+            
+            # Add timestamp and source to event data
+            enhanced_event_data = {
+                **event_data,
+                'timestamp': datetime.now().isoformat(),
+                'source': 'AdvancedMarketAnalyzer',
+                'asset': 'MAIN_SYSTEM'
+            }
+            
+            # Convert string event_type to EventType enum
+            try:
+                # Map common event types to EventType enum
+                event_type_mapping = {
+                    'emergency_stop': EventType.EMERGENCY_STOP,
+                    'champion_change': EventType.CHAMPION_CHANGE,
+                    'learning_progress': EventType.LEARNING_PROGRESS,
+                    'model_training': EventType.MODEL_TRAINING,
+                    'performance_metrics': EventType.PERFORMANCE_METRICS,
+                    'validation_complete': EventType.VALIDATION_COMPLETE,
+                    'prediction_generated': EventType.PREDICTION_GENERATED,
+                    'algorithm_update': EventType.ALGORITHM_UPDATE,
+                    'error_event': EventType.ERROR_EVENT,
+                    'system_status': EventType.SYSTEM_STATUS
+                }
+                
+                event_type_enum = event_type_mapping.get(event_type.lower(), EventType.SYSTEM_STATUS)
+            except (ValueError, AttributeError):
+                event_type_enum = EventType.SYSTEM_STATUS
+
+            # Create MLEvent object
+            ml_event = self.ml_event_collector.create_manual_event(
+                event_type=event_type_enum,
+                data=enhanced_event_data,
+                severity=EventSeverity.INFO,
+                asset=enhanced_event_data.get('asset', 'MAIN_SYSTEM')
+            )
+
+            # Emit the event
+            self.ml_event_collector.emit_event(ml_event)
+            
+        except Exception as e:
+            # Silent fail to prevent crashes
+            self._safe_log('errors', 'warning', f"Failed to emit ML event {event_type}: {e}")
+    
+    def _update_ml_display_metrics(self, asset: Optional[str] = None) -> None:
+        """Update ML Training Logger display with current metrics"""
+        if not self.ml_logger_active or not self.ml_display_manager:
+            return
+            
+        try:
+            # Calculate current system metrics
+            performance_stats = self.get_performance_stats()
+            health_score = self._calculate_global_health()['score']
+            
+            # Prepare metrics for display
+            display_metrics = {
+                'total_assets': len(self.asset_analyzers),
+                'active_assets': performance_stats['active_assets'],
+                'ticks_processed': performance_stats['ticks_processed'],
+                'ticks_per_second': performance_stats['ticks_per_second'],
+                'avg_latency_ms': performance_stats['avg_latency_ms'],
+                'system_health_score': health_score,
+                'uptime_hours': performance_stats['uptime_seconds'] / 3600,
+                'events_generated': performance_stats['events_generated']
+            }
+            
+            # Add asset-specific metrics if provided
+            if asset and asset in self.asset_analyzers:
+                analyzer = self.asset_analyzers[asset]
+                display_metrics.update({
+                    'current_asset': asset,
+                    'asset_ticks': len(analyzer.tick_data) if hasattr(analyzer, 'tick_data') else 0,
+                    'asset_learning_phase': getattr(analyzer, 'learning_phase', True)
+                })
+            
+            # Update display
+            self.ml_display_manager.update_metrics(**display_metrics)
+            
+        except Exception as e:
+            # Silent fail to prevent crashes
+            self._safe_log('errors', 'warning', f"Failed to update ML display metrics: {e}")
     
     def get_performance_stats(self) -> Dict[str, Any]:
         """✅ NUOVO: Ottieni statistiche di performance per UnifiedAnalyzerSystem"""
@@ -15535,6 +15730,20 @@ class AdvancedMarketAnalyzer:
             self.clear_events()
         except Exception as e:
             self._safe_log('errors', 'error', f"Error clearing events during shutdown: {e}")
+        
+        # ✅ NUOVO: Shutdown ML Training Logger components
+        try:
+            if self.ml_logger_active:
+                if self.ml_event_collector:
+                    self.ml_event_collector.stop()
+                if self.ml_display_manager:
+                    self.ml_display_manager.stop()
+                if self.ml_storage_manager:
+                    self.ml_storage_manager.stop()
+                self.ml_logger_active = False
+                self._safe_log('system', 'info', "ML Training Logger components shut down")
+        except Exception as e:
+            self._safe_log('errors', 'error', f"Error shutting down ML logger: {e}")
         
         # Final log
         uptime_hours = self.global_stats.get('uptime_hours', 0)
