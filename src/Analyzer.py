@@ -53,6 +53,7 @@ try:
     )
     from ML_Training_Logger.Display_Manager import DisplayManager, DisplayEventAdapter
     from ML_Training_Logger.Storage_Manager import StorageManager, StorageEventAdapter
+    from ML_Training_Logger.Config_Manager import MLTrainingLoggerConfig
     
     print("✅ ML_Training_Logger successfully imported and active")
     
@@ -1409,7 +1410,7 @@ class AnalyzerLogger:
         self.analyzer_parent = parent
     
     def _emit_ml_event(self, event_type: str, event_data: Dict[str, Any], 
-                      severity: EventSeverity = EventSeverity.NORMAL) -> None:
+                      severity: EventSeverity = EventSeverity.INFO) -> None:
         """Emit ML training event per integration con ML_Training_Logger"""
         if self._shutdown_initiated:
             return
@@ -2549,6 +2550,31 @@ class LearningDiagnostics:
         
         # Clear all buffers
         self.clear_events_buffer()
+    
+    def get_learning_progress(self) -> float:
+        """Returns current learning progress as a float between 0.0 and 1.0"""
+        # Check if asset analyzer is available
+        if hasattr(self, 'asset') and hasattr(self, 'logger'):
+            try:
+                # Try to get progress from logger buffers or other sources
+                total_events = len(self._diagnostic_events_buffer) + len(self._performance_events_buffer)
+                if total_events > 0:
+                    # Calculate progress based on events processed
+                    processed_events = min(total_events, 1000)  # Cap at 1000 for calculation
+                    progress = min(processed_events / 1000.0, 1.0)
+                    return progress
+                
+                # Fallback: calculate based on ticks processed
+                if self.total_ticks_processed > 0:
+                    # Assume 10000 ticks represents significant learning
+                    progress = min(self.total_ticks_processed / 10000.0, 1.0)
+                    return progress
+                    
+            except Exception:
+                pass
+        
+        # Default fallback
+        return 0.0
 
 # ================== ENUMS E DATACLASSES ==================
 
@@ -5004,6 +5030,7 @@ class RollingWindowTrainer:
         self.retrain_frequency_days = retrain_frequency_days
         self.last_training_dates: Dict[str, datetime] = {}
         self.training_history: Dict[str, List[Dict]] = defaultdict(list)
+        self.analyzer_parent = None  # Will be set by parent system
         
     def should_retrain(self, asset: str, model_type: ModelType, algorithm_name: str,
                       force: bool = False) -> bool:
@@ -6024,6 +6051,9 @@ class AlgorithmCompetition:
         
         # 🔧 NUOVO: Configurazione centralizzata
         self.config = config or get_analyzer_config()
+        
+        # ML Training Logger integration
+        self.analyzer_parent = None  # Will be set by parent system
         
         self.algorithms: Dict[str, AlgorithmPerformance] = {}
         self.champion: Optional[str] = None
@@ -7240,11 +7270,42 @@ class AssetAnalyzer:
             'error_count': 0,
             'last_activity_time': datetime.now()
         }
+        
+        # Initialize ML Training Logger integration attributes
+        self.analyzer_parent = None  # Will be set by parent system
+        
+        # Initialize ML models and data
+        self._initialize_ml_models()
+        self._load_ml_models()
+    
+    def _emit_ml_event(self, event_type: str, data: Dict[str, Any], 
+                      severity: EventSeverity = EventSeverity.INFO) -> None:
+        """Emit ML training event per integration con ML_Training_Logger"""
+        if hasattr(self, 'analyzer_parent') and self.analyzer_parent:
+            try:
+                self.analyzer_parent._emit_ml_event(event_type, data, severity)
+            except Exception:
+                pass  # Silently ignore if parent doesn't support ML events
+        
+        # Store local event for debugging
+        if hasattr(self, '_local_events_buffer'):
+            event = {
+                'timestamp': datetime.now(),
+                'event_type': event_type,
+                'data': data,
+                'severity': severity.value if hasattr(severity, 'value') else str(severity),
+                'asset': self.asset
+            }
+            with self._local_events_lock:
+                if 'ml_events' not in self._local_events_buffer:
+                    self._local_events_buffer['ml_events'] = deque(maxlen=100)
+                self._local_events_buffer['ml_events'].append(event)
 
-        def _load_ml_models(self) -> None:
-            """Carica i modelli ML salvati - VERSIONE PULITA"""
-            
-            models_dir = f"{self.data_path}/models"
+    def _initialize_algorithms(self) -> None:
+        """Inizializza tutti gli algoritmi per ogni modello"""
+        
+        # Support/Resistance algorithms
+        sr_competition = self.competitions[ModelType.SUPPORT_RESISTANCE]
             
             if not os.path.exists(models_dir):
                 return
@@ -14950,8 +15011,10 @@ class AdvancedMarketAnalyzer:
             # Emit through all ML Training Logger systems
             success = self.ml_event_collector.emit_event(event)
             if success:
-                self.ml_display_manager.display_event(event)
-                self.ml_storage_manager.store_event(event)
+                if self.ml_display_manager and hasattr(self.ml_display_manager, 'display_event'):
+                    self.ml_display_manager.display_event(event)
+                if self.ml_storage_manager and hasattr(self.ml_storage_manager, 'store_event'):
+                    self.ml_storage_manager.store_event(event)
             else:
                 print(f"⚠️ Failed to emit ML event: {event_type}")
                 
