@@ -41,6 +41,33 @@ import time
 import traceback
 warnings.filterwarnings('ignore')
 
+# ================== ML TRAINING LOGGER INTEGRATION (REQUIRED) ==================
+try:
+    from ML_Training_Logger.Unified_ConfigManager import (
+        UnifiedConfigManager, ConfigVerbosity, ConfigTimingPreset, ConfigOutputPreset
+    )
+    from ML_Training_Logger.Event_Collector import (
+        EventCollector, MLEvent, EventType, EventSource, EventSeverity,
+        create_learning_progress_event, create_champion_change_event, 
+        create_emergency_stop_event
+    )
+    from ML_Training_Logger.Display_Manager import DisplayManager, DisplayEventAdapter
+    from ML_Training_Logger.Storage_Manager import StorageManager, StorageEventAdapter
+    
+    print("✅ ML_Training_Logger successfully imported and active")
+    
+except ImportError as e:
+    print(f"❌ CRITICAL ERROR: ML_Training_Logger is required but not available!")
+    print(f"💥 Import failed: {e}")
+    print(f"🔧 Please ensure ML_Training_Logger is properly installed and accessible")
+    raise SystemExit("ML_Training_Logger integration failed - system cannot start")
+    
+except Exception as e:
+    print(f"❌ CRITICAL ERROR: ML_Training_Logger initialization failed!")
+    print(f"💥 Error: {e}")
+    print(f"🔧 Check ML_Training_Logger installation and dependencies")
+    raise SystemExit(f"ML_Training_Logger system error: {e}")
+
 # ================== ANALYZER CONFIGURATION SYSTEM ==================
 
 @dataclass
@@ -173,6 +200,16 @@ class AnalyzerConfig:
     preservation_score_threshold: float = 70.0  # Score minimo preservazione
     preservation_improvement_threshold: float = 0.2  # 20% miglioramento
     
+    # ========== ML TRAINING LOGGER INTEGRATION ==========
+    ml_logger_enabled: bool = True  # Abilita ML Training Logger
+    ml_logger_verbosity: str = "standard"  # "minimal", "standard", "verbose", "debug"
+    ml_logger_terminal_mode: str = "dashboard"  # "dashboard", "scroll", "silent"
+    ml_logger_file_output: bool = True  # Abilita output su file
+    ml_logger_formats: List[str] = field(default_factory=lambda: ["csv", "json"])  # Formati export
+    ml_logger_base_directory: str = "./ml_training_logs"  # Directory base per logs
+    ml_logger_rate_limit_ticks: int = 100  # Log ogni N ticks per performance
+    ml_logger_flush_interval: float = 5.0  # Intervallo flush su disco (secondi)
+    
     def __post_init__(self):
         """Validazione configurazione"""
         self._validate_config()
@@ -224,6 +261,48 @@ class AnalyzerConfig:
             'low_volume_ratio': self.volume_low_multiplier,
             'high_volume_ratio': self.volume_high_multiplier
         }
+    
+    def create_ml_logger_config(self, asset_symbol: str) -> 'UnifiedConfigManager':
+        """Crea configurazione ML_Training_Logger da AnalyzerConfig"""
+        if not self.ml_logger_enabled:
+            raise ValueError("ML Logger is disabled in AnalyzerConfig")
+        
+        # Map verbosity
+        verbosity_map = {
+            "minimal": ConfigVerbosity.MINIMAL,
+            "standard": ConfigVerbosity.STANDARD,
+            "verbose": ConfigVerbosity.VERBOSE,
+            "debug": ConfigVerbosity.DEBUG
+        }
+        
+        verbosity = verbosity_map.get(self.ml_logger_verbosity, ConfigVerbosity.STANDARD)
+        
+        # Create custom config
+        config = UnifiedConfigManager.create_custom_config(
+            asset_symbol=asset_symbol,
+            verbosity=verbosity,
+            timing_preset=ConfigTimingPreset.NORMAL_TRADING,
+            output_preset=ConfigOutputPreset.DEVELOPMENT,
+            system_mode="development"
+        )
+        
+        # Apply AnalyzerConfig specific settings
+        config.output_settings.terminal_mode = self.ml_logger_terminal_mode
+        config.output_settings.file_output = self.ml_logger_file_output
+        config.output_settings.base_directory = self.ml_logger_base_directory
+        config.timing_settings.flush_interval = self.ml_logger_flush_interval
+        config.rate_limit_settings.tick_processing = self.ml_logger_rate_limit_ticks
+        
+        # Set formats
+        config.output_settings.formats = {
+            'csv': 'csv' in self.ml_logger_formats,
+            'json': 'json' in self.ml_logger_formats,
+            'parquet': 'parquet' in self.ml_logger_formats,
+            'sqlite': 'sqlite' in self.ml_logger_formats,
+            'real_time_feed': False
+        }
+        
+        return config
     
     def get_model_architecture(self, model_name: str) -> Dict[str, Any]:
         """Ottieni architettura per modelli ML"""
@@ -969,6 +1048,9 @@ class AnalyzerLogger:
         
         # Shutdown flag per controllo sicuro
         self._shutdown_initiated = False
+        
+        # ✅ NUOVO: Riferimento al parent analyzer per ML_Training_Logger integration
+        self.analyzer_parent: Optional['AssetAnalyzer'] = None
     
     def log_prediction(self, asset: str, prediction: 'Prediction', 
                       validation_result: Optional[Dict[str, Any]] = None) -> None:
@@ -1321,6 +1403,33 @@ class AnalyzerLogger:
         self.clear_events_buffer()
         
         return events_flushed
+    
+    def set_analyzer_parent(self, parent: 'AssetAnalyzer') -> None:
+        """Imposta il riferimento al parent analyzer"""
+        self.analyzer_parent = parent
+    
+    def _emit_ml_event(self, event_type: str, event_data: Dict[str, Any], 
+                      severity: EventSeverity = EventSeverity.NORMAL) -> None:
+        """Emit ML training event per integration con ML_Training_Logger"""
+        if self._shutdown_initiated:
+            return
+        
+        ml_event = {
+            'timestamp': datetime.now(),
+            'event_type': f'ml_{event_type}',
+            'severity': severity.value,
+            'data': event_data
+        }
+        
+        # Store in appropriate buffer based on event type
+        if event_type in ['emergency_stop', 'reality_check_failed']:
+            self._emergency_events_buffer.append(ml_event)
+        elif event_type in ['training_completed', 'retraining_started']:
+            self._training_events_buffer.append(ml_event)
+        elif event_type in ['performance_degradation', 'champion_change']:
+            self._performance_events_buffer.append(ml_event)
+        else:
+            self._system_events_buffer.append(ml_event)
     
     def shutdown(self) -> Dict[str, Any]:
         """Shutdown sicuro del logger con cleanup completo"""
@@ -2883,7 +2992,19 @@ class EmergencyStopSystem:
         algorithm.emergency_stop_triggered = True
         self.stopped_algorithms.add(algorithm_key)
         
-        # Store emergency stop event
+        # ✅ ML_TRAINING_LOGGER: Emit emergency stop event
+        if hasattr(self, 'logger') and hasattr(self.logger, 'analyzer_parent') and self.logger.analyzer_parent:
+            self.logger.analyzer_parent._emit_ml_event('emergency_stop', {
+                'algorithm_key': algorithm_key,
+                'triggers': [{'name': trigger, 'value': value} for trigger, value in triggers],
+                'final_score': algorithm.final_score,
+                'algorithm_name': algorithm.name,
+                'model_type': algorithm.model_type.value if hasattr(algorithm.model_type, 'value') else str(algorithm.model_type),
+                'timestamp': datetime.now().isoformat(),
+                'severity': 'critical'
+            }, EventSeverity.CRITICAL)
+        
+        # ✅ LEGACY: Store emergency stop event
         self._store_emergency_event('emergency_stop_triggered', {
             'algorithm_key': algorithm_key,
             'triggers': triggers,
@@ -5019,6 +5140,20 @@ class RollingWindowTrainer:
         self.training_history[key].append(training_record)
         self.last_training_dates[f"unknown_{key}"] = datetime.now()
         
+        # ✅ ML_TRAINING_LOGGER: Emit training event
+        if hasattr(self, 'analyzer_parent') and self.analyzer_parent and hasattr(self.analyzer_parent, '_emit_ml_event'):
+            self.analyzer_parent._emit_ml_event('model_training', {
+                'asset': getattr(self, 'asset', 'unknown'),
+                'model_type': model_type.value,
+                'algorithm_name': algorithm_name,
+                'data_points': len(X),
+                'duration_seconds': duration,
+                'final_loss': result.get('final_loss', 0),
+                'improvement': result.get('improvement', 0),
+                'training_status': result.get('status', 'unknown'),
+                'preserve_weights': preserve_weights
+            }, EventSeverity.INFO, getattr(self, 'asset', None))
+        
         return result
     
     def _prepare_sr_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
@@ -6738,7 +6873,21 @@ class AlgorithmCompetition:
                 current_champion, self.algorithms[best_challenger]
             )
             
-            # Log il cambio
+            # ✅ ML_TRAINING_LOGGER: Emit champion change event
+            if hasattr(self, 'analyzer_parent') and self.analyzer_parent and hasattr(self.analyzer_parent, '_emit_ml_event'):
+                self.analyzer_parent._emit_ml_event('champion_change', {
+                    'asset': self.asset,
+                    'model_type': self.model_type.value,
+                    'old_champion': old_champion or "None",
+                    'new_champion': best_challenger,
+                    'old_score': old_score,
+                    'new_score': best_challenger_score,
+                    'improvement_percent': ((best_challenger_score - old_score) / old_score * 100) if old_score > 0 else 0,
+                    'reason': reason,
+                    'algorithm_count': len(self.algorithms)
+                }, EventSeverity.INFO, self.asset)
+            
+            # ✅ LEGACY: Log il cambio (for backward compatibility)
             self.logger.log_champion_change(
                 self.asset, self.model_type, old_champion or "None", best_challenger,
                 old_score, best_challenger_score, reason
@@ -14704,58 +14853,225 @@ class AdvancedMarketAnalyzer:
             'processing_times': deque(maxlen=1000)  # Ultimi 1000 processing times
         }
         
-        # Global logger con accesso sicuro
-        self.logger = None
+        # ================== ML TRAINING LOGGER INITIALIZATION ==================
+        self.ml_logger_config = None
+        self.ml_event_collector = None
+        self.ml_display_manager = None
+        self.ml_storage_manager = None
+        self.ml_logger_active = False
         
-        # ✅ NUOVO: Analyzer Logging Slave Module initialization
-        self.logging_slave = None
-        self.slave_processing_interval = 60.0  # Process events every 60 seconds
-        self.last_slave_processing = datetime.now()
-        self._logger_available = False
+        # Default configuration
+        default_config = AnalyzerConfig()
         
         try:
-            # Tentativo di import della classe AnalyzerLogger
-            from src.Analyzer import AnalyzerLogger
-            self.logger = AnalyzerLogger(f"{data_path}/global_logs")
-            self._logger_available = True
-        except ImportError:
-            print(f"⚠️ AnalyzerLogger not available - using fallback logging")
+            # Create ML Logger configuration for global system
+            self.ml_logger_config = default_config.create_ml_logger_config("GLOBAL_SYSTEM")
+            
+            # Initialize ML Training Logger components
+            self.ml_event_collector = EventCollector(
+                self.ml_logger_config.get_logging_config(),
+                session_id=f"analyzer_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            )
+            
+            self.ml_display_manager = DisplayManager(self.ml_logger_config)
+            self.ml_storage_manager = StorageManager(self.ml_logger_config)
+            
+            # Start ML Training Logger systems
+            self.ml_event_collector.start()
+            self.ml_display_manager.start()
+            self.ml_storage_manager.start()
+            
+            # Register this analyzer as event source
+            self.ml_event_collector.register_source("AdvancedMarketAnalyzer", self)
+            
+            self.ml_logger_active = True
+            print("✅ ML_Training_Logger successfully initialized and active")
+            
         except Exception as e:
-            print(f"⚠️ Logger initialization failed: {e} - using fallback logging")
+            print(f"❌ CRITICAL ERROR: ML_Training_Logger initialization failed!")
+            print(f"💥 Error: {e}")
+            print(f"🔧 System cannot continue without ML_Training_Logger")
+            raise SystemExit(f"ML_Training_Logger initialization failed: {e}")
+        
+        # Legacy logger compatibility (will be deprecated)
+        self.logger = None
+        self._logger_available = False
         
         # Load existing analyzers
         self._load_existing_analyzers()
         
-        # ✅ MIGLIORATO: Log system start con accesso sicuro
-        self._safe_log('system', 'info', 
-                       f"AdvancedMarketAnalyzer initialized with {len(self.asset_analyzers)} assets")
+        # ✅ NUOVO: Log system start con ML_Training_Logger
+        self._emit_ml_event('system_start', {
+            'analyzer_count': len(self.asset_analyzers),
+            'data_path': self.data_path,
+            'system_version': 'AdvancedMarketAnalyzer_v2.0'
+        }, EventSeverity.INFO)
+    
+    def _emit_ml_event(self, event_type: str, data: Dict[str, Any], 
+                       severity: EventSeverity = EventSeverity.INFO,
+                       asset: Optional[str] = None) -> None:
+        """
+        Emette eventi attraverso ML_Training_Logger
+        Sostituisce completamente il sistema di logging legacy
+        """
+        if not self.ml_logger_active or not self.ml_event_collector:
+            # System non attivo - questo è un errore critico
+            print(f"❌ ML_Training_Logger not active! Event lost: {event_type}")
+            return
+        
+        try:
+            # Map event_type to EventType enum
+            event_type_map = {
+                'system_start': EventType.SYSTEM_STATUS,
+                'tick_processed': EventType.PERFORMANCE_METRICS,
+                'prediction_generated': EventType.PREDICTION_GENERATED,
+                'champion_change': EventType.CHAMPION_CHANGE,
+                'model_training': EventType.MODEL_TRAINING,
+                'emergency_stop': EventType.EMERGENCY_STOP,
+                'validation_complete': EventType.VALIDATION_COMPLETE,
+                'learning_progress': EventType.LEARNING_PROGRESS,
+                'error_event': EventType.ERROR_EVENT,
+                'diagnostic': EventType.DIAGNOSTICS_EVENT
+            }
+            
+            ml_event_type = event_type_map.get(event_type, EventType.SYSTEM_STATUS)
+            
+            # Create and emit ML event
+            event = MLEvent(
+                event_type=ml_event_type,
+                source=EventSource.ADVANCED_MARKET_ANALYZER,
+                severity=severity,
+                asset=asset,
+                data=data,
+                source_method=event_type,
+                source_object_id=str(id(self))
+            )
+            
+            # Emit through all ML Training Logger systems
+            success = self.ml_event_collector.emit_event(event)
+            if success:
+                self.ml_display_manager.display_event(event)
+                self.ml_storage_manager.store_event(event)
+            else:
+                print(f"⚠️ Failed to emit ML event: {event_type}")
+                
+        except Exception as e:
+            print(f"❌ Error emitting ML event {event_type}: {e}")
     
     def _safe_log(self, logger_type: str, level: str, message: str) -> None:
-        """Logging sicuro che non causa crash se logger non disponibile"""
+        """
+        DEPRECATED: Legacy logging method - use _emit_ml_event instead
+        Kept for backward compatibility only
+        """
+        # Convert to ML event
+        severity_map = {
+            'debug': EventSeverity.DEBUG,
+            'info': EventSeverity.INFO,
+            'warning': EventSeverity.WARNING,
+            'error': EventSeverity.ERROR,
+            'critical': EventSeverity.CRITICAL
+        }
+        
+        severity = severity_map.get(level, EventSeverity.INFO)
+        
+        self._emit_ml_event('diagnostic', {
+            'logger_type': logger_type,
+            'level': level,
+            'message': message,
+            'legacy_call': True
+        }, severity)
+    
+    def _update_ml_display_metrics(self, current_asset: Optional[str] = None) -> None:
+        """
+        Aggiorna le metriche del display manager con dati attuali
+        """
+        if not self.ml_logger_active or not self.ml_display_manager:
+            return
+        
         try:
-            if (self.logger is not None and 
-                self._logger_available and 
-                hasattr(self.logger, 'loggers') and 
-                self.logger.loggers is not None and 
-                isinstance(self.logger.loggers, dict) and
-                logger_type in self.logger.loggers and
-                self.logger.loggers[logger_type] is not None):
-                
-                logger_instance = self.logger.loggers[logger_type]
-                if hasattr(logger_instance, level):
-                    getattr(logger_instance, level)(message)
-                else:
-                    # Fallback se il level non esiste
-                    timestamp = datetime.now().strftime('%H:%M:%S')
-                    print(f"[{timestamp}] {logger_type.upper()}: {message}")
-            else:
-                # Fallback a print se logger non disponibile
-                timestamp = datetime.now().strftime('%H:%M:%S')
-                print(f"[{timestamp}] {logger_type.upper()}: {message}")
+            # Calcola durata sistema
+            duration_seconds = int((datetime.now() - self._performance_stats['system_start_time']).total_seconds())
+            
+            # Conta champions attivi
+            champions_active = 0
+            champions_status = {}
+            
+            for asset, analyzer in self.asset_analyzers.items():
+                if hasattr(analyzer, 'competitions'):
+                    for model_type, competition in analyzer.competitions.items():
+                        if hasattr(competition, 'champion') and competition.champion:
+                            champions_active += 1
+                            key = f"{asset}_{model_type.value}"
+                            champions_status[key] = f"Champion: {competition.champion}"
+            
+            # Calcola learning progress (media tra tutti gli asset)
+            total_progress = 0.0
+            asset_count = 0
+            
+            for asset, analyzer in self.asset_analyzers.items():
+                if hasattr(analyzer, 'diagnostics') and hasattr(analyzer.diagnostics, 'get_learning_progress'):
+                    progress = analyzer.diagnostics.get_learning_progress()
+                    total_progress += progress
+                    asset_count += 1
+            
+            learning_progress = total_progress / asset_count if asset_count > 0 else 0.0
+            
+            # Metriche performance
+            performance_metrics = {
+                'avg_processing_time_ms': self._performance_stats.get('avg_processing_time_ms', 0.0),
+                'total_assets': len(self.asset_analyzers),
+                'active_champions': champions_active,
+                'system_health_score': self._calculate_system_health_score()
+            }
+            
+            # Aggiorna display manager
+            self.ml_display_manager.update_metrics(
+                learning_progress=learning_progress,
+                duration_seconds=duration_seconds,
+                ticks_processed=self._performance_stats.get('ticks_processed', 0),
+                champions_active=champions_active,
+                champions_status=champions_status,
+                performance_metrics=performance_metrics
+            )
+            
+        except Exception as e:
+            print(f"⚠️ Error updating ML display metrics: {e}")
+    
+    def _calculate_system_health_score(self) -> float:
+        """Calcola un health score generale del sistema (0-100)"""
+        try:
+            health_score = 100.0
+            
+            # Penalità per asset senza analyzer
+            if len(self.asset_analyzers) == 0:
+                return 0.0
+            
+            # Penalità per emergency stops
+            emergency_stops = 0
+            total_algorithms = 0
+            
+            for analyzer in self.asset_analyzers.values():
+                if hasattr(analyzer, 'competitions'):
+                    for competition in analyzer.competitions.values():
+                        if hasattr(competition, 'algorithms'):
+                            for alg in competition.algorithms.values():
+                                total_algorithms += 1
+                                if getattr(alg, 'emergency_stop_triggered', False):
+                                    emergency_stops += 1
+            
+            if total_algorithms > 0:
+                emergency_rate = emergency_stops / total_algorithms
+                health_score -= emergency_rate * 30  # Max 30 punti penalità
+            
+            # Penalità per performance basse
+            avg_performance = self.global_stats.get('global_performance', 0.0)
+            if avg_performance < 50:
+                health_score -= (50 - avg_performance) * 0.5
+            
+            return max(0.0, min(100.0, health_score))
+            
         except Exception:
-            # Silent fallback - non vogliamo crash per logging
-            timestamp = datetime.now().strftime('%H:%M:%S')
-            print(f"[{timestamp}] FALLBACK: {message}")
+            return 50.0  # Fallback score
     
     def _load_existing_analyzers(self) -> None:
         """Carica gli analyzer esistenti"""
@@ -14768,6 +15084,7 @@ class AdvancedMarketAnalyzer:
                         # Assume directory name is asset name
                         asset = item
                         analyzer = AssetAnalyzer(asset, self.data_path)
+                        analyzer.analyzer_parent = self  # ✅ Set parent reference for ML_Training_Logger
                         self.asset_analyzers[asset] = analyzer
                         
                         self._safe_log('system', 'info', f"Loaded analyzer for {asset}")
@@ -14848,7 +15165,9 @@ class AdvancedMarketAnalyzer:
         
         if asset not in self.asset_analyzers:
             try:
-                self.asset_analyzers[asset] = AssetAnalyzer(asset, self.data_path)
+                analyzer = AssetAnalyzer(asset, self.data_path)
+                analyzer.analyzer_parent = self  # ✅ Set parent reference for ML_Training_Logger
+                self.asset_analyzers[asset] = analyzer
                 
                 # ✅ NUOVO: Store event per UnifiedAnalyzerSystem
                 self._store_event('asset_added', {
@@ -14900,7 +15219,18 @@ class AdvancedMarketAnalyzer:
             processing_time_ms = (time.time() - processing_start) * 1000
             self._update_performance_stats(processing_time_ms)
             
-            # ✅ NUOVO: Store tick processing event
+            # ✅ ML_TRAINING_LOGGER: Emit tick processing event
+            self._emit_ml_event('tick_processed', {
+                'asset': asset,
+                'timestamp': timestamp.isoformat(),
+                'price': price,
+                'volume': volume,
+                'processing_time_ms': processing_time_ms,
+                'result_status': result.get('status', 'unknown') if result else 'no_result',
+                'total_ticks_processed': self._performance_stats['ticks_processed'] + 1
+            }, EventSeverity.DEBUG, asset)
+            
+            # ✅ LEGACY: Store tick processing event (for backward compatibility)
             self._store_event('tick_processed', {
                 'asset': asset,
                 'timestamp': timestamp,
@@ -14913,8 +15243,23 @@ class AdvancedMarketAnalyzer:
             # Update global stats
             self._update_global_stats()
             
+            # ✅ ML_TRAINING_LOGGER: Update display metrics
+            self._update_ml_display_metrics(asset)
+            
             # ✅ NUOVO: Store significant events  
             if result and result.get('status') == 'learning_complete':
+                # ✅ ML_TRAINING_LOGGER: Emit learning progress event
+                self._emit_ml_event('learning_progress', {
+                    'asset': asset,
+                    'timestamp': timestamp.isoformat(),
+                    'status': 'learning_complete',
+                    'progress_percent': 100.0,
+                    'total_ticks_processed': self._performance_stats['ticks_processed'],
+                    'learning_duration_hours': result.get('learning_duration_hours', 0),
+                    'models_trained': result.get('models_trained', 0)
+                }, EventSeverity.INFO, asset)
+                
+                # ✅ LEGACY: Store event
                 self._store_event('learning_completed', {
                     'asset': asset,
                     'timestamp': timestamp,
@@ -14933,6 +15278,17 @@ class AdvancedMarketAnalyzer:
                 if len(self.predictions_history) > 5000:
                     self.predictions_history = self.predictions_history[-5000:]
                 
+                # ✅ ML_TRAINING_LOGGER: Emit prediction event
+                self._emit_ml_event('prediction_generated', {
+                    'asset': asset,
+                    'timestamp': timestamp.isoformat(),
+                    'prediction_data': result['prediction'],
+                    'prediction_confidence': result.get('confidence', 0.0),
+                    'model_type': result.get('model_type', 'unknown'),
+                    'algorithm_name': result.get('algorithm_name', 'unknown')
+                }, EventSeverity.DEBUG, asset)
+                
+                # ✅ LEGACY: Store event
                 self._store_event('prediction_generated', {
                     'asset': asset,
                     'timestamp': timestamp,
@@ -15530,7 +15886,35 @@ class AdvancedMarketAnalyzer:
             except Exception as e:
                 self._safe_log('errors', 'error', f"Error shutting down {asset}: {e}")
         
-        # ✅ NUOVO: Clear all event buffers
+        # ✅ ML_TRAINING_LOGGER: Shutdown ML Training Logger systems
+        try:
+            if self.ml_logger_active:
+                self._emit_ml_event('system_shutdown', {
+                    'shutdown_time': datetime.now().isoformat(),
+                    'uptime_hours': self.global_stats.get('uptime_hours', 0),
+                    'total_assets_processed': len(self.asset_analyzers),
+                    'shutdown_reason': 'normal_shutdown'
+                }, EventSeverity.INFO)
+                
+                # Graceful shutdown of ML_Training_Logger components
+                if self.ml_event_collector:
+                    self.ml_event_collector.stop()
+                    print("✅ ML Event Collector stopped")
+                
+                if self.ml_display_manager:
+                    self.ml_display_manager.stop()
+                    print("✅ ML Display Manager stopped")
+                
+                if self.ml_storage_manager:
+                    self.ml_storage_manager.stop()
+                    print("✅ ML Storage Manager stopped")
+                
+                self.ml_logger_active = False
+                print("✅ ML_Training_Logger shutdown complete")
+        except Exception as e:
+            print(f"❌ Error shutting down ML_Training_Logger: {e}")
+        
+        # ✅ LEGACY: Clear all event buffers
         try:
             self.clear_events()
         except Exception as e:
