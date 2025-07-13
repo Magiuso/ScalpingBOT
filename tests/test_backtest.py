@@ -324,19 +324,24 @@ except ImportError as e:
 
 # Logger
 try:
-    from utils.universal_encoding_fix import safe_print, init_universal_encoding, get_safe_logger
+    from utils.universal_encoding_fix import safe_print as original_safe_print, init_universal_encoding, get_safe_logger
     init_universal_encoding(silent=True)
     logger = get_safe_logger(__name__)
-    safe_print("✅ Logger system available")
+    original_safe_print("✅ Logger system available")
 except ImportError:
-    def safe_print(text: str) -> None: 
+    def original_safe_print(text: str) -> None: 
         print(text)
     class DummyLogger:
         def info(self, text: str) -> None: pass
         def error(self, text: str) -> None: pass
         def critical(self, text: str) -> None: pass
     logger = DummyLogger()
-    safe_print("⚠️ Using fallback logger")
+    original_safe_print("⚠️ Using fallback logger")
+
+# Standard safe_print function - will be enhanced in test instance
+def safe_print(text: str) -> None:
+    """Standard safe_print - use original implementation"""
+    original_safe_print(text)
 
 # PREREQUISITI CHECK
 if not MT5_AVAILABLE or not SYSTEM_MODULES_AVAILABLE:
@@ -386,6 +391,31 @@ class MLLearningTestSuite:
         safe_print(f"📊 Symbol: {self.symbol}")
         safe_print(f"📅 Learning period: {self.learning_days} days")
         safe_print(f"📁 Test data path: {self.test_data_path}")
+    
+    def ml_safe_print(self, text: str) -> None:
+        """
+        Enhanced safe_print that integrates with ML Training Logger dashboard.
+        Shows logs in the right column of the dashboard when ML logger is active.
+        """
+        # Always print to console as fallback
+        original_safe_print(text)
+        
+        # If we have active ML logger, also send to ML display
+        if (self.analyzer and 
+            hasattr(self.analyzer, 'ml_logger_active') and 
+            self.analyzer.ml_logger_active):
+            
+            try:
+                # Create an MLEvent for the dashboard
+                self.analyzer._emit_ml_event('diagnostic', {
+                    'event_type': 'test_log',
+                    'message': text,
+                    'timestamp': datetime.now().isoformat(),
+                    'source': 'test_backtest'
+                })
+            except Exception as e:
+                # Fallback silently to avoid infinite loops
+                pass
     
     async def run_complete_test(self) -> bool:
         """
@@ -477,6 +507,11 @@ class MLLearningTestSuite:
 
             # SUCCESS!
             self.test_results['overall_success'] = True
+            
+            # Final ML dashboard message
+            if self.analyzer and hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
+                self.ml_safe_print("🎉 Test Suite Completed Successfully! Check results in left column.")
+            
             await self._show_final_results()
             return True
             
@@ -541,6 +576,13 @@ class MLLearningTestSuite:
                 return False
             
             safe_print("✅ AdvancedMarketAnalyzer initialized successfully")
+            
+            # Test ML logger integration for dashboard display
+            if hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
+                self.ml_safe_print("🎯 ML Training Logger is active - this message should appear in dashboard!")
+                safe_print("✅ ML Training Logger dashboard integration ready")
+            else:
+                safe_print("⚠️ ML Training Logger not active - using standard console output")
             
             # Add asset to analyzer
             safe_print(f"📊 Adding asset {self.symbol} to analyzer...")
@@ -1507,7 +1549,10 @@ class MLLearningTestSuite:
                                     
                                     # Update display metrics
                                     self.analyzer._update_ml_display_metrics(self.symbol)
-                                    safe_print(f"🤖 ML events logged at tick {processed_count:,}")
+                                    
+                                    # Use ml_safe_print to show in dashboard right column  
+                                    if processed_count % 5000 == 0:  # Show fewer messages to avoid spam
+                                        self.ml_safe_print(f"📊 Processed {processed_count:,} ticks | Memory: {process.memory_percent():.1f}%")
                                 else:
                                     safe_print(f"🤖 ML Event Collector not available")
                                     
