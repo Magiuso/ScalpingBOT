@@ -43,6 +43,73 @@ import time
 import traceback
 warnings.filterwarnings('ignore')
 
+# ================== INTELLIGENT LOGGING RATE LIMITER ==================
+
+class LogRateLimiter:
+    """Sistema globale di rate limiting per ridurre spam logging"""
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self):
+        if not self._initialized:
+            self.message_counts = {}
+            self.rate_limits = {
+                'adapter': 500,          # Adapter operations ogni 500
+                'tensor_validation': 100, # Tensor validation ogni 100
+                'training': 25,          # Training progress ogni 25
+                'cache': 50,             # Cache operations ogni 50
+                'prediction': 200,       # Predictions ogni 200
+                'error': 5,              # Errori ripetuti ogni 5
+                'general': 1             # Messaggi generali sempre
+            }
+            self._initialized = True
+    
+    def should_log(self, message: str, category: str = 'general') -> tuple:
+        """
+        Determina se un messaggio dovrebbe essere loggato
+        
+        Returns:
+            tuple: (should_log: bool, count: int)
+        """
+        # Crea una chiave basata su categoria e hash del messaggio
+        message_hash = hash(message) % 10000  # Evita hash troppo grandi
+        key = f"{category}_{message_hash}"
+        
+        # Incrementa il contatore
+        current_count = self.message_counts.get(key, 0) + 1
+        self.message_counts[key] = current_count
+        
+        # Verifica rate limit
+        limit = self.rate_limits.get(category, 1)
+        should_log = (current_count % limit == 0) or category == 'error'
+        
+        return should_log, current_count
+    
+    def cleanup_old_entries(self):
+        """Pulisce entries vecchie per evitare memory leak"""
+        if len(self.message_counts) > 10000:
+            # Mantieni solo le entries più recenti
+            sorted_items = sorted(self.message_counts.items(), key=lambda x: x[1], reverse=True)
+            self.message_counts = dict(sorted_items[:5000])
+
+# Istanza globale rate limiter
+_rate_limiter = LogRateLimiter()
+
+def smart_print(message: str, category: str = 'general') -> None:
+    """Safe print con rate limiting intelligente"""
+    should_log, count = _rate_limiter.should_log(message, category)
+    
+    if should_log:
+        if count > 1:
+            safe_print(f"[{category.upper()}] {message} (x{count})")
+        else:
+            safe_print(f"[{category.upper()}] {message}")
+
 # ================== ANALYZER CONFIGURATION SYSTEM ==================
 
 @dataclass
@@ -79,7 +146,7 @@ class AnalyzerConfig:
     training_patience: int = 15  # Early stopping patience
     training_test_split: float = 0.8  # Train/test split ratio
     max_grad_norm: float = 1.0  # Gradient clipping
-    learning_rate: float = 1e-4  # Learning rate di default
+    learning_rate: float = 3e-4  # Learning rate ottimizzato per training LSTM
     
     # ========== LSTM CONFIGURATION ==========
     lstm_sequence_length: int = 30  # Lunghezza sequenza LSTM
@@ -168,7 +235,7 @@ class AnalyzerConfig:
     performance_window_size: int = 100  # Finestra rolling performance
     latency_history_size: int = 100  # Storia latency
     max_processing_time: float = 10.0  # Tempo max processing (sec)
-    feature_vector_size: int = 10  # Dimensione standard feature vector
+    feature_vector_size: int = 50  # Dimensione ridotta per evitare compressione eccessiva (200→50 invece di 200→10)
     
     # ========== PRESERVATION SYSTEM ==========
     max_preserved_champions: int = 5  # Champion preservati per tipo
@@ -517,7 +584,7 @@ class IndicatorsCache:
                 del self.access_count[key]
                 del self.last_access[key]
         
-        safe_print(f"🧹 Cache cleanup: rimossi {to_remove} indicatori, cache size: {len(self.cache)}")
+        smart_print(f"🧹 Cache cleanup: rimossi {to_remove} indicatori, cache size: {len(self.cache)}", "cache")
     
     def get_cache_stats(self) -> Dict[str, Any]:
         """Ottieni statistiche della cache"""
@@ -2841,7 +2908,7 @@ class EmergencyStopSystem:
         self.logger = logger
         self.config = config or get_analyzer_config()  # 🔧 ADDED
         
-        self.performance_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=self.config.performance_window_size))  # 🔧 CHANGED
+        self.performance_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=getattr(self.config, 'performance_window_size', 100) or 100))  # 🔧 FIXED
         
         # 🔧 Usa configurazione per stop triggers invece di hardcoded
         self.stop_triggers = self.config.get_emergency_stop_triggers()
@@ -3274,6 +3341,7 @@ class AdvancedLSTM(nn.Module):
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.expected_input_size = input_size  # Dimensione target preferita
+        self.parent: Optional['AssetAnalyzer'] = None  # ✅ Inizializza parent reference per evitare errori
         
         # 🔧 NUOVO: Pool di adapter dinamici per diverse dimensioni
         self.input_adapters = nn.ModuleDict()  # Memorizza adapter per diverse dimensioni
@@ -3295,6 +3363,13 @@ class AdvancedLSTM(nn.Module):
             'dimension_history': []
         }
     
+    def _log(self, message: str, category: str = "adapter", severity: str = "info"):
+        """Helper per logging che funziona con o senza parent"""
+        if self.parent and hasattr(self.parent, '_smart_log'):
+            self._log(message, category, severity)
+        else:
+            smart_print(message, category)
+    
     def _get_or_create_adapter(self, actual_input_size: int) -> nn.Module:
         """Ottiene o crea un adapter per la dimensione specifica con caching ottimizzato"""
         
@@ -3312,14 +3387,14 @@ class AdvancedLSTM(nn.Module):
                 self.adapter_usage_count = {}
             self.adapter_usage_count[adapter_key] = self.adapter_usage_count.get(adapter_key, 0) + 1
             
-            # Solo log ogni 100 utilizzi per ridurre spam
-            if self.adapter_usage_count[adapter_key] % 100 == 0:
-                safe_print(f"🔄 Adapter cache hit #{self.adapter_usage_count[adapter_key]}: {adapter_key}")
+            # Solo log ogni 500 utilizzi con smart rate limiting
+            if self.adapter_usage_count[adapter_key] % 500 == 0:
+                smart_print(f"🔄 Adapter cache hit #{self.adapter_usage_count[adapter_key]}: {adapter_key}", "adapter")
             
             return self.input_adapters[adapter_key]
         
         # 🔧 CACHE MISS: Crea nuovo adapter solo se necessario
-        safe_print(f"🔧 Creating new LSTM adapter: {actual_input_size} → {self.expected_input_size}")
+        smart_print(f"🔧 Creating new LSTM adapter: {actual_input_size} → {self.expected_input_size}", "adapter")
         
         # 🚀 AUTO-CLEANUP: Gestione intelligente degli adapter
         max_adapters = 8  # Ridotto per safety
@@ -3353,7 +3428,7 @@ class AdvancedLSTM(nn.Module):
             self.adapter_usage_count = {}
         self.adapter_usage_count[adapter_key] = 1
         
-        safe_print(f"✅ Adapter '{adapter_key}' created and cached (Total: {len(self.input_adapters)})")
+        self._log(f"✅ Adapter '{adapter_key}' created and cached (Total: {len(self.input_adapters)})", "adapter_cache", "info")
         
         return new_adapter
     
@@ -3418,7 +3493,7 @@ class AdvancedLSTM(nn.Module):
         final_count = len(self.input_adapters)
         memory_saved = removed_count * 0.1  # Stima MB per adapter
         
-        safe_print(f"✅ Adapter cleanup: {current_count} → {final_count} (-{removed_count}), ~{memory_saved:.1f}MB saved")
+        self._log(f"✅ Adapter cleanup: {current_count} → {final_count} (-{removed_count}), ~{memory_saved:.1f}MB saved", "adapter_cache", "info")
         
         # Force garbage collection per liberare memoria
         import gc
@@ -3473,7 +3548,7 @@ class AdvancedLSTM(nn.Module):
         
         final_count = len(self.input_adapters)
         
-        safe_print(f"🔧 Cache optimization: removed {len(removed_adapters)} unused adapters")
+        smart_print(f"🔧 Cache optimization: removed {len(removed_adapters)} unused adapters", "cache")
         
         return {
             'status': 'optimized',
@@ -3496,7 +3571,7 @@ class AdvancedLSTM(nn.Module):
         self.resize_stats['adapters_created'] = 0
         self.resize_stats['dimension_history'].clear()
         
-        safe_print(f"🗑️ Adapter cache cleared: {cache_size} adapters removed")
+        self._log(f"🗑️ Adapter cache cleared: {cache_size} adapters removed", "adapter_cache", "info")
     
     def _apply_adapter(self, x: torch.Tensor, adapter: nn.Module) -> torch.Tensor:
         """Applica l'adapter mantenendo la forma del tensore con protezione completa anti-NaN"""
@@ -3505,15 +3580,17 @@ class AdvancedLSTM(nn.Module):
         
         # 🛡️ VALIDAZIONE INPUT TENSOR CRITICA
         if torch.isnan(x).any():
-            safe_print(f"❌ Input tensor contiene NaN prima dell'adapter: {torch.isnan(x).sum().item()} valori")
+            self._log(f"❌ Input tensor contiene NaN prima dell'adapter: {torch.isnan(x).sum().item()} valori", 
+                                 "tensor_validation", "warning")
             # Sanitizza input
             x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
-            safe_print("🔧 Input tensor sanitizzato")
+            self._log("🔧 Input tensor sanitizzato", "tensor_validation", "info")
         
         if torch.isinf(x).any():
-            safe_print(f"❌ Input tensor contiene Inf prima dell'adapter: {torch.isinf(x).sum().item()} valori")
+            self._log(f"❌ Input tensor contiene Inf prima dell'adapter: {torch.isinf(x).sum().item()} valori", 
+                                 "tensor_validation", "warning")
             x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
-            safe_print("🔧 Input tensor sanitizzato")
+            self._log("🔧 Input tensor sanitizzato", "tensor_validation", "info")
         
         # 🛡️ GESTIONE SHAPE INTELLIGENTE CON PROTEZIONE
         try:
@@ -3525,7 +3602,7 @@ class AdvancedLSTM(nn.Module):
                     safe_print(f"❌ Dimensioni non valide: {original_shape}")
                     # Crea tensor di fallback sicuro
                     fallback_tensor = torch.zeros(batch_size, seq_len, self.expected_input_size, dtype=x.dtype, device=x.device)
-                    safe_print(f"🔧 Creato tensor fallback: {fallback_tensor.shape}")
+                    self._log(f"🔧 Creato tensor fallback: {fallback_tensor.shape}", "tensor_validation", "info")
                     return fallback_tensor
                 
                 # Reshape per applicare Linear: (batch*seq, features)
@@ -3533,7 +3610,7 @@ class AdvancedLSTM(nn.Module):
                 
                 # 🛡️ VALIDAZIONE DOPO RESHAPE
                 if torch.isnan(x_reshaped).any() or torch.isinf(x_reshaped).any():
-                    safe_print("❌ Tensor contiene NaN/Inf dopo reshape")
+                    self._log("❌ Tensor contiene NaN/Inf dopo reshape", "tensor_validation", "warning")
                     x_reshaped = torch.nan_to_num(x_reshaped, nan=0.0, posinf=1.0, neginf=-1.0)
                 
                 # 🛡️ APPLICA ADAPTER CON PROTEZIONE
@@ -3542,25 +3619,25 @@ class AdvancedLSTM(nn.Module):
                     
                     # 🛡️ VALIDAZIONE OUTPUT ADAPTER CRITICA
                     if x_adapted is None:
-                        safe_print("❌ Adapter ha ritornato None")
+                        self._log("❌ Adapter ha ritornato None", "tensor_validation", "error")
                         x_adapted = torch.zeros(x_reshaped.shape[0], self.expected_input_size, dtype=x.dtype, device=x.device)
                     
                     elif torch.isnan(x_adapted).any():
                         nan_count = torch.isnan(x_adapted).sum().item()
-                        safe_print(f"❌ Adapter output contiene {nan_count} NaN values")
+                        self._log(f"❌ Adapter output contiene {nan_count} NaN values", "tensor_validation", "warning")
                         x_adapted = torch.nan_to_num(x_adapted, nan=0.0, posinf=1.0, neginf=-1.0)
-                        safe_print("🔧 Adapter output sanitizzato")
+                        self._log("🔧 Adapter output sanitizzato", "tensor_validation", "info")
                     
                     elif torch.isinf(x_adapted).any():
                         inf_count = torch.isinf(x_adapted).sum().item()
-                        safe_print(f"❌ Adapter output contiene {inf_count} Inf values")
+                        self._log(f"❌ Adapter output contiene {inf_count} Inf values", "tensor_validation", "warning")
                         x_adapted = torch.nan_to_num(x_adapted, nan=0.0, posinf=1.0, neginf=-1.0)
-                        safe_print("🔧 Adapter output sanitizzato")
+                        self._log("🔧 Adapter output sanitizzato", "tensor_validation", "info")
                     
                     # 🛡️ VALIDAZIONE FORMA OUTPUT ADAPTER
                     expected_adapter_shape = (x_reshaped.shape[0], self.expected_input_size)
                     if x_adapted.shape != expected_adapter_shape:
-                        safe_print(f"❌ Adapter output shape mismatch: {x_adapted.shape} vs {expected_adapter_shape}")
+                        self._log(f"❌ Adapter output shape mismatch: {x_adapted.shape} vs {expected_adapter_shape}", "tensor_validation", "warning")
                         # Crea output corretto
                         x_adapted = torch.zeros(expected_adapter_shape, dtype=x.dtype, device=x.device)
                         safe_print(f"🔧 Creato adapter output corretto: {x_adapted.shape}")
@@ -3583,7 +3660,7 @@ class AdvancedLSTM(nn.Module):
                         safe_print(f"🔧 Tensor finale ricreato: {x.shape}")
                     
                 except RuntimeError as reshape_error:
-                    safe_print(f"❌ Errore reshape finale: {reshape_error}")
+                    self._log(f"❌ Errore reshape finale: {reshape_error}", "tensor_validation", "error")
                     safe_print(f"   Original: {original_shape}")
                     safe_print(f"   Adapted shape: {x_adapted.shape}")
                     safe_print(f"   Target: ({batch_size}, {seq_len}, {self.expected_input_size})")
@@ -3600,11 +3677,11 @@ class AdvancedLSTM(nn.Module):
                     
                     # 🛡️ VALIDAZIONE OUTPUT 2D
                     if x_adapted is None:
-                        safe_print("❌ Adapter 2D ha ritornato None")
+                        self._log("❌ Adapter 2D ha ritornato None", "tensor_validation", "error")
                         x_adapted = torch.zeros(x.shape[0], self.expected_input_size, dtype=x.dtype, device=x.device)
                     
                     elif torch.isnan(x_adapted).any() or torch.isinf(x_adapted).any():
-                        safe_print("❌ Adapter 2D output contiene NaN/Inf")
+                        self._log("❌ Adapter 2D output contiene NaN/Inf", "tensor_validation", "warning")
                         x_adapted = torch.nan_to_num(x_adapted, nan=0.0, posinf=1.0, neginf=-1.0)
                     
                     x = x_adapted
@@ -3615,7 +3692,7 @@ class AdvancedLSTM(nn.Module):
             
             else:
                 # 🛡️ CASO COMPLESSO CON FALLBACK SICURO
-                safe_print(f"⚠️ Shape non standard per adapter: {original_shape}")
+                self._log(f"⚠️ Shape non standard per adapter: {original_shape}", "tensor_validation", "warning")
                 
                 try:
                     x_prepared, shape_info = TensorShapeManager.prepare_model_input(
@@ -3644,7 +3721,7 @@ class AdvancedLSTM(nn.Module):
                         except:
                             x = torch.zeros(x_prepared.shape[0], self.expected_input_size, dtype=x.dtype, device=x.device)
                     
-                    safe_print(f"✅ Shape correction applicata: {original_shape} → {x.shape}")
+                    self._log(f"✅ Shape correction applicata: {original_shape} → {x.shape}", "tensor_validation", "info")
                     
                 except Exception as shape_error:
                     safe_print(f"❌ Errore shape correction: {shape_error}")
@@ -3658,9 +3735,9 @@ class AdvancedLSTM(nn.Module):
             
             # 🛡️ VALIDAZIONE FINALE COMPLETA
             if torch.isnan(x).any() or torch.isinf(x).any():
-                safe_print("❌ Output finale contiene ancora NaN/Inf")
+                self._log("❌ Output finale contiene ancora NaN/Inf", "tensor_validation", "warning")
                 x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
-                safe_print("🔧 Output finale sanitizzato")
+                self._log("🔧 Output finale sanitizzato", "tensor_validation", "info")
             
             # 🛡️ VERIFICA FORMA FINALE
             if x.shape[-1] != self.expected_input_size:
@@ -3674,9 +3751,11 @@ class AdvancedLSTM(nn.Module):
                     correct_shape = (1, self.expected_input_size)
                 
                 x = torch.zeros(correct_shape, dtype=x.dtype, device=x.device)
-                safe_print(f"🔧 Output finale ricreato con forma corretta: {x.shape}")
+                self._log(f"🔧 Output finale ricreato con forma corretta: {x.shape}", 
+                                     "tensor_validation", "info")
             
-            safe_print(f"✅ Adapter applicato con successo: {original_shape} → {x.shape}")
+            self._log(f"✅ Adapter applicato con successo: {original_shape} → {x.shape}", 
+                                 "tensor_validation", "debug")
             return x
             
         except Exception as e:
@@ -3695,7 +3774,7 @@ class AdvancedLSTM(nn.Module):
                 
                 fallback_tensor = torch.zeros(fallback_shape, dtype=x.dtype if x is not None else torch.float32, 
                                             device=x.device if x is not None else 'cpu')
-                safe_print(f"🔧 Fallback assoluto finale: {fallback_tensor.shape}")
+                self._log(f"🔧 Fallback assoluto finale: {fallback_tensor.shape}", "tensor_validation", "info")
                 return fallback_tensor
                 
             except Exception as fallback_error:
@@ -3714,7 +3793,7 @@ class AdvancedLSTM(nn.Module):
             return torch.zeros(1, self.expected_input_size)
         
         if not isinstance(x, torch.Tensor):
-            safe_print(f"❌ Input non è un tensor: {type(x)}")
+            self._log(f"❌ Input non è un tensor: {type(x)}", "tensor_validation", "error")
             try:
                 x = torch.tensor(x, dtype=torch.float32)
             except:
@@ -3723,12 +3802,12 @@ class AdvancedLSTM(nn.Module):
         # 🛡️ VALIDAZIONE NaN/Inf INPUT
         if torch.isnan(x).any():
             nan_count = torch.isnan(x).sum().item()
-            safe_print(f"❌ Input contiene {nan_count} valori NaN - sanitizzando...")
+            self._log(f"❌ Input contiene {nan_count} valori NaN - sanitizzando...", "tensor_validation", "warning")
             x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
         
         if torch.isinf(x).any():
             inf_count = torch.isinf(x).sum().item()
-            safe_print(f"❌ Input contiene {inf_count} valori Inf - sanitizzando...")
+            self._log(f"❌ Input contiene {inf_count} valori Inf - sanitizzando...", "tensor_validation", "warning")
             x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
         
         # 🛡️ VALIDAZIONE RANGE INPUT
@@ -3752,7 +3831,7 @@ class AdvancedLSTM(nn.Module):
                 
                 # 🛡️ VALIDAZIONE DOPO SHAPE MANAGEMENT
                 if torch.isnan(x).any() or torch.isinf(x).any():
-                    safe_print("❌ NaN/Inf rilevati dopo shape management")
+                    self._log("❌ NaN/Inf rilevati dopo shape management", "tensor_validation", "warning")
                     x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
                 
                 # Log conversioni significative
@@ -3763,7 +3842,8 @@ class AdvancedLSTM(nn.Module):
                         self._logged_conversions = set()
                     
                     if conversion_key not in self._logged_conversions:
-                        safe_print(f"🔧 TensorShape: {shape_info['method_used']}: {original_shape} → {x.shape}")
+                        self._log(f"🔧 TensorShape: {shape_info['method_used']}: {original_shape} → {x.shape}", 
+                                             "tensor_validation", "info")
                         self._logged_conversions.add(conversion_key)
                         
                         if not hasattr(self, '_conversion_stats'):
@@ -3772,8 +3852,10 @@ class AdvancedLSTM(nn.Module):
                         self._conversion_stats[method] = self._conversion_stats.get(method, 0) + 1
             
             except Exception as shape_error:
-                safe_print(f"❌ Errore TensorShapeManager: {shape_error}")
-                safe_print(f"   Input shape: {original_shape}")
+                self._log(f"❌ Errore TensorShapeManager: {shape_error}", 
+                                     "tensor_validation", "error")
+                self._log(f"   Input shape: {original_shape}", 
+                                     "tensor_validation", "debug")
                 
                 # Fallback shape management
                 if len(original_shape) == 1:
@@ -3781,7 +3863,7 @@ class AdvancedLSTM(nn.Module):
                 elif len(original_shape) == 2:
                     x = x.unsqueeze(1)
                 elif len(original_shape) != 3:
-                    safe_print(f"❌ Shape non gestibile: {original_shape}")
+                    self._log(f"❌ Shape non gestibile: {original_shape}", "tensor_validation", "error")
                     return torch.zeros(1, self.expected_input_size)
         
         except Exception as e:
@@ -3790,7 +3872,7 @@ class AdvancedLSTM(nn.Module):
         
         # 🛡️ VERIFICA FINALE SHAPE
         if len(x.shape) != 3:
-            safe_print(f"❌ Shape finale non valida: {x.shape} (deve essere 3D)")
+            self._log(f"❌ Shape finale non valida: {x.shape} (deve essere 3D)", "tensor_validation", "error")
             return torch.zeros(1, self.expected_input_size)
         
         # Estrai dimensioni
@@ -3816,10 +3898,11 @@ class AdvancedLSTM(nn.Module):
                     
                     # 🛡️ VALIDAZIONE POST-ADAPTER
                     if torch.isnan(x).any() or torch.isinf(x).any():
-                        safe_print("❌ NaN/Inf dopo adapter - sanitizzando...")
+                        self._log("❌ NaN/Inf dopo adapter - sanitizzando...", "tensor_validation", "warning")
                         x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
                     
-                    safe_print(f"🔧 Adapter applicato: {actual_input_size} → {x.shape[-1]}")
+                    self._log(f"🔧 Adapter applicato: {actual_input_size} → {x.shape[-1]}", 
+                                         "tensor_validation", "debug")
                     
                 except Exception as adapter_error:
                     safe_print(f"❌ Errore applicazione adapter: {adapter_error}")
@@ -3841,7 +3924,7 @@ class AdvancedLSTM(nn.Module):
         try:
             # Controlla che x sia ancora valido
             if torch.isnan(x).any() or torch.isinf(x).any():
-                safe_print("❌ Input LSTM contiene NaN/Inf - sanitizzando...")
+                self._log("❌ Input LSTM contiene NaN/Inf - sanitizzando...", "tensor_validation", "warning")
                 x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
             
             # LSTM forward
@@ -3854,12 +3937,12 @@ class AdvancedLSTM(nn.Module):
             
             if torch.isnan(lstm_out).any():
                 nan_count = torch.isnan(lstm_out).sum().item()
-                safe_print(f"❌ LSTM output contiene {nan_count} NaN - sanitizzando...")
+                self._log(f"❌ LSTM output contiene {nan_count} NaN - sanitizzando...", "tensor_validation", "warning")
                 lstm_out = torch.nan_to_num(lstm_out, nan=0.0, posinf=1.0, neginf=-1.0)
             
             if torch.isinf(lstm_out).any():
                 inf_count = torch.isinf(lstm_out).sum().item()
-                safe_print(f"❌ LSTM output contiene {inf_count} Inf - sanitizzando...")
+                self._log(f"❌ LSTM output contiene {inf_count} Inf - sanitizzando...", "tensor_validation", "warning")
                 lstm_out = torch.nan_to_num(lstm_out, nan=0.0, posinf=1.0, neginf=-1.0)
             
         except Exception as lstm_error:
@@ -3880,7 +3963,7 @@ class AdvancedLSTM(nn.Module):
                 attn_out = lstm_out
             
             if torch.isnan(attn_out).any() or torch.isinf(attn_out).any():
-                safe_print("❌ Attention output contiene NaN/Inf - sanitizzando...")
+                self._log("❌ Attention output contiene NaN/Inf - sanitizzando...", "tensor_validation", "warning")
                 attn_out = torch.nan_to_num(attn_out, nan=0.0, posinf=1.0, neginf=-1.0)
             
             # Layer norm con protezione
@@ -3888,7 +3971,7 @@ class AdvancedLSTM(nn.Module):
                 attn_out = self.layer_norm(attn_out + lstm_out)
                 
                 if torch.isnan(attn_out).any() or torch.isinf(attn_out).any():
-                    safe_print("❌ LayerNorm output contiene NaN/Inf - sanitizzando...")
+                    self._log("❌ LayerNorm output contiene NaN/Inf - sanitizzando...", "tensor_validation", "warning")
                     attn_out = torch.nan_to_num(attn_out, nan=0.0, posinf=1.0, neginf=-1.0)
                     
             except Exception as norm_error:
@@ -3910,7 +3993,7 @@ class AdvancedLSTM(nn.Module):
             
             # 🛡️ VALIDAZIONE PRIMA DEI LAYER FINALI
             if torch.isnan(out).any() or torch.isinf(out).any():
-                safe_print("❌ Pre-FC output contiene NaN/Inf - sanitizzando...")
+                self._log("❌ Pre-FC output contiene NaN/Inf - sanitizzando...", "tensor_validation", "warning")
                 out = torch.nan_to_num(out, nan=0.0, posinf=1.0, neginf=-1.0)
             
             # Dropout
@@ -3921,7 +4004,7 @@ class AdvancedLSTM(nn.Module):
                 out = self.activation(self.fc1(out))
                 
                 if torch.isnan(out).any() or torch.isinf(out).any():
-                    safe_print("❌ FC1 output contiene NaN/Inf - sanitizzando...")
+                    self._log("❌ FC1 output contiene NaN/Inf - sanitizzando...", "tensor_validation", "warning")
                     out = torch.nan_to_num(out, nan=0.0, posinf=1.0, neginf=-1.0)
                     
             except Exception as fc1_error:
@@ -3936,7 +4019,7 @@ class AdvancedLSTM(nn.Module):
                 out = self.fc2(out)
                 
                 if torch.isnan(out).any() or torch.isinf(out).any():
-                    safe_print("❌ FC2 output contiene NaN/Inf - sanitizzando...")
+                    self._log("❌ FC2 output contiene NaN/Inf - sanitizzando...", "tensor_validation", "warning")
                     out = torch.nan_to_num(out, nan=0.0, posinf=1.0, neginf=-1.0)
                     
             except Exception as fc2_error:
@@ -3956,7 +4039,7 @@ class AdvancedLSTM(nn.Module):
             return torch.zeros(batch_size, output_size)
         
         if torch.isnan(out).any() or torch.isinf(out).any():
-            safe_print("❌ Output finale contiene NaN/Inf - sanitizzando...")
+            self._log("❌ Output finale contiene NaN/Inf - sanitizzando...", "tensor_validation", "warning")
             out = torch.nan_to_num(out, nan=0.0, posinf=1.0, neginf=-1.0)
         
         # 🛡️ CLAMP OUTPUT PER SICUREZZA
@@ -4120,6 +4203,7 @@ class TransformerPredictor(nn.Module):
     """Transformer per pattern recognition avanzato"""
     def __init__(self, input_dim: int, d_model: int = 256, nhead: int = 8, num_layers: int = 6, output_dim: int = 1):
         super(TransformerPredictor, self).__init__()
+        self.parent: Optional['AssetAnalyzer'] = None  # ✅ Inizializza parent reference
         self.input_projection = nn.Linear(input_dim, d_model)
         self.positional_encoding = nn.Parameter(torch.randn(1000, d_model))
         
@@ -4139,6 +4223,13 @@ class TransformerPredictor(nn.Module):
             nn.Dropout(0.1),
             nn.Linear(d_model // 2, output_dim)
         )
+    
+    def _log(self, message: str, category: str = "transformer", severity: str = "info"):
+        """Helper per logging che funziona con o senza parent"""
+        if self.parent and hasattr(self.parent, '_smart_log'):
+            self._log(message, category, severity)
+        else:
+            smart_print(message, category)
         
     def forward(self, x):
         batch_size, seq_len, _ = x.shape
@@ -4159,6 +4250,7 @@ class CNNPatternRecognizer(nn.Module):
     """CNN 1D per riconoscimento pattern grafici"""
     def __init__(self, input_channels: int = 1, sequence_length: int = 100, num_patterns: int = 50):
         super(CNNPatternRecognizer, self).__init__()
+        self.parent: Optional['AssetAnalyzer'] = None  # ✅ Inizializza parent reference
         
         self.conv_layers = nn.Sequential(
             # First conv block
@@ -4195,6 +4287,13 @@ class CNNPatternRecognizer(nn.Module):
             nn.Linear(256, num_patterns),
             nn.Sigmoid()
         )
+    
+    def _log(self, message: str, category: str = "cnn", severity: str = "info"):
+        """Helper per logging che funziona con o senza parent"""
+        if self.parent and hasattr(self.parent, '_smart_log'):
+            self._log(message, category, severity)
+        else:
+            smart_print(message, category)
         
     def forward(self, x):
         x = self.conv_layers(x)
@@ -4208,6 +4307,7 @@ class OptimizedLSTMTrainer:
     def __init__(self, model: nn.Module, config: Optional[AnalyzerConfig] = None):
         self.model = model
         self.config = config or get_analyzer_config()  # 🔧 ADDED
+        self.parent: Optional['AssetAnalyzer'] = None  # ✅ Inizializza parent reference
         
         # 🔧 USA CONFIGURAZIONE per parametri training
         self.optimizer = torch.optim.Adam(model.parameters(), lr=self.config.learning_rate)
@@ -4217,6 +4317,13 @@ class OptimizedLSTMTrainer:
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, mode='min', factor=0.5, patience=self.config.training_patience // 2
         )
+    
+    def _log(self, message: str, category: str = "training", severity: str = "info"):
+        """Helper per logging che funziona con o senza parent"""
+        if self.parent and hasattr(self.parent, '_smart_log'):
+            self._log(message, category, severity)
+        else:
+            smart_print(message, category)
     
     def validate_data(self, data: torch.Tensor, name: str = "data") -> torch.Tensor:
         """Valida che i dati non contengano NaN o Inf"""
@@ -4245,7 +4352,7 @@ class OptimizedLSTMTrainer:
             raise ValueError("Input o target sono None")
         
         if not isinstance(inputs, torch.Tensor) or not isinstance(targets, torch.Tensor):
-            safe_print(f"❌ Input/target non sono tensor: {type(inputs)}, {type(targets)}")
+            self._log(f"❌ Input/target non sono tensor: {type(inputs)}, {type(targets)}", "tensor_validation", "error")
             raise TypeError("Input e target devono essere torch.Tensor")
         
         # 🛡️ VALIDAZIONE PREVENTIVA NaN/Inf
@@ -4259,24 +4366,24 @@ class OptimizedLSTMTrainer:
             nan_mask = torch.isnan(tensor)
             if nan_mask.any():
                 nan_count = nan_mask.sum().item()
-                safe_print(f"❌ {name} contiene {nan_count}/{tensor.numel()} valori NaN")
+                self._log(f"❌ {name} contiene {nan_count}/{tensor.numel()} valori NaN", "tensor_validation", "warning")
                 
                 # Strategia di sanitizzazione intelligente
                 if nan_count < tensor.numel() * 0.1:  # Meno del 10% sono NaN
                     # Sostituisci con media dei valori validi
                     valid_mean = tensor[~nan_mask].mean() if (~nan_mask).any() else 0.0
                     tensor = torch.where(nan_mask, valid_mean, tensor)
-                    safe_print(f"🔧 {name}: NaN sostituiti con media valida ({valid_mean:.6f})")
+                    self._log(f"🔧 {name}: NaN sostituiti con media valida ({valid_mean:.6f})", "tensor_validation", "info")
                 else:
                     # Troppi NaN, usa fallback
                     tensor = torch.nan_to_num(tensor, nan=0.0, posinf=1.0, neginf=-1.0)
-                    safe_print(f"🔧 {name}: Troppi NaN, usato fallback zero")
+                    self._log(f"🔧 {name}: Troppi NaN, usato fallback zero", "tensor_validation", "warning")
             
             # Check Inf
             inf_mask = torch.isinf(tensor)
             if inf_mask.any():
                 inf_count = inf_mask.sum().item()
-                safe_print(f"❌ {name} contiene {inf_count}/{tensor.numel()} valori infiniti")
+                self._log(f"❌ {name} contiene {inf_count}/{tensor.numel()} valori infiniti", "tensor_validation", "warning")
                 
                 # Sostituisci Inf con valori ragionevoli
                 finite_mask = torch.isfinite(tensor)
@@ -4287,17 +4394,31 @@ class OptimizedLSTMTrainer:
                     # Sostituisci +Inf con max finito, -Inf con min finito
                     tensor = torch.where(tensor == float('inf'), finite_max, tensor)
                     tensor = torch.where(tensor == float('-inf'), finite_min, tensor)
-                    safe_print(f"🔧 {name}: Inf sostituiti con min/max finiti")
+                    self._log(f"🔧 {name}: Inf sostituiti con min/max finiti", "tensor_validation", "info")
                 else:
                     tensor = torch.nan_to_num(tensor, nan=0.0, posinf=1.0, neginf=-1.0)
-                    safe_print(f"🔧 {name}: Tutti Inf, usato fallback")
+                    self._log(f"🔧 {name}: Tutti Inf, usato fallback", "tensor_validation", "warning")
             
-            # Check valori estremi
+            # Normalizzazione invece di clamping distruttivo
             abs_max = torch.abs(tensor).max()
             if abs_max > 1000:
                 safe_print(f"⚠️ {name} ha valori estremi: max_abs={abs_max:.2f}")
-                tensor = torch.clamp(tensor, -1000, 1000)
-                safe_print(f"🔧 {name}: Valori clampati a [-1000, 1000]")
+                # Z-score normalizzazione preserva le relazioni relative
+                mean_val = tensor.mean()
+                std_val = tensor.std()
+                if std_val > 1e-8:
+                    tensor = (tensor - mean_val) / std_val
+                    safe_print(f"🔧 {name}: Normalizzato con Z-score (mean={mean_val:.2f}, std={std_val:.2f})")
+                else:
+                    # Fallback a min-max se std troppo piccolo
+                    min_val = tensor.min()
+                    max_val = tensor.max()
+                    if max_val - min_val > 1e-8:
+                        tensor = (tensor - min_val) / (max_val - min_val)
+                        safe_print(f"🔧 {name}: Normalizzato con Min-Max scaling")
+                    else:
+                        tensor = torch.zeros_like(tensor)
+                        safe_print(f"🔧 {name}: Valori costanti, azzerato")
             
             return tensor
         
@@ -4317,11 +4438,12 @@ class OptimizedLSTMTrainer:
                 
                 # Rivalidate dopo resize
                 if torch.isnan(inputs).any() or torch.isinf(inputs).any():
-                    safe_print("❌ NaN/Inf generati durante resize - sanitizzando...")
+                    self._log("❌ NaN/Inf generati durante resize - sanitizzando...", "tensor_validation", "warning")
                     inputs = torch.nan_to_num(inputs, nan=0.0, posinf=1.0, neginf=-1.0)
                 
                 if inputs.shape != original_shape:
-                    safe_print(f"🔧 Input reshape: {original_shape} → {inputs.shape}")
+                    self._log(f"🔧 Input reshape: {original_shape} → {inputs.shape}", 
+                                         "tensor_validation", "debug")
                     
         except Exception as resize_error:
             safe_print(f"❌ Errore durante resize: {resize_error}")
@@ -4340,7 +4462,7 @@ class OptimizedLSTMTrainer:
         try:
             # Pre-forward validation
             if torch.isnan(inputs).any() or torch.isinf(inputs).any():
-                safe_print("❌ Input contiene NaN/Inf prima del forward")
+                self._log("❌ Input contiene NaN/Inf prima del forward", "tensor_validation", "error")
                 raise ValueError("Input non valido prima del forward")
             
             # Forward pass
@@ -4365,7 +4487,7 @@ class OptimizedLSTMTrainer:
         try:
             # Adatta dimensioni se necessario
             if outputs.shape != targets.shape:
-                safe_print(f"⚠️ Shape mismatch: outputs={outputs.shape}, targets={targets.shape}")
+                self._log(f"⚠️ Shape mismatch: outputs={outputs.shape}, targets={targets.shape}", "tensor_validation", "warning")
                 
                 # Strategia di adattamento intelligente
                 if len(targets.shape) == 1 and len(outputs.shape) == 2:
@@ -4400,11 +4522,11 @@ class OptimizedLSTMTrainer:
                 raise ValueError("Loss calculation returned None")
             
             if not torch.is_tensor(loss):
-                safe_print(f"❌ Loss non è un tensor: {type(loss)}")
+                self._log(f"❌ Loss non è un tensor: {type(loss)}", "tensor_validation", "error")
                 raise ValueError("Loss non è un tensor")
             
             if torch.isnan(loss):
-                safe_print(f"❌ Loss è NaN con {loss_type}")
+                self._log(f"❌ Loss è NaN con {loss_type}", "tensor_validation", "error")
                 safe_print(f"   Outputs range: [{outputs.min():.6f}, {outputs.max():.6f}]")
                 safe_print(f"   Targets range: [{targets.min():.6f}, {targets.max():.6f}]")
                 safe_print(f"   Outputs shape: {outputs.shape}")
@@ -4463,13 +4585,18 @@ class OptimizedLSTMTrainer:
             
             # Report problemi gradienti
             if invalid_gradients:
-                safe_print(f"❌ Gradienti NaN/Inf rilevati:")
+                self._log(f"❌ Gradienti NaN/Inf rilevati:", "tensor_validation", "error")
                 for grad_issue in invalid_gradients:
                     safe_print(f"   {grad_issue}")
                 raise ValueError("Gradienti contengono NaN/Inf")
             
             if zero_gradients:
-                safe_print(f"⚠️ Gradienti zero in: {zero_gradients}")
+                smart_print(f"⚠️ Gradienti zero in: {zero_gradients}", "training")
+                # Se la maggior parte dei gradienti è zero, potrebbe indicare un problema
+                total_params = len([p for p in self.model.parameters() if p.grad is not None])
+                zero_ratio = len(zero_gradients) / max(1, total_params)
+                if zero_ratio > 0.5:  # Se più del 50% dei gradienti è zero
+                    smart_print(f"⚠️ Troppi gradienti zero ({zero_ratio:.1%}), possibile vanishing gradient", "error")
             
             if large_gradients:
                 safe_print(f"⚠️ Gradienti grandi rilevati:")
@@ -4512,11 +4639,11 @@ class OptimizedLSTMTrainer:
             # Verifica che i parametri siano ancora validi
             for name, param in self.model.named_parameters():
                 if torch.isnan(param.data).any():
-                    safe_print(f"❌ Parametro {name} contiene NaN dopo optimizer step")
+                    self._log(f"❌ Parametro {name} contiene NaN dopo optimizer step", "tensor_validation", "error")
                     raise ValueError(f"Parametro {name} corrotto")
                 
                 if torch.isinf(param.data).any():
-                    safe_print(f"❌ Parametro {name} contiene Inf dopo optimizer step")
+                    self._log(f"❌ Parametro {name} contiene Inf dopo optimizer step", "tensor_validation", "error")
                     raise ValueError(f"Parametro {name} corrotto")
             
         except Exception as optimizer_error:
@@ -4582,7 +4709,7 @@ class OptimizedLSTMTrainer:
         train_losses = []
         val_losses = []
         
-        safe_print(f"🔄 Avvio training protetto per {epochs} epochs...")
+        smart_print(f"🔄 Avvio training protetto per {epochs} epochs...", "training")
         
         for epoch in range(epochs):
             # Training batch
@@ -4600,7 +4727,7 @@ class OptimizedLSTMTrainer:
                     train_batches += 1
                     
                 except Exception as e:
-                    safe_print(f"❌ Errore batch {i//batch_size}: {e}")
+                    smart_print(f"❌ Errore batch {i//batch_size}: {e}", "error")
                     continue
             
             if train_batches == 0:
@@ -4652,7 +4779,7 @@ class OptimizedLSTMTrainer:
                     patience_counter += 1
                 
                 if patience_counter >= patience:
-                    safe_print(f"🔄 Early stopping alla epoch {epoch+1}")
+                    smart_print(f"🔄 Early stopping alla epoch {epoch+1}", "training")
                     break
                 
                 # Update learning rate
@@ -4660,7 +4787,7 @@ class OptimizedLSTMTrainer:
                 
                 # Progress ogni 10 epochs
                 if (epoch + 1) % 10 == 0:
-                    safe_print(f"Epoch {epoch+1}/{epochs} - Train Loss: {avg_train_loss:.6f}, Val Loss: {avg_val_loss:.6f}")
+                    smart_print(f"Epoch {epoch+1}/{epochs} - Train Loss: {avg_train_loss:.6f}, Val Loss: {avg_val_loss:.6f}", "training")
             
             self.model.train()
         
@@ -4798,9 +4925,7 @@ class TensorShapeManager:
             expected_shape_to_check = expected_shape
         
         if actual_shape_to_check != expected_shape_to_check:
-            safe_print(f"⚠️ {name} shape mismatch:")
-            safe_print(f"   Expected: {expected_shape}")
-            safe_print(f"   Actual: {actual_shape}")
+            smart_print(f"⚠️ {name} shape mismatch: Expected {expected_shape}, Actual {actual_shape}", "tensor_validation")
             return False
         
         return True
@@ -4957,29 +5082,46 @@ class RollingWindowTrainer:
             if tick['timestamp'] > cutoff_date
         ]
         
-        # 🔧 BACKTESTING FIX: Se il filtro temporale elimina troppi dati, usa tutti i dati disponibili
+        # Se il filtro temporale elimina troppi dati, usa tutti i dati disponibili
         if len(filtered_data) < 1000 and len(tick_data) >= 1000:
-            # Probabilmente siamo in backtesting con dati storici - usa tutti i dati
             filtered_data = list(tick_data)
-            print(f"[DEBUG] Backtesting mode detected - using all {len(filtered_data)} tick data points")
+            print(f"Backtesting mode detected - using all {len(filtered_data)} tick data points")
         
         if len(filtered_data) < 1000:  # Minimo di dati richiesti
-            print(f"[DEBUG] Training data preparation failed: only {len(filtered_data)} data points available (need 1000+)")
             return {}
         
-        # Estrai features
-        prices = np.array([tick['price'] for tick in filtered_data])
-        volumes = np.array([tick['volume'] for tick in filtered_data])
-        timestamps = [tick['timestamp'] for tick in filtered_data]
+        # Estrai features (usa media tra bid e ask come prezzo)
+        prices = np.array([(float(tick['bid']) + float(tick['ask'])) / 2.0 for tick in filtered_data])
+        volumes = np.array([float(tick.get('volume', 1)) for tick in filtered_data])
+        timestamps = [tick.get('timestamp') for tick in filtered_data]
         
-        # Aggiungi features derivate
-        returns = np.diff(prices) / prices[:-1]
-        log_returns = np.log(prices[1:] / prices[:-1])
+        # Sostituisci volumi zero con un valore minimo
+        volumes = np.where(volumes == 0, 1.0, volumes)
+        
+        # Calcola features derivate
+        if len(prices) > 1:
+            returns_raw = np.diff(prices) / prices[:-1]
+            log_returns_raw = np.log(prices[1:] / prices[:-1])
+            
+            # Pad all'inizio con 0 per mantenere stessa lunghezza
+            returns = np.concatenate([[0], returns_raw])
+            log_returns = np.concatenate([[0], log_returns_raw])
+            
+            # Gestisci NaN/Inf nei returns
+            returns = np.where(np.isfinite(returns), returns, 0)
+            log_returns = np.where(np.isfinite(log_returns), log_returns, 0)
+        else:
+            returns = np.zeros_like(prices)
+            log_returns = np.zeros_like(prices)
         
         # Indicatori tecnici
         sma_20 = self._calculate_sma(prices, 20)
         sma_50 = self._calculate_sma(prices, 50)
         rsi = self._calculate_rsi(prices, 14)
+        
+        # Se troppi NaN in RSI, sostituisci con valore neutro
+        if np.isnan(rsi).sum() > len(rsi) * 0.5:
+            rsi = np.where(np.isnan(rsi), 50.0, rsi)
         
         return {
             'prices': prices,
@@ -5013,32 +5155,71 @@ class RollingWindowTrainer:
         return sma
     
     def _calculate_rsi(self, prices: np.ndarray, period: int = 14) -> np.ndarray:
-        """Calcola RSI"""
+        """Calcola RSI con gestione migliorata degli edge case"""
         if len(prices) < period + 1:
             return np.full_like(prices, 50.0)
         
-        deltas = np.diff(prices)
-        seed = deltas[:period+1]
-        up = seed[seed >= 0].sum() / period
-        down = -seed[seed < 0].sum() / period
-        rs = up / down if down != 0 else 100
-        rsi = np.zeros_like(prices)
-        rsi[:period] = 50.0
-        rsi[period] = 100 - 100 / (1 + rs)
+        # 🔧 NUOVO: Controlla se ci sono valori non validi nei prezzi
+        if np.isnan(prices).any() or np.isinf(prices).any():
+            print(f"[WARNING] Invalid prices detected in RSI calculation")
+            return np.full_like(prices, 50.0)
         
-        for i in range(period + 1, len(prices)):
-            delta = deltas[i-1]
-            if delta > 0:
-                upval = delta
-                downval = 0.
-            else:
-                upval = 0.
-                downval = -delta
+        try:
+            deltas = np.diff(prices)
+            # 🔧 NUOVO: Controlla deltas validi
+            if np.isnan(deltas).any() or np.isinf(deltas).any():
+                return np.full_like(prices, 50.0)
+                
+            seed = deltas[:period+1]
+            up = seed[seed >= 0].sum() / period
+            down = -seed[seed < 0].sum() / period
             
-            up = (up * (period - 1) + upval) / period
-            down = (down * (period - 1) + downval) / period
-            rs = up / down if down != 0 else 100
-            rsi[i] = 100 - 100 / (1 + rs)
+            # 🔧 NUOVO: Protezione divisione per zero migliorata
+            if down == 0:
+                rs = 100
+            elif up == 0:
+                rs = 0
+            else:
+                rs = up / down
+                
+            rsi = np.full_like(prices, 50.0)  # Default a 50 invece di zeros
+            
+            # Calcola il primo valore RSI
+            if np.isfinite(rs):
+                rsi[period] = 100 - 100 / (1 + rs)
+            
+            # Loop per i valori successivi
+            for i in range(period + 1, len(prices)):
+                delta = deltas[i-1]
+                if np.isnan(delta) or np.isinf(delta):
+                    continue  # Mantieni il valore precedente
+                    
+                if delta > 0:
+                    upval = delta
+                    downval = 0.
+                else:
+                    upval = 0.
+                    downval = -delta
+                
+                up = (up * (period - 1) + upval) / period
+                down = (down * (period - 1) + downval) / period
+                
+                # 🔧 NUOVO: Controllo sicurezza per divisione
+                if down == 0:
+                    rs = 100
+                elif up == 0:
+                    rs = 0
+                else:
+                    rs = up / down
+                
+                if np.isfinite(rs):
+                    rsi_val = 100 - 100 / (1 + rs)
+                    if np.isfinite(rsi_val):
+                        rsi[i] = rsi_val
+        
+        except Exception as e:
+            print(f"[ERROR] RSI calculation failed: {e}, returning neutral values")
+            return np.full_like(prices, 50.0)
         
         return rsi
     
@@ -5090,6 +5271,7 @@ class RollingWindowTrainer:
         prices = data['prices']
         volumes = data['volumes']
         
+        
         # Feature window di 50 punti
         window_size = 50
         future_window = 20
@@ -5104,13 +5286,13 @@ class RollingWindowTrainer:
             sma_features = data['sma_20'][i-window_size:i]
             rsi_features = data['rsi'][i-window_size:i]
             
-            # 🔧 NUOVO: Validazione NaN per ogni componente
+            # Validazione NaN per ogni componente
             if (np.isnan(price_features).any() or 
                 np.isnan(volume_features).any() or 
                 np.isnan(sma_features).any() or 
                 np.isnan(rsi_features).any()):
                 skipped_samples += 1
-                continue  # Salta sample con NaN nelle features
+                continue
             
             features = np.concatenate([
                 price_features,
@@ -5129,7 +5311,7 @@ class RollingWindowTrainer:
             support = np.min(future_prices)
             current_price = prices[i]
             
-            # 🔧 NUOVO: Validazione divisione per zero
+            # Validazione divisione per zero
             if current_price == 0 or np.isnan(current_price):
                 skipped_samples += 1
                 continue
@@ -5140,7 +5322,7 @@ class RollingWindowTrainer:
                 (resistance - current_price) / current_price
             ])
             
-            # 🔧 NUOVO: Validazione finale target
+            # Validazione finale target
             if np.isnan(y_val).any() or np.isinf(y_val).any():
                 skipped_samples += 1
                 continue
@@ -5148,11 +5330,7 @@ class RollingWindowTrainer:
             X.append(features)
             y.append(y_val)
         
-        if skipped_samples > 0:
-            print(f"[DEBUG] S/R Dataset: skipped {skipped_samples} samples with NaN/Inf values")
-        
         if len(X) == 0:
-            print(f"[ERROR] S/R Dataset: no valid samples generated (all {skipped_samples} samples had NaN/Inf)")
             # Ritorna arrays vuoti ma validi
             return np.empty((0, window_size * 4)), np.empty((0, 2))
         
@@ -5226,8 +5404,10 @@ class RollingWindowTrainer:
         return np.array(X), np.array(y)
     
     def _prepare_trend_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
-        """Prepara dataset per Trend Analysis - VERSIONE CORRETTA"""
+        """Prepara dataset per Trend Analysis con validazione NaN"""
+        
         X, y = [], []
+        skipped_samples = 0
         
         for i in range(100, len(data['prices']) - 20):
             # Features aggregate (invariate)
@@ -5235,6 +5415,12 @@ class RollingWindowTrainer:
             
             # Price position relative to MAs
             current_price = data['prices'][i]
+            
+            # Validazione prezzo corrente
+            if np.isnan(current_price) or current_price <= 0:
+                skipped_samples += 1
+                continue
+            
             if not np.isnan(data['sma_20'][i]):
                 features.append((current_price - data['sma_20'][i]) / data['sma_20'][i])
             else:
@@ -5245,34 +5431,75 @@ class RollingWindowTrainer:
             else:
                 features.append(0)
             
-            # Momentum
-            features.append(data['rsi'][i] / 100)
+            # Momentum con validazione
+            rsi_val = data['rsi'][i]
+            if np.isnan(rsi_val):
+                features.append(0.5)  # Neutro se RSI non disponibile
+            else:
+                features.append(rsi_val / 100)
             
-            # Recent returns statistics
+            # Recent returns statistics con validazione
             recent_returns = data['returns'][max(0, i-20):i]
-            features.extend([
-                np.mean(recent_returns),
-                np.std(recent_returns),
-                np.min(recent_returns),
-                np.max(recent_returns)
-            ])
+            if len(recent_returns) > 0 and not np.isnan(recent_returns).all():
+                valid_returns = recent_returns[~np.isnan(recent_returns)]
+                if len(valid_returns) > 0:
+                    features.extend([
+                        np.mean(valid_returns),
+                        np.std(valid_returns) if len(valid_returns) > 1 else 0,
+                        np.min(valid_returns),
+                        np.max(valid_returns)
+                    ])
+                else:
+                    features.extend([0, 0, 0, 0])  # Default se tutti NaN
+            else:
+                features.extend([0, 0, 0, 0])  # Default se non ci sono dati
             
-            # Volume trend
+            # Volume trend con validazione
             recent_volumes = data['volumes'][max(0, i-20):i]
-            features.append(np.mean(recent_volumes) / (np.mean(data['volumes']) + 1e-8))
+            if len(recent_volumes) > 0 and not np.isnan(recent_volumes).all():
+                valid_volumes = recent_volumes[~np.isnan(recent_volumes)]
+                all_volumes = data['volumes'][~np.isnan(data['volumes'])]
+                if len(valid_volumes) > 0 and len(all_volumes) > 0:
+                    features.append(np.mean(valid_volumes) / (np.mean(all_volumes) + 1e-8))
+                else:
+                    features.append(1.0)  # Volume neutro
+            else:
+                features.append(1.0)  # Volume neutro
             
-            # 🔧 CORREZIONE PRINCIPALE: Target continuo invece di categorie
+            # Target: slope della regressione lineare sui prezzi futuri
             future_prices = data['prices'][i:i+20]
             
-            # Calcola slope della regressione lineare sui prezzi futuri
-            x_vals = np.arange(len(future_prices))
-            slope, _ = np.polyfit(x_vals, future_prices, 1)
+            # Validazione future prices
+            if np.isnan(future_prices).any() or len(future_prices) < 20:
+                skipped_samples += 1
+                continue
             
-            # Normalizza il slope rispetto al prezzo corrente
-            normalized_slope = slope / current_price
-            
-            X.append(features)
-            y.append(normalized_slope)  # ✅ Target continuo per regressione
+            try:
+                # Calcola slope della regressione lineare sui prezzi futuri
+                x_vals = np.arange(len(future_prices))
+                slope, _ = np.polyfit(x_vals, future_prices, 1)
+                
+                # Normalizza il slope rispetto al prezzo corrente
+                normalized_slope = slope / current_price
+                
+                # Validazione target finale
+                if np.isnan(normalized_slope) or np.isinf(normalized_slope):
+                    skipped_samples += 1
+                    continue
+                
+                # Clamp del target per evitare valori estremi
+                normalized_slope = np.clip(normalized_slope, -0.1, 0.1)
+                
+                X.append(features)
+                y.append(normalized_slope)
+                
+            except (np.linalg.LinAlgError, ValueError):
+                skipped_samples += 1
+                continue
+        
+        if len(X) == 0:
+            # Ritorna arrays vuoti ma validi
+            return np.empty((0, 8)), np.empty((0,))
         
         return np.array(X), np.array(y)
     
@@ -5530,10 +5757,25 @@ class RollingWindowTrainer:
                         
                         # Verifica ripristino
                         if validate_model_state(model, "restored"):
+                            # Calcola loss iniziale per comparison reale
+                            try:
+                                model.eval()
+                                with torch.no_grad():
+                                    X_tensor = torch.FloatTensor(X[:100])  # Sample per calcolo loss
+                                    y_tensor = torch.FloatTensor(y[:100])
+                                    outputs = model(X_tensor)
+                                    if outputs.shape != y_tensor.shape:
+                                        if len(y_tensor.shape) == 1 and len(outputs.shape) == 2:
+                                            outputs = outputs.squeeze(1)
+                                    initial_loss = nn.MSELoss()(outputs, y_tensor).item()
+                                model.train()
+                            except:
+                                initial_loss = best_loss if best_loss != float('inf') else 1.0
+                            
                             final_result = {
                                 'status': 'preserved',
                                 'message': 'Training failed, preserved original weights',
-                                'final_loss': 0.0,
+                                'final_loss': initial_loss,  # Usa loss reale invece di 0.0
                                 'improvement': 0.0
                             }
                         else:
@@ -5564,10 +5806,15 @@ class RollingWindowTrainer:
                 if preserve_weights and initial_state is not None:
                     try:
                         model.load_state_dict(initial_state)
+                        # Usa best_loss se disponibile invece di 0.0
+                        actual_loss = final_result.get('final_loss')
+                        if actual_loss is None or actual_loss == 0.0:
+                            actual_loss = best_loss if best_loss != float('inf') else 1.0
+                        
                         final_result = {
                             'status': 'preserved',
                             'message': 'Model corrupted at end, preserved original weights',
-                            'final_loss': final_result.get('final_loss', 0.0),
+                            'final_loss': actual_loss,  # Usa loss reale invece di default 0.0
                             'improvement': 0.0
                         }
                     except:
@@ -5579,10 +5826,15 @@ class RollingWindowTrainer:
             if preserve_weights and improvement < -0.2 and initial_state is not None:
                 try:
                     model.load_state_dict(initial_state)
+                    # Usa best_loss se disponibile invece di 0.0
+                    actual_loss = final_result.get('final_loss')
+                    if actual_loss is None or actual_loss == 0.0:
+                        actual_loss = best_loss if best_loss != float('inf') else 1.0
+                    
                     final_result = {
                         'status': 'preserved',
                         'message': 'Model performance degraded, preserved original weights',
-                        'final_loss': final_result.get('final_loss', 0.0),
+                        'final_loss': actual_loss,  # Usa loss reale invece di default 0.0
                         'improvement': 0.0
                     }
                 except Exception as e:
@@ -5592,7 +5844,11 @@ class RollingWindowTrainer:
         training_end = datetime.now()
         training_info['training_duration'] = (training_end - training_start).total_seconds()
         training_info['final_status'] = final_result['status']
-        training_info['final_loss'] = final_result.get('final_loss', 0.0)
+        # Usa best_loss se final_loss non è disponibile, invece di 0.0
+        final_loss_value = final_result.get('final_loss')
+        if final_loss_value is None or final_loss_value == 0.0:
+            final_loss_value = best_loss if best_loss != float('inf') else 1.0
+        training_info['final_loss'] = final_loss_value
         training_info['improvement'] = final_result.get('improvement', 0.0)
         
         self._store_training_event('training_completed', training_info)
@@ -6014,7 +6270,7 @@ class AlgorithmCompetition:
         self.reanalyzer = PostErrorReanalyzer(logger)
         
         # Performance tracking - USA CONFIG
-        self.performance_window = deque(maxlen=self.config.performance_window_size)  # 🔧 CHANGED
+        self.performance_window = deque(maxlen=getattr(self.config, 'performance_window_size', 100) or 100)  # 🔧 FIXED
         self.last_reality_check = datetime.now()
         self.reality_check_interval = timedelta(hours=self.config.reality_check_interval_hours)  # 🔧 CHANGED
         
@@ -7118,6 +7374,7 @@ class AssetAnalyzer:
         
         # 🔧 NUOVO: Configurazione centralizzata
         self.config = config or get_analyzer_config()
+        self.parent: Optional['AdvancedMarketAnalyzer'] = None  # ✅ Inizializza parent reference
         
         # Sistema di logging
         self.logger = CompatibleAsyncLogger(f"{self.data_path}/logs")
@@ -7141,7 +7398,7 @@ class AssetAnalyzer:
             )
         
         # Data storage con gestione memoria - USA CONFIG
-        self.tick_data = deque(maxlen=self.config.max_tick_buffer_size)  # 🔧 CHANGED
+        self.tick_data = deque(maxlen=getattr(self.config, 'max_tick_buffer_size', 100000) or 100000)  # 🔧 FIXED
         self.aggregated_data = {}  # Diverse aggregazioni temporali
         
         # Thread safety - Lock multipli per evitare race conditions
@@ -7167,7 +7424,7 @@ class AssetAnalyzer:
         # Performance tracking - USA CONFIG
         self.analysis_count = 0
         self.last_analysis_time = None
-        self.analysis_latency_history = deque(maxlen=self.config.latency_history_size)  # 🔧 CHANGED
+        self.analysis_latency_history = deque(maxlen=getattr(self.config, 'latency_history_size', 100) or 100)  # 🔧 FIXED
         
         # Initialize all algorithms
         self._initialize_algorithms()
@@ -7482,8 +7739,22 @@ class AssetAnalyzer:
         for model_name in self.ml_models.keys():
             self.scalers[model_name] = StandardScaler()
         
+        # ✅ CORREZIONE CRITICA: Assegna parent reference ai modelli neurali per evitare 72 errori
+        for model_name, model in self.ml_models.items():
+            if hasattr(model, 'parent'):  # Solo per modelli che supportano parent
+                model.parent = self
+        
+        # I trainers vengono creati dinamicamente durante il training e avranno il parent assegnato automaticamente
+        
         # Carica pesi preservati se disponibili
         self._load_preserved_models()
+    
+    def _log(self, message: str, category: str = "general", severity: str = "info"):
+        """Helper per logging che funziona con o senza parent"""
+        if self.parent and hasattr(self.parent, '_smart_log'):
+            self._log(message, category, severity)
+        else:
+            smart_print(message, category)
     
     def _load_preserved_models(self):
         """Carica modelli preservati per champion precedenti - VERSIONE CORRETTA"""
@@ -7718,8 +7989,8 @@ class AssetAnalyzer:
                 self.logger.loggers['training'].warning(f"⚠️ NO TRAINING DATA available for {self.asset}, skipping training")
                 return
             
-            # DEFINISCI key_models con logging
-            key_models = ['LSTM_SupportResistance', 'RandomForest_Trend', 'VolumePrice_Analysis']
+            # DEFINISCI key_models con logging (solo veri modelli ML)
+            key_models = ['LSTM_SupportResistance', 'RandomForest_Trend', 'GradientBoosting_Trend']
             training_session['models_to_train'] = key_models
             
             self.logger.loggers['training'].info(f"🎯 MODELS TO TRAIN: {key_models}")
@@ -8808,11 +9079,11 @@ class AssetAnalyzer:
             
             # 🛡️ VALIDAZIONE DATI INPUT
             if np.isnan(prices).any() or np.isinf(prices).any():
-                safe_print("❌ Prezzi contengono valori NaN/Inf")
+                self._log("❌ Prezzi contengono valori NaN/Inf", "tensor_validation", "error")
                 raise InvalidInputError("prices", "NaN/Inf values", "LSTM requires valid numeric prices")
             
             if np.isnan(volumes).any() or np.isinf(volumes).any():
-                safe_print("❌ Volumi contengono valori NaN/Inf")
+                self._log("❌ Volumi contengono valori NaN/Inf", "tensor_validation", "error")
                 raise InvalidInputError("volumes", "NaN/Inf values", "LSTM requires valid numeric volumes")
             
             try:
@@ -8821,7 +9092,7 @@ class AssetAnalyzer:
                 
                 # 🛡️ VALIDAZIONE FEATURES
                 if np.isnan(features).any() or np.isinf(features).any():
-                    safe_print("❌ Features contengono valori NaN/Inf")
+                    self._log("❌ Features contengono valori NaN/Inf", "tensor_validation", "error")
                     raise InvalidInputError("features", "NaN/Inf values", "LSTM features must be numeric")
                 
                 # Prediction protetta
@@ -8831,21 +9102,21 @@ class AssetAnalyzer:
                     
                     # 🛡️ VALIDAZIONE TENSOR INPUT
                     if torch.isnan(input_tensor).any() or torch.isinf(input_tensor).any():
-                        safe_print("❌ Input tensor contiene valori NaN/Inf")
+                        self._log("❌ Input tensor contiene valori NaN/Inf", "tensor_validation", "error")
                         raise InvalidInputError("input_tensor", "NaN/Inf values", "PyTorch tensor must be finite")
                     
                     prediction = model(input_tensor)
                     
                     # 🛡️ VALIDAZIONE OUTPUT
                     if torch.isnan(prediction).any() or torch.isinf(prediction).any():
-                        safe_print("❌ LSTM output contiene valori NaN/Inf")
+                        self._log("❌ LSTM output contiene valori NaN/Inf", "tensor_validation", "error")
                         raise PredictionError("LSTM_SupportResistance", "Model produced NaN/Inf in output")
                     
                     levels = prediction.numpy().flatten()
                     
                     # 🛡️ VALIDAZIONE FINALE
                     if np.isnan(levels).any() or np.isinf(levels).any():
-                        safe_print("❌ Livelli finali contengono valori NaN/Inf")
+                        self._log("❌ Livelli finali contengono valori NaN/Inf", "tensor_validation", "error")
                         raise PredictionError("LSTM_SupportResistance", "Final levels contain NaN/Inf values")
                     
                 safe_print(f"✅ LSTM prediction successful: {levels.shape}")
@@ -10420,7 +10691,8 @@ class AssetAnalyzer:
         # 🛡️ VALIDAZIONE FINALE IN-PLACE
         invalid_final = ~np.isfinite(features_matrix)
         if invalid_final.any():
-            safe_print("❌ Features matrix contiene NaN/Inf - sanitizzando IN-PLACE...")
+            self._log("❌ Features matrix contiene NaN/Inf - sanitizzando IN-PLACE...", 
+                                 "tensor_validation", "warning")
             np.copyto(features_matrix, 0.0, where=invalid_final)
         
         safe_print(f"✅ LSTM features ULTRA-ottimizzate: shape={features_matrix.shape}, operazioni vettoriali")
@@ -10796,7 +11068,8 @@ class AssetAnalyzer:
         # 🛡️ VALIDAZIONE FINALE IN-PLACE
         invalid_final = ~np.isfinite(features_matrix)
         if invalid_final.any():
-            safe_print("❌ Features matrix contiene NaN/Inf - sanitizzando IN-PLACE...")
+            self._log("❌ Features matrix contiene NaN/Inf - sanitizzando IN-PLACE...", 
+                                 "tensor_validation", "warning")
             np.copyto(features_matrix, 0.0, where=invalid_final)
         
         safe_print(f"✅ Transformer features ULTRA-ottimizzate: shape={features_matrix.shape}")
@@ -14266,7 +14539,7 @@ class AssetAnalyzer:
             # Filter tick data
             new_tick_data = deque(
                 [tick for tick in self.tick_data if tick['timestamp'] > cutoff_date],
-                maxlen=self.config.max_tick_buffer_size  # 🔧 CHANGED
+                maxlen=getattr(self.config, 'max_tick_buffer_size', 100000) or 100000  # 🔧 FIXED
             )
             
             self.tick_data = new_tick_data
@@ -15022,6 +15295,7 @@ class AdvancedMarketAnalyzer:
         if asset not in self.asset_analyzers:
             try:
                 self.asset_analyzers[asset] = AssetAnalyzer(asset, self.data_path)
+                self.asset_analyzers[asset].parent = self  # ✅ Assegna parent reference
                 
                 # ✅ NUOVO: Store event per UnifiedAnalyzerSystem
                 self._store_event('asset_added', {
@@ -15258,7 +15532,6 @@ class AdvancedMarketAnalyzer:
             return
             
         try:
-            
             # Add timestamp and source to event data
             enhanced_event_data = {
                 **event_data,
@@ -15268,26 +15541,25 @@ class AdvancedMarketAnalyzer:
             }
             
             # Convert string event_type to EventType enum
-            try:
-                # Map common event types to EventType enum
-                event_type_mapping = {
-                    'emergency_stop': EventType.EMERGENCY_STOP,
-                    'champion_change': EventType.CHAMPION_CHANGE,
-                    'learning_progress': EventType.LEARNING_PROGRESS,
-                    'model_training': EventType.MODEL_TRAINING,
-                    'performance_metrics': EventType.PERFORMANCE_METRICS,
-                    'validation_complete': EventType.VALIDATION_COMPLETE,
-                    'prediction_generated': EventType.PREDICTION_GENERATED,
-                    'algorithm_update': EventType.ALGORITHM_UPDATE,
-                    'error_event': EventType.ERROR_EVENT,
-                    'system_status': EventType.SYSTEM_STATUS
-                }
-                
-                event_type_enum = event_type_mapping.get(event_type.lower(), EventType.SYSTEM_STATUS)
-            except (ValueError, AttributeError):
-                event_type_enum = EventType.SYSTEM_STATUS
-
-            # Create MLEvent object
+            from ML_Training_Logger.Event_Collector import EventType, EventSeverity
+            
+            # Map common event types
+            event_type_mapping = {
+                'emergency_stop': EventType.EMERGENCY_STOP,
+                'champion_change': EventType.CHAMPION_CHANGE,
+                'learning_progress': EventType.LEARNING_PROGRESS,
+                'model_training': EventType.MODEL_TRAINING,
+                'performance_metrics': EventType.PERFORMANCE_METRICS,
+                'validation_complete': EventType.VALIDATION_COMPLETE,
+                'prediction_generated': EventType.PREDICTION_GENERATED,
+                'algorithm_update': EventType.ALGORITHM_UPDATE,
+                'error_event': EventType.ERROR_EVENT,
+                'system_status': EventType.SYSTEM_STATUS
+            }
+            
+            event_type_enum = event_type_mapping.get(event_type.lower(), EventType.SYSTEM_STATUS)
+            
+            # Create proper MLEvent object
             ml_event = self.ml_event_collector.create_manual_event(
                 event_type=event_type_enum,
                 data=enhanced_event_data,
@@ -15297,19 +15569,68 @@ class AdvancedMarketAnalyzer:
 
             # Emit the event
             self.ml_event_collector.emit_event(ml_event)
-            
-            # Update display for important events
-            if event_type in ['champion_change', 'emergency_stop', 'learning_progress', 'validation_complete']:
-                self._update_ml_display_metrics()
-                
-                # Also log important events to console
-                if event_type in ['champion_change', 'emergency_stop']:
-                    event_msg = enhanced_event_data.get('message', f'{event_type} event occurred')
-                    self._safe_log('training', 'info', f"[IMPORTANT] {event_msg}")
-            
         except Exception as e:
-            # Silent fail to prevent crashes
-            self._safe_log('errors', 'warning', f"Failed to emit ML event {event_type}: {e}")
+            # Fallback silenzioso se ML Logger fallisce
+            pass
+    
+    def _smart_log(self, message: str, category: str = "general", severity: str = "info", rate_limit: Optional[int] = None) -> None:
+        """
+        Sistema di logging intelligente che riduce spam usando ML Training Logger
+        
+        Args:
+            message: Messaggio da loggare
+            category: Categoria del messaggio (adapter, training, validation, etc.)
+            severity: Severità (debug, info, warning, error)
+            rate_limit: Limite personalizzato per questa categoria (None = usa default)
+        """
+        if not hasattr(self, '_smart_log_counters'):
+            self._smart_log_counters = {}
+        
+        # Rate limiting per categoria
+        rate_limits = {
+            'adapter_cache': 1000,      # Log ogni 1000 hit
+            'tensor_validation': 200,   # Log ogni 200 validazioni
+            'training_batch': 50,       # Log ogni 50 batch
+            'cache_cleanup': 100,       # Log ogni 100 cleanup
+            'prediction': 500,          # Log ogni 500 predizioni
+            'error_repeat': 10,         # Log stesso errore max 10 volte
+            'general': 1                # Log sempre
+        }
+        
+        limit = rate_limit if rate_limit is not None else rate_limits.get(category, 1)
+        
+        # Incrementa counter
+        counter_key = f"{category}_{hash(message) % 1000}"  # Hash per messaggi simili
+        current_count = self._smart_log_counters.get(counter_key, 0) + 1
+        self._smart_log_counters[counter_key] = current_count
+        
+        # Decide se loggare
+        should_log = (current_count % limit == 0) or severity in ['error', 'critical']
+        
+        if should_log:
+            # Se ML Logger è attivo, usa quello per eventi strutturati
+            if self.ml_logger_active and category != 'general':
+                try:
+                    event_data = {
+                        'message': message,
+                        'category': category,
+                        'severity': severity,
+                        'count': current_count,
+                        'rate_limited': current_count > 1
+                    }
+                    self._emit_ml_event(f'log_{category}', event_data)
+                except:
+                    # Fallback a safe_print se ML Logger fallisce
+                    if current_count > 1:
+                        safe_print(f"[{category.upper()}] {message} (x{current_count})")
+                    else:
+                        safe_print(f"[{category.upper()}] {message}")
+            else:
+                # Usa safe_print con counter
+                if current_count > 1:
+                    safe_print(f"[{category.upper()}] {message} (x{current_count})")
+                else:
+                    safe_print(f"[{category.upper()}] {message}")
     
     def _update_ml_display_metrics(self, asset: Optional[str] = None) -> None:
         """Update ML Training Logger display with current metrics"""
@@ -15335,7 +15656,7 @@ class AdvancedMarketAnalyzer:
             for asset_name, analyzer in self.asset_analyzers.items():
                 # Get real learning progress from analyzer
                 asset_ticks = len(analyzer.tick_data) if hasattr(analyzer, 'tick_data') else 0
-                required_ticks = getattr(analyzer.config, 'learning_ticks_threshold', 50000) if hasattr(analyzer, 'config') else 50000
+                required_ticks = (getattr(analyzer.config, 'learning_ticks_threshold', 50000) or 50000) if hasattr(analyzer, 'config') else 50000
                 
                 if hasattr(analyzer, 'learning_phase') and analyzer.learning_phase:
                     # Calculate progress based on learning requirements
@@ -15608,7 +15929,7 @@ class AdvancedMarketAnalyzer:
             })
             
             # Update ML display metrics for all assets
-            self._update_ml_display_metrics()
+            self._update_ml_display_metrics(asset=None)
             
         except Exception as e:
             self._safe_log('errors', 'error', f"Error updating global stats: {e}")
