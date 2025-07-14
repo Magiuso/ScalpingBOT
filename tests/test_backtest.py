@@ -1173,13 +1173,28 @@ class MLLearningTestSuite:
                 self.monitoring_active = True
                 total_ticks_loaded = 0
                 current_batch_size = 0
+                effective_memory = 0.0  # Memoria effettiva controllata per il threshold
                 
                 def memory_monitor():
-                    """Monitor memoria ogni secondo con feedback continuo"""
+                    """Monitor memoria ogni secondo con feedback continuo - aggiornamento su singola riga"""
                     while self.monitoring_active and not self.stop_requested:
                         try:
-                            current_memory = process.memory_percent()
-                            safe_print(f"💾 Memory: {current_memory:.1f}% | Batch ticks: {current_batch_size:,} | Total: {total_ticks_loaded:,}")
+                            # Usa la stessa logica del controllo threshold
+                            process_memory = process.memory_percent()
+                            try:
+                                import psutil
+                                system_memory = psutil.virtual_memory().percent
+                                # Usa il valore più alto per sicurezza (stessa logica del controllo)
+                                effective_memory_current = max(system_memory, process_memory)
+                            except:
+                                effective_memory_current = process_memory
+                            
+                            # Aggiorna variabile globale
+                            nonlocal effective_memory
+                            effective_memory = effective_memory_current
+                            
+                            # Aggiornamento su singola riga con \r
+                            print(f"\r💾 Memory: {effective_memory:.1f}% | Batch ticks: {current_batch_size:,} | Total: {total_ticks_loaded:,}", end='', flush=True)
                             time_module.sleep(1.0)
                         except:
                             break
@@ -1193,9 +1208,9 @@ class MLLearningTestSuite:
                 while True:
                     
                     # FASE 1: Carica batch fino all'80% memoria
-                    safe_print(f"\n📦 Batch {batch_number}: Loading until {MEMORY_THRESHOLD}% memory...")
+                    print(f"\n\n📦 Batch {batch_number}: Loading until {MEMORY_THRESHOLD}% memory...")
                     initial_memory = process.memory_percent()
-                    safe_print(f"💾 Starting memory: {initial_memory:.1f}%")
+                    print(f"[START] Memory: {initial_memory:.1f}%")
                     
                     current_batch = []
                     current_batch_size = 0  # Reset contatore batch
@@ -1237,9 +1252,9 @@ class MLLearningTestSuite:
                                         
                                         # Exit forzato all'80%
                                         if current_memory >= MEMORY_THRESHOLD:
-                                            safe_print(f"🛑 MEMORY THRESHOLD REACHED! Stopping at {current_memory:.1f}%")
-                                            safe_print(f"📊 System: {system_memory:.1f}%, Process: {process_memory:.1f}%")
-                                            safe_print(f"📊 Loaded {current_batch_size:,} ticks in this batch")
+                                            print(f"\n🛑 MEMORY THRESHOLD REACHED! Stopping at {current_memory:.1f}%")
+                                            print(f"📊 System: {system_memory:.1f}%, Process: {process_memory:.1f}%")
+                                            print(f"📊 Loaded {current_batch_size:,} ticks in this batch")
                                             break
                                     except Exception as mem_error:
                                         safe_print(f"⚠️ Memory check error: {mem_error}")
@@ -1249,14 +1264,15 @@ class MLLearningTestSuite:
                     
                     # Ferma il monitoraggio prima del processing
                     self.monitoring_active = False
-                    safe_print("🔍 Stopped memory monitoring for processing phase")
+                    print(f"\n🔍 Stopped memory monitoring for processing phase")
+                    print(f"🔄 Processing {len(current_batch):,} ticks...")
                     
                     if not current_batch:
                         safe_print("✅ No more data to process")
                         break
                     
                     final_memory = process.memory_percent()
-                    safe_print(f"📊 Batch {batch_number} loaded: {len(current_batch):,} ticks (memory: {final_memory:.1f}%)")
+                    print(f"📊 Batch {batch_number} loaded: {len(current_batch):,} ticks (final memory: {final_memory:.1f}%)")
                     
                     # FASE 2: Processa il batch caricato
                     safe_print(f"⚡ Processing batch {batch_number}...")

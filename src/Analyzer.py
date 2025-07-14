@@ -15513,14 +15513,7 @@ class AdvancedMarketAnalyzer:
             if self._display_update_counter % 50 == 0:
                 self._update_ml_display_metrics(asset)
                 
-                # Log learning progress periodically
-                if self._display_update_counter % 1000 == 0:  # Every 1000 ticks
-                    for asset_name, analyzer in self.asset_analyzers.items():
-                        if hasattr(analyzer, 'learning_phase') and analyzer.learning_phase:
-                            ticks = len(analyzer.tick_data) if hasattr(analyzer, 'tick_data') else 0
-                            progress = getattr(analyzer, 'learning_progress', 0.0) * 100
-                            self._safe_log('training', 'info', 
-                                         f"Learning progress [{asset_name}]: {progress:.1f}% - {ticks:,} ticks processed")
+                # Skip spam logging - tick count already shown in dashboard
             
             # ✅ NUOVO: Store significant events  
             if result and result.get('status') == 'learning_complete':
@@ -15823,8 +15816,12 @@ class AdvancedMarketAnalyzer:
                                 accuracy = getattr(champion_alg, 'accuracy_rate', 0.0) * 100
                                 predictions = getattr(champion_alg, 'total_predictions', 0)
                                 
+                                # Calculate actual ML training progress based on predictions made
+                                min_predictions_needed = 100  # From champion competition config
+                                ml_progress = min(100.0, (predictions / min_predictions_needed) * 100) if predictions > 0 else 0.0
+                                
                                 models_info[model_name] = {
-                                    'progress': asset_progress,
+                                    'progress': ml_progress,
                                     'accuracy': accuracy,
                                     'status': 'Training' if getattr(analyzer, 'learning_phase', True) else 'Complete',
                                     'predictions': predictions,
@@ -15837,11 +15834,15 @@ class AdvancedMarketAnalyzer:
                                     total_predictions += predictions
                         else:
                             # Model without champion - still in early training
-                            early_progress = min(25.0, (asset_ticks / (required_ticks * 0.1)) * 25)
+                            # For early models, progress is based on data collection, not tick processing
+                            data_collected = asset_ticks if asset_ticks else 0
+                            min_data_needed = 1000  # Minimum data points needed before training starts
+                            early_progress = min(10.0, (data_collected / min_data_needed) * 10) if data_collected > 0 else 0.0
+                            
                             models_info[model_name] = {
                                 'progress': early_progress,
                                 'accuracy': 0.0,
-                                'status': 'Initializing',
+                                'status': 'Collecting Data' if early_progress < 10.0 else 'Initializing',
                                 'predictions': 0,
                                 'is_champion': False
                             }

@@ -538,6 +538,13 @@ class DisplayManager:
         # Detect terminal capabilities
         self.capabilities = self._detect_terminal_capabilities()
         
+        # Resolve AUTO mode to appropriate mode based on capabilities
+        if self.display_config.terminal_mode == TerminalMode.AUTO:
+            if self.capabilities.supports_cursor_control and self.capabilities.supports_ansi:
+                self.display_config.terminal_mode = TerminalMode.DASHBOARD
+            else:
+                self.display_config.terminal_mode = TerminalMode.SCROLL
+        
         # Initialize renderer
         self.renderer = TreeProgressRenderer(self.display_config, self.capabilities)
         
@@ -695,8 +702,9 @@ class DisplayManager:
         
         self.is_running = True
         
-        # Clear screen and setup fixed display if terminal supports it
-        if self.capabilities.supports_cursor_control:
+        # Clear screen and setup fixed display if terminal supports it and in DASHBOARD mode
+        if (self.capabilities.supports_cursor_control and 
+            self.display_config.terminal_mode == TerminalMode.DASHBOARD):
             self._clear_screen()
             self._show_initial_fixed_display()
         else:
