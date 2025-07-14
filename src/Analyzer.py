@@ -145,14 +145,14 @@ class AnalyzerConfig:
     training_epochs: int = 100  # Epoch per training
     training_patience: int = 15  # Early stopping patience
     training_test_split: float = 0.8  # Train/test split ratio
-    max_grad_norm: float = 1.0  # Gradient clipping
-    learning_rate: float = 3e-4  # Learning rate ottimizzato per training LSTM
+    max_grad_norm: float = 0.5  # 🔧 FIXED: Gradient clipping più aggressivo per vanishing gradients
+    learning_rate: float = 1e-5  # 🔧 FIXED: Learning rate ridotto per evitare collasso loss LSTM
     
     # ========== LSTM CONFIGURATION ==========
     lstm_sequence_length: int = 30  # Lunghezza sequenza LSTM
     lstm_hidden_size: int = 128  # Hidden size di default
     lstm_num_layers: int = 3  # Layer LSTM di default
-    lstm_dropout: float = 0.2  # Dropout LSTM
+    lstm_dropout: float = 0.3  # 🔧 FIXED: Dropout aumentato per regolarizzazione contro overfitting
     
     # ========== TECHNICAL INDICATORS ==========
     sma_periods: List[int] = field(default_factory=lambda: [5, 10, 20, 50])
@@ -3365,10 +3365,7 @@ class AdvancedLSTM(nn.Module):
     
     def _log(self, message: str, category: str = "adapter", severity: str = "info"):
         """Helper per logging che funziona con o senza parent"""
-        if self.parent and hasattr(self.parent, '_smart_log'):
-            self._log(message, category, severity)
-        else:
-            smart_print(message, category)
+        smart_print(f"[{category}] {message}", category)
     
     def _get_or_create_adapter(self, actual_input_size: int) -> nn.Module:
         """Ottiene o crea un adapter per la dimensione specifica con caching ottimizzato"""
@@ -4226,10 +4223,7 @@ class TransformerPredictor(nn.Module):
     
     def _log(self, message: str, category: str = "transformer", severity: str = "info"):
         """Helper per logging che funziona con o senza parent"""
-        if self.parent and hasattr(self.parent, '_smart_log'):
-            self._log(message, category, severity)
-        else:
-            smart_print(message, category)
+        smart_print(f"[{category}] {message}", category)
         
     def forward(self, x):
         batch_size, seq_len, _ = x.shape
@@ -4290,10 +4284,7 @@ class CNNPatternRecognizer(nn.Module):
     
     def _log(self, message: str, category: str = "cnn", severity: str = "info"):
         """Helper per logging che funziona con o senza parent"""
-        if self.parent and hasattr(self.parent, '_smart_log'):
-            self._log(message, category, severity)
-        else:
-            smart_print(message, category)
+        smart_print(f"[{category}] {message}", category)
         
     def forward(self, x):
         x = self.conv_layers(x)
@@ -4309,8 +4300,12 @@ class OptimizedLSTMTrainer:
         self.config = config or get_analyzer_config()  # 🔧 ADDED
         self.parent: Optional['AssetAnalyzer'] = None  # ✅ Inizializza parent reference
         
-        # 🔧 USA CONFIGURAZIONE per parametri training
-        self.optimizer = torch.optim.Adam(model.parameters(), lr=self.config.learning_rate)
+        # 🔧 USA CONFIGURAZIONE per parametri training con weight decay per regolarizzazione
+        self.optimizer = torch.optim.Adam(
+            model.parameters(), 
+            lr=self.config.learning_rate,
+            weight_decay=1e-4  # 🔧 FIXED: Weight decay aggiunto per prevenire overfitting
+        )
         self.max_grad_norm = self.config.max_grad_norm
         
         # Scheduler per learning rate adattivo
@@ -4320,10 +4315,7 @@ class OptimizedLSTMTrainer:
     
     def _log(self, message: str, category: str = "training", severity: str = "info"):
         """Helper per logging che funziona con o senza parent"""
-        if self.parent and hasattr(self.parent, '_smart_log'):
-            self._log(message, category, severity)
-        else:
-            smart_print(message, category)
+        smart_print(f"[{category}] {message}", category)
     
     def validate_data(self, data: torch.Tensor, name: str = "data") -> torch.Tensor:
         """Valida che i dati non contengano NaN o Inf"""
@@ -4516,6 +4508,34 @@ class OptimizedLSTMTrainer:
             # Calcola loss
             loss = criterion(outputs, targets)
             
+            # 🔧 DEBUG: Monitora collasso della loss
+            loss_value = loss.item()
+            if loss_value < 1e-6:  # Loss troppo bassa (collasso!)
+                self._log(f"❌ LOSS COLLAPSE DETECTED: {loss_value:.2e} - Possibile overfitting o target problematici!", 
+                         category="loss_debug", severity="error")
+                
+                # Debug target e output per capire il problema
+                with torch.no_grad():
+                    target_stats = {
+                        'mean': targets.mean().item(),
+                        'std': targets.std().item(),
+                        'min': targets.min().item(),
+                        'max': targets.max().item()
+                    }
+                    output_stats = {
+                        'mean': outputs.mean().item(),
+                        'std': outputs.std().item(),
+                        'min': outputs.min().item(),
+                        'max': outputs.max().item()
+                    }
+                    
+                    self._log(f"🔍 Target stats: {target_stats}", category="loss_debug", severity="info")
+                    self._log(f"🔍 Output stats: {output_stats}", category="loss_debug", severity="info")
+                    
+                    # Calcola differenza media tra target e output
+                    diff = torch.abs(targets - outputs).mean().item()
+                    self._log(f"🔍 Mean absolute difference: {diff:.6f}", category="loss_debug", severity="info")
+            
             # 🛡️ VALIDAZIONE LOSS CRITICA
             if loss is None:
                 safe_print("❌ Loss è None")
@@ -4609,8 +4629,38 @@ class OptimizedLSTMTrainer:
             self.optimizer.zero_grad()
             raise ValueError(f"Backward pass fallito: {backward_error}")
         
-        # 🛡️ GRADIENT CLIPPING CRITICO
+        # 🛡️ GRADIENT CLIPPING CRITICO CON DEBUG VANISHING GRADIENTS
         try:
+            # 🔧 DEBUG: Controlla gradienti zero (problema weight_hh LSTM)
+            zero_grad_count = 0
+            total_grad_count = 0
+            min_grad_norm = float('inf')
+            max_grad_norm = 0.0
+            
+            for name, param in self.model.named_parameters():
+                if param.grad is not None:
+                    total_grad_count += 1
+                    param_grad_norm = param.grad.norm().item()
+                    
+                    if param_grad_norm < 1e-8:  # Praticamente zero
+                        zero_grad_count += 1
+                        if 'weight_hh' in name or 'lstm' in name.lower():
+                            self._log(f"⚠️ VANISHING GRADIENT: {name} ha gradiente quasi zero: {param_grad_norm:.2e}", 
+                                     category="gradient_debug", severity="warning")
+                    
+                    min_grad_norm = min(min_grad_norm, param_grad_norm)
+                    max_grad_norm = max(max_grad_norm, param_grad_norm)
+            
+            # 🔧 DEBUG: Log statistiche gradienti
+            if total_grad_count > 0:
+                zero_grad_ratio = zero_grad_count / total_grad_count
+                if zero_grad_ratio > 0.3:  # Più del 30% gradienti zero
+                    self._log(f"❌ PROBLEMA VANISHING GRADIENTS: {zero_grad_ratio:.1%} parametri hanno gradiente zero", 
+                             category="gradient_debug", severity="error")
+                
+                self._log(f"📊 Gradient stats: min={min_grad_norm:.2e}, max={max_grad_norm:.2e}, zero_ratio={zero_grad_ratio:.1%}", 
+                         category="gradient_debug", severity="info")
+            
             grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
             
             if torch.isnan(grad_norm) or torch.isinf(grad_norm):
@@ -5267,20 +5317,23 @@ class RollingWindowTrainer:
         return result
     
     def _prepare_sr_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
-        """Prepara dataset per Support/Resistance con validazione NaN"""
+        """
+        🔧 NUOVA VERSIONE: Prepara dataset S/R con livelli realistici e variabili
+        Fix per il collasso della loss LSTM (da 0.000002 a range normale 0.01-0.1)
+        """
         prices = data['prices']
         volumes = data['volumes']
         
-        
-        # Feature window di 50 punti
+        # 🔧 FIX 1: Parametri ottimizzati per S/R detection
         window_size = 50
-        future_window = 20
+        lookback_window = 100  # 🔧 AUMENTATO: Finestra più ampia per identificare S/R significativi
+        future_window = 30     # 🔧 AUMENTATO: Più tempo per validare livelli S/R
         
         X, y = [], []
         skipped_samples = 0
         
-        for i in range(window_size, len(prices) - future_window):
-            # Features: prezzi, volumi, indicatori
+        for i in range(window_size + lookback_window, len(prices) - future_window):
+            # Features: prezzi, volumi, indicatori (stesse di prima)
             price_features = prices[i-window_size:i]
             volume_features = volumes[i-window_size:i]
             sma_features = data['sma_20'][i-window_size:i]
@@ -5301,29 +5354,97 @@ class RollingWindowTrainer:
                 rsi_features
             ])
             
-            # Target: massimi e minimi futuri per S/R
-            future_prices = prices[i:i+future_window]
-            if np.isnan(future_prices).any():
-                skipped_samples += 1
-                continue  # Salta se future prices hanno NaN
-                
-            resistance = np.max(future_prices)
-            support = np.min(future_prices)
+            # 🔧 FIX 2: TARGET REALISTICI con vera logica Support/Resistance
             current_price = prices[i]
+            historical_prices = prices[i-lookback_window:i]  # Ultimi 100 prezzi per S/R detection
+            future_prices = prices[i:i+future_window]        # Prossimi 30 prezzi per validazione
             
-            # Validazione divisione per zero
-            if current_price == 0 or np.isnan(current_price):
+            # Validazione prezzi
+            if (current_price == 0 or np.isnan(current_price) or 
+                np.isnan(historical_prices).any() or np.isnan(future_prices).any()):
                 skipped_samples += 1
                 continue
             
-            # Normalizza target
+            # 🔧 ALGORITMO S/R MIGLIORATO: Swing Highs/Lows con filtro volume
+            swing_window = 5  # Cerca swing in finestre di 5 periodi
+            volume_threshold = np.percentile(volumes[i-lookback_window:i], 60)  # Solo swing con volume significativo
+            
+            # Trova swing highs (resistenze potenziali)
+            resistance_candidates = []
+            for j in range(swing_window, len(historical_prices) - swing_window):
+                price_j = historical_prices[j]
+                volume_j = volumes[i-lookback_window+j]
+                
+                # È un swing high se è il massimo locale E ha volume significativo
+                is_swing_high = (price_j > np.max(historical_prices[j-swing_window:j]) and 
+                                price_j > np.max(historical_prices[j+1:j+swing_window+1]) and
+                                volume_j > volume_threshold)
+                
+                if is_swing_high:
+                    resistance_candidates.append(price_j)
+            
+            # Trova swing lows (supporti potenziali) 
+            support_candidates = []
+            for j in range(swing_window, len(historical_prices) - swing_window):
+                price_j = historical_prices[j]
+                volume_j = volumes[i-lookback_window+j]
+                
+                # È un swing low se è il minimo locale E ha volume significativo
+                is_swing_low = (price_j < np.min(historical_prices[j-swing_window:j]) and 
+                               price_j < np.min(historical_prices[j+1:j+swing_window+1]) and
+                               volume_j > volume_threshold)
+                
+                if is_swing_low:
+                    support_candidates.append(price_j)
+            
+            # 🔧 FIX 3: Selezione livelli S/R significativi
+            if len(resistance_candidates) == 0:
+                # Fallback: usa percentile alto con ATR adjustment
+                atr = np.std(historical_prices[-20:]) * 2  # ATR approssimato
+                resistance = current_price + atr * 1.5
+            else:
+                # Scegli resistenza più vicina sopra current_price
+                valid_resistances = [r for r in resistance_candidates if r > current_price]
+                resistance = min(valid_resistances) if valid_resistances else current_price + np.std(historical_prices) * 2
+            
+            if len(support_candidates) == 0:
+                # Fallback: usa percentile basso con ATR adjustment
+                atr = np.std(historical_prices[-20:]) * 2
+                support = current_price - atr * 1.5
+            else:
+                # Scegli supporto più vicino sotto current_price
+                valid_supports = [s for s in support_candidates if s < current_price]
+                support = max(valid_supports) if valid_supports else current_price - np.std(historical_prices) * 2
+            
+            # 🔧 FIX 4: Validazione con dati futuri (serve davvero S/R?)
+            future_min = np.min(future_prices)
+            future_max = np.max(future_prices)
+            
+            # Se il prezzo futuro rompe i livelli S/R, adatta i target
+            if future_min < support:
+                support = future_min * 0.995  # Support leggermente sotto il minimo futuro
+            if future_max > resistance:
+                resistance = future_max * 1.005  # Resistance leggermente sopra il massimo futuro
+            
+            # 🔧 FIX 5: Target normalizzati MA non banali
+            support_distance = abs(support - current_price) / current_price
+            resistance_distance = abs(resistance - current_price) / current_price
+            
+            # Target come DISTANZE ASSOLUTE (sempre positive, ma variabili!)
             y_val = np.array([
-                (support - current_price) / current_price,
-                (resistance - current_price) / current_price
+                support_distance,      # Distanza al support (sempre > 0)
+                resistance_distance    # Distanza alla resistance (sempre > 0)
             ])
             
+            # 🔧 DEBUG: Aggiungi logging dettagliato per target S/R
+            if len(y) < 10:  # Log solo primi 10 samples
+                safe_print(f"🔍 S/R Target #{len(y)}: support={support:.6f} (dist={support_distance:.6f}), resistance={resistance:.6f} (dist={resistance_distance:.6f}), current={current_price:.6f}")
+                safe_print(f"🔍 S/R Candidates: {len(support_candidates)} supports, {len(resistance_candidates)} resistances found")
+                safe_print(f"🔍 S/R Future validation: min={future_min:.6f}, max={future_max:.6f}, std={np.std(future_prices):.6f}")
+            
             # Validazione finale target
-            if np.isnan(y_val).any() or np.isinf(y_val).any():
+            if (np.isnan(y_val).any() or np.isinf(y_val).any() or 
+                support_distance < 0.0001 or resistance_distance < 0.0001):  # Evita target troppo piccoli
                 skipped_samples += 1
                 continue
             
@@ -5334,7 +5455,30 @@ class RollingWindowTrainer:
             # Ritorna arrays vuoti ma validi
             return np.empty((0, window_size * 4)), np.empty((0, 2))
         
-        return np.array(X), np.array(y)
+        X_array, y_array = np.array(X), np.array(y)
+        
+        # 🔧 DEBUG: Statistiche complete del dataset S/R
+        if len(y_array) > 0:
+            support_targets = y_array[:, 0]  # Prima colonna = support
+            resistance_targets = y_array[:, 1]  # Seconda colonna = resistance
+            
+            safe_print(f"📊 S/R Dataset Summary: Total samples={len(y_array)}, Skipped={skipped_samples}")
+            safe_print(f"📊 Support targets: mean={np.mean(support_targets):.6f}, std={np.std(support_targets):.6f}, min={np.min(support_targets):.6f}, max={np.max(support_targets):.6f}")
+            safe_print(f"📊 Resistance targets: mean={np.mean(resistance_targets):.6f}, std={np.std(resistance_targets):.6f}, min={np.min(resistance_targets):.6f}, max={np.max(resistance_targets):.6f}")
+            
+            # Verifica se targets sono troppo simili (problema!)
+            support_std = np.std(support_targets)
+            resistance_std = np.std(resistance_targets)
+            if support_std < 0.001 or resistance_std < 0.001:
+                safe_print(f"❌ PROBLEMA CRITICO: Target S/R hanno variabilità troppo bassa! support_std={support_std:.8f}, resistance_std={resistance_std:.8f}")
+            
+            # Controlla se support è sempre negativo e resistance sempre positivo (troppo semplice!)
+            all_support_negative = np.all(support_targets <= 0)
+            all_resistance_positive = np.all(resistance_targets >= 0)
+            if all_support_negative and all_resistance_positive:
+                safe_print(f"❌ PROBLEMA: Target S/R troppo semplici! Support sempre ≤0, Resistance sempre ≥0")
+        
+        return X_array, y_array
     
     def _prepare_pattern_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
         """Prepara dataset per Pattern Recognition"""
