@@ -7973,10 +7973,40 @@ class AssetAnalyzer:
         with self.data_lock:
             current_market_data = self._prepare_market_data()
         
-        # Update learning progress
+        # Update learning progress based on actual ML training achievements
         if self.learning_phase:
             days_learning = (datetime.now() - self.learning_start_time).days
-            self.learning_progress = min(1.0, days_learning / self.config.min_learning_days)
+            
+            # Calculate progress based on actual ML training metrics
+            ml_progress = 0.0
+            
+            # Time-based progress (up to 30%)
+            time_progress = min(0.3, days_learning / self.config.min_learning_days)
+            ml_progress += time_progress
+            
+            # Champion-based progress (up to 40%)
+            if hasattr(self, 'competitions'):
+                champions_ready = sum(1 for comp in self.competitions.values() 
+                                    if hasattr(comp, 'champion') and comp.champion)
+                total_competitions = len(self.competitions)
+                if total_competitions > 0:
+                    champion_progress = min(0.4, (champions_ready / total_competitions) * 0.4)
+                    ml_progress += champion_progress
+            
+            # Prediction-based progress (up to 30%)
+            if hasattr(self, 'competitions'):
+                total_predictions = 0
+                for comp in self.competitions.values():
+                    if hasattr(comp, 'champion') and comp.champion:
+                        champion_alg = comp.algorithms.get(comp.champion)
+                        if champion_alg:
+                            total_predictions += getattr(champion_alg, 'total_predictions', 0)
+                
+                min_predictions_target = 500  # Target for meaningful learning
+                prediction_progress = min(0.3, (total_predictions / min_predictions_target) * 0.3)
+                ml_progress += prediction_progress
+            
+            self.learning_progress = min(1.0, ml_progress)
             
             if days_learning < self.config.min_learning_days:
                 # Still learning, just collect data
@@ -15791,14 +15821,20 @@ class AdvancedMarketAnalyzer:
             total_predictions = 0
             
             for asset_name, analyzer in self.asset_analyzers.items():
-                # Get real learning progress from analyzer
+                # Get real ML training progress from analyzer
                 asset_ticks = len(analyzer.tick_data) if hasattr(analyzer, 'tick_data') else 0
-                required_ticks = (getattr(analyzer.config, 'learning_ticks_threshold', 50000) or 50000) if hasattr(analyzer, 'config') else 50000
                 
                 if hasattr(analyzer, 'learning_phase') and analyzer.learning_phase:
-                    # Calculate progress based on learning requirements
-                    asset_progress = min(100.0, (asset_ticks / required_ticks) * 100)
-                    learning_progress = max(learning_progress, asset_progress)
+                    # Calculate progress based on actual ML learning, not just tick processing
+                    # Use the analyzer's own learning_progress if available
+                    if hasattr(analyzer, 'learning_progress'):
+                        asset_ml_progress = getattr(analyzer, 'learning_progress', 0.0) * 100
+                    else:
+                        # Fallback: minimal progress based on having enough data to start learning
+                        min_data_for_learning = 1000
+                        asset_ml_progress = min(5.0, (asset_ticks / min_data_for_learning) * 5) if asset_ticks > 0 else 0.0
+                    
+                    learning_progress = max(learning_progress, asset_ml_progress)
                 elif hasattr(analyzer, 'learning_phase') and not analyzer.learning_phase:
                     learning_progress = 100.0  # Learning completed
                 else:

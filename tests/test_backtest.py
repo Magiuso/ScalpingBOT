@@ -1358,50 +1358,21 @@ class MLLearningTestSuite:
                 
                 processed_count += 1
 
-                # ✅ PROCESS ML TRAINING EVENTS ogni 1000 tick - DEBUG VERSION
+                # ✅ PROCESS ML TRAINING EVENTS ogni 1000 tick - SIMPLIFIED VERSION
                 if processed_count % 1000 == 0 and self.analyzer and hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
                     try:
-                        # DEBUG: Mostra stato analyzer
-                        if processed_count % 5000 == 0:  # Ogni 5000 tick
-                            safe_print(f"🔍 DEBUG ML: Processed {processed_count:,} ticks")
-                            
-                            # Controlla se analyzer ha eventi
-                            if hasattr(self.analyzer, 'asset_analyzers') and self.symbol in self.analyzer.asset_analyzers:
-                                asset_analyzer = self.analyzer.asset_analyzers[self.symbol]
-                                if hasattr(asset_analyzer, 'logger') and hasattr(asset_analyzer.logger, 'get_all_events_for_slave'):
-                                    events = asset_analyzer.logger.get_all_events_for_slave()
-                                    total_events = sum(len(event_list) for event_list in events.values() if event_list)
-                                    safe_print(f"   📊 ML Events available: {total_events}")
-                                    
-                                    if total_events > 0:
-                                        for event_type, event_list in events.items():
-                                            if event_list:
-                                                safe_print(f"     {event_type}: {len(event_list)} events")
-                                else:
-                                    safe_print(f"   ⚠️ Analyzer has no event system")
-                            else:
-                                safe_print(f"   ⚠️ No asset analyzer found for {self.symbol}")
-                        
-                        # Use integrated ML logger for event processing
-                        try:
-                            # Emit periodic processing event through integrated ML logger
-                            self.analyzer._emit_ml_event('diagnostic', {
-                                'event_type': 'periodic_progress',
-                                'ticks_processed': processed_count,
-                                'symbol': self.symbol,
-                                'timestamp': datetime.now().isoformat()
-                            })
-                        except Exception as emit_error:
-                            safe_print(f"   ⚠️ ML event emission error: {emit_error}")
-                        
+                        # Emit periodic processing event through integrated ML logger
+                        self.analyzer._emit_ml_event('diagnostic', {
+                            'event_type': 'periodic_progress',
+                            'ticks_processed': processed_count,
+                            'symbol': self.symbol,
+                            'timestamp': datetime.now().isoformat()
+                        })
                     except Exception as ml_error:
                         if processed_count % 5000 == 0:
                             safe_print(f"   ❌ ML processing error: {ml_error}")
                 
-                # Progress ogni 5000 tick
-                if i > 0 and i % 5000 == 0:
-                    progress = (i / len(batch_ticks)) * 100
-                    safe_print(f"   Progress: {progress:.1f}% ({processed_count:,}/{len(batch_ticks):,})")
+                # Skip tick processing progress - already shown in ML dashboard
                     
             except Exception as tick_error:
                 continue
