@@ -45,6 +45,55 @@ warnings.filterwarnings('ignore')
 
 # ================== INTELLIGENT LOGGING RATE LIMITER ==================
 
+class GradientLogAggregator:
+    """Aggregatore per i log di gradiente per evitare spam"""
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self):
+        if not self._initialized:
+            self.vanishing_counts = {}
+            self.zero_counts = {}
+            self.last_summary_time = time.time()
+            self.summary_interval = 5.0  # Stampa summary ogni 5 secondi
+            self._initialized = True
+    
+    def add_vanishing_gradient(self, param_name: str, grad_norm: float):
+        """Aggrega un gradiente vanishing invece di stamparlo subito"""
+        if param_name not in self.vanishing_counts:
+            self.vanishing_counts[param_name] = {'count': 0, 'min_norm': float('inf'), 'max_norm': 0}
+        
+        self.vanishing_counts[param_name]['count'] += 1
+        self.vanishing_counts[param_name]['min_norm'] = min(self.vanishing_counts[param_name]['min_norm'], grad_norm)
+        self.vanishing_counts[param_name]['max_norm'] = max(self.vanishing_counts[param_name]['max_norm'], grad_norm)
+        
+        # Stampa summary se è passato abbastanza tempo
+        current_time = time.time()
+        if current_time - self.last_summary_time > self.summary_interval:
+            self._print_summary()
+            self.last_summary_time = current_time
+    
+    def _print_summary(self):
+        """Stampa un summary aggregato dei gradienti vanishing"""
+        if not self.vanishing_counts:
+            return
+        
+        total_vanishing = sum(data['count'] for data in self.vanishing_counts.values())
+        weight_hh_count = sum(data['count'] for name, data in self.vanishing_counts.items() if 'weight_hh' in name)
+        
+        summary = (f"🔴 GRADIENT SUMMARY: {total_vanishing} vanishing gradients detected | "
+                  f"weight_hh: {weight_hh_count} | unique_params: {len(self.vanishing_counts)}")
+        
+        safe_print(f"[GRADIENT_DEBUG] {summary}")
+        
+        # Reset counters
+        self.vanishing_counts.clear()
+
 class LogRateLimiter:
     """Sistema globale di rate limiting per ridurre spam logging"""
     _instance = None
@@ -65,6 +114,7 @@ class LogRateLimiter:
                 'cache': 50,             # Cache operations ogni 50
                 'prediction': 200,       # Predictions ogni 200
                 'error': 5,              # Errori ripetuti ogni 5
+                'gradient_debug': 100,   # Gradient debug molto limitato
                 'general': 1             # Messaggi generali sempre
             }
             self._initialized = True
@@ -97,11 +147,28 @@ class LogRateLimiter:
             sorted_items = sorted(self.message_counts.items(), key=lambda x: x[1], reverse=True)
             self.message_counts = dict(sorted_items[:5000])
 
-# Istanza globale rate limiter
+# Istanze globali
 _rate_limiter = LogRateLimiter()
+_gradient_aggregator = GradientLogAggregator()
 
 def smart_print(message: str, category: str = 'general') -> None:
-    """Safe print con rate limiting intelligente"""
+    """Safe print con rate limiting intelligente e aggregazione gradients"""
+    
+    # Intercetta e aggrega messaggi di gradiente vanishing
+    if category == 'gradient_debug' and 'VANISHING GRADIENT' in message and 'ha gradiente quasi zero' in message:
+        # Estrai nome parametro e norma dal messaggio
+        import re
+        match = re.search(r'VANISHING GRADIENT: (\S+) ha gradiente quasi zero: ([0-9.e-]+)', message)
+        if match:
+            param_name, grad_norm_str = match.groups()
+            try:
+                grad_norm = float(grad_norm_str)
+                _gradient_aggregator.add_vanishing_gradient(param_name, grad_norm)
+                return  # Non stampare il messaggio individuale
+            except ValueError:
+                pass  # Se parsing fallisce, usa il metodo normale
+    
+    # Rate limiting normale per altri messaggi
     should_log, count = _rate_limiter.should_log(message, category)
     
     if should_log:
@@ -3339,20 +3406,61 @@ class AdvancedLSTM(nn.Module):
     def __init__(self, input_size: int, hidden_size: int, num_layers: int, output_size: int, dropout: float = 0.2):
         super(AdvancedLSTM, self).__init__()
         self.hidden_size = hidden_size
-        self.num_layers = num_layers
         self.expected_input_size = input_size  # Dimensione target preferita
         self.parent: Optional['AssetAnalyzer'] = None  # ✅ Inizializza parent reference per evitare errori
+        
+        # 🚀 FASE 2 - ARCHITECTURE CHANGES
+        self.architecture_fixes = {
+            'reduce_layers': True,
+            'layer_norm': True, 
+            'residual_connections': True,
+            'disable_bidirectional': False  # Opzionale
+        }
+        
+        # 🔧 FASE 2.1: REDUCE LSTM LAYERS (3→2 layers)
+        original_num_layers = num_layers
+        if self.architecture_fixes['reduce_layers'] and num_layers > 2:
+            self.num_layers = 2
+            self._log(f"🚀 ARCHITECTURE FIX: Reduced LSTM layers {original_num_layers}→{self.num_layers}", "architecture_fixes", "info")
+        else:
+            self.num_layers = num_layers
         
         # 🔧 NUOVO: Pool di adapter dinamici per diverse dimensioni
         self.input_adapters = nn.ModuleDict()  # Memorizza adapter per diverse dimensioni
         self.adapter_cache = {}  # Cache per evitare ricreazioni
         
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, 
-                           batch_first=True, dropout=dropout, bidirectional=True)
-        self.attention = nn.MultiheadAttention(hidden_size * 2, num_heads=8, dropout=dropout)
-        self.layer_norm = nn.LayerNorm(hidden_size * 2)
+        # 🔧 FASE 2.4: DISABLE BIDIRECTIONAL (opzionale)
+        bidirectional = not self.architecture_fixes['disable_bidirectional']
+        lstm_output_size = hidden_size * (2 if bidirectional else 1)
+        
+        if not bidirectional:
+            self._log("🚀 ARCHITECTURE FIX: Disabled bidirectional LSTM", "architecture_fixes", "info")
+        
+        self.lstm = nn.LSTM(input_size, hidden_size, self.num_layers, 
+                           batch_first=True, dropout=dropout, bidirectional=bidirectional)
+        
+        # 🔧 FASE 2.2: ADD LAYER NORMALIZATION dopo ogni LSTM layer
+        if self.architecture_fixes['layer_norm']:
+            self.lstm_layer_norms = nn.ModuleList([
+                nn.LayerNorm(lstm_output_size) for _ in range(self.num_layers)
+            ])
+            self._log(f"🚀 ARCHITECTURE FIX: Added {self.num_layers} LayerNorm modules after LSTM layers", "architecture_fixes", "info")
+        else:
+            self.lstm_layer_norms = None
+        
+        self.attention = nn.MultiheadAttention(lstm_output_size, num_heads=8, dropout=dropout)
+        self.layer_norm = nn.LayerNorm(lstm_output_size)
         self.dropout = nn.Dropout(dropout)
-        self.fc1 = nn.Linear(hidden_size * 2, hidden_size)
+        
+        # 🔧 FASE 2.3: RESIDUAL CONNECTIONS
+        if self.architecture_fixes['residual_connections']:
+            # Projection layers per residual connections se necessario
+            self.residual_projection = nn.Linear(input_size, lstm_output_size) if input_size != lstm_output_size else None
+            self._log("🚀 ARCHITECTURE FIX: Added residual connection support", "architecture_fixes", "info")
+        else:
+            self.residual_projection = None
+        
+        self.fc1 = nn.Linear(lstm_output_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, output_size)
         self.activation = nn.GELU()
         
@@ -3917,12 +4025,15 @@ class AdvancedLSTM(nn.Module):
             # Crea tensor corretto
             x = torch.zeros(batch_size, seq_len, self.expected_input_size, dtype=x.dtype, device=x.device)
         
-        # 🛡️ LSTM PROCESSING CON PROTEZIONE COMPLETA
+        # 🚀 FASE 2: LSTM PROCESSING CON NUOVE ARCHITETTURE
         try:
             # Controlla che x sia ancora valido
             if torch.isnan(x).any() or torch.isinf(x).any():
                 self._log("❌ Input LSTM contiene NaN/Inf - sanitizzando...", "tensor_validation", "warning")
                 x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
+            
+            # 🔧 FASE 2.3: Store original input per residual connections
+            original_input = x.clone() if self.architecture_fixes['residual_connections'] else None
             
             # LSTM forward
             lstm_out, lstm_hidden = self.lstm(x)
@@ -3941,6 +4052,46 @@ class AdvancedLSTM(nn.Module):
                 inf_count = torch.isinf(lstm_out).sum().item()
                 self._log(f"❌ LSTM output contiene {inf_count} Inf - sanitizzando...", "tensor_validation", "warning")
                 lstm_out = torch.nan_to_num(lstm_out, nan=0.0, posinf=1.0, neginf=-1.0)
+            
+            # 🚀 FASE 2.2: ADD LAYER NORMALIZATION dopo LSTM layers
+            if self.architecture_fixes['layer_norm'] and self.lstm_layer_norms:
+                try:
+                    # Applica layer norm all'ultimo layer LSTM
+                    lstm_out = self.lstm_layer_norms[-1](lstm_out)
+                    
+                    # Validazione post-layer-norm
+                    if torch.isnan(lstm_out).any() or torch.isinf(lstm_out).any():
+                        self._log("❌ LayerNorm LSTM output contiene NaN/Inf - sanitizzando...", "tensor_validation", "warning")
+                        lstm_out = torch.nan_to_num(lstm_out, nan=0.0, posinf=1.0, neginf=-1.0)
+                    
+                except Exception as ln_error:
+                    self._log(f"❌ Errore LayerNorm LSTM: {ln_error}", "tensor_validation", "warning")
+            
+            # 🚀 FASE 2.3: RESIDUAL CONNECTIONS
+            if self.architecture_fixes['residual_connections'] and original_input is not None:
+                try:
+                    # Project input se necessario per matching dimensions
+                    if self.residual_projection is not None:
+                        projected_input = self.residual_projection(original_input)
+                    else:
+                        # Se dimensioni compatibili, usa direttamente
+                        if original_input.shape[-1] == lstm_out.shape[-1]:
+                            projected_input = original_input
+                        else:
+                            projected_input = None
+                    
+                    # Aggiungi residual connection se possibile
+                    if projected_input is not None:
+                        lstm_out = lstm_out + projected_input
+                        self._log("✅ Applied residual connection", "architecture_fixes", "debug")
+                        
+                        # Validazione post-residual
+                        if torch.isnan(lstm_out).any() or torch.isinf(lstm_out).any():
+                            self._log("❌ Residual connection output contiene NaN/Inf - sanitizzando...", "tensor_validation", "warning")
+                            lstm_out = torch.nan_to_num(lstm_out, nan=0.0, posinf=1.0, neginf=-1.0)
+                    
+                except Exception as res_error:
+                    self._log(f"❌ Errore residual connection: {res_error}", "tensor_validation", "warning")
             
         except Exception as lstm_error:
             safe_print(f"❌ Errore LSTM: {lstm_error}")
@@ -4240,6 +4391,208 @@ class TransformerPredictor(nn.Module):
         x = x[-1]  # (batch, d_model)
         return self.output_layer(x)
 
+# ================== FASE 3: NUCLEAR OPTIONS ==================
+
+class AdvancedGRU(nn.Module):
+    """🚀 FASE 3.1: GRU alternativo per vanishing gradients - alternative to LSTM"""
+    
+    def __init__(self, input_size: int, hidden_size: int, num_layers: int, output_size: int, dropout: float = 0.2):
+        super(AdvancedGRU, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.expected_input_size = input_size
+        self.parent: Optional['AssetAnalyzer'] = None
+        
+        # 🔧 GRU ha meno parametri e meno problemi di vanishing gradients
+        self.gru = nn.GRU(input_size, hidden_size, num_layers, 
+                         batch_first=True, dropout=dropout, bidirectional=True)
+        
+        gru_output_size = hidden_size * 2  # Bidirectional
+        
+        self.attention = nn.MultiheadAttention(gru_output_size, num_heads=8, dropout=dropout)
+        self.layer_norm = nn.LayerNorm(gru_output_size)
+        self.dropout = nn.Dropout(dropout)
+        self.fc1 = nn.Linear(gru_output_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, output_size)
+        self.activation = nn.GELU()
+        
+        self._log("🚀 AdvancedGRU initialized as LSTM alternative", "nuclear_options", "info")
+    
+    def _log(self, message: str, category: str = "gru", severity: str = "info"):
+        """Helper per logging"""
+        smart_print(f"[{category}] {message}", category)
+    
+    def forward(self, x):
+        """Forward pass GRU - più semplice e stabile di LSTM"""
+        try:
+            # Input validation
+            if torch.isnan(x).any() or torch.isinf(x).any():
+                x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
+            
+            # GRU forward (simpler than LSTM, less vanishing gradients)
+            gru_out, gru_hidden = self.gru(x)
+            
+            # Validation
+            if torch.isnan(gru_out).any() or torch.isinf(gru_out).any():
+                gru_out = torch.nan_to_num(gru_out, nan=0.0, posinf=1.0, neginf=-1.0)
+            
+            # Attention
+            gru_out_t = gru_out.transpose(0, 1)
+            attn_out, _ = self.attention(gru_out_t, gru_out_t, gru_out_t)
+            attn_out = self.layer_norm(attn_out + gru_out_t)
+            attn_out = attn_out.transpose(0, 1)
+            
+            # Final layers
+            out = attn_out[:, -1, :]
+            out = self.dropout(out)
+            out = self.activation(self.fc1(out))
+            out = self.dropout(out)
+            out = self.fc2(out)
+            
+            # Final validation
+            if torch.isnan(out).any() or torch.isinf(out).any():
+                out = torch.nan_to_num(out, nan=0.0, posinf=1.0, neginf=-1.0)
+            
+            return torch.clamp(out, -100, 100)
+            
+        except Exception as e:
+            self._log(f"❌ GRU forward error: {e}", "nuclear_options", "error")
+            batch_size = x.shape[0] if len(x.shape) > 0 else 1
+            return torch.zeros(batch_size, self.fc2.out_features)
+
+
+class GradientMonitor:
+    """🚀 FASE 3.3: Real-time gradient monitoring system"""
+    
+    def __init__(self):
+        self.gradient_history = deque(maxlen=1000)
+        self.zero_gradient_alerts = []
+        self.vanishing_threshold = 1e-6
+        self.exploding_threshold = 100.0
+        
+    def monitor_gradients(self, model: nn.Module, step: int) -> Dict[str, Any]:
+        """Monitor gradients in real-time with aggregated logging"""
+        stats = {
+            'step': step,
+            'total_params': 0,
+            'zero_gradients': 0,
+            'vanishing_gradients': 0,
+            'exploding_gradients': 0,
+            'weight_hh_critical': 0,
+            'gradient_norms': {},
+            'health_score': 100.0
+        }
+        
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                stats['total_params'] += 1
+                grad_norm = param.grad.norm().item()
+                stats['gradient_norms'][name] = grad_norm
+                
+                # Check gradient health
+                if grad_norm < self.vanishing_threshold:
+                    if 'weight_hh' in name:
+                        stats['weight_hh_critical'] += 1
+                    stats['vanishing_gradients'] += 1
+                    
+                elif grad_norm == 0.0:
+                    stats['zero_gradients'] += 1
+                    
+                elif grad_norm > self.exploding_threshold:
+                    stats['exploding_gradients'] += 1
+        
+        # Calculate health score and ratios
+        if stats['total_params'] > 0:
+            zero_ratio = stats['zero_gradients'] / stats['total_params']
+            vanishing_ratio = stats['vanishing_gradients'] / stats['total_params']
+            
+            stats['zero_ratio_pct'] = zero_ratio * 100
+            stats['vanishing_ratio_pct'] = vanishing_ratio * 100
+            
+            # Health score penalty
+            stats['health_score'] -= (zero_ratio * 50)  # -50 points for zero gradients
+            stats['health_score'] -= (vanishing_ratio * 30)  # -30 points for vanishing
+            stats['health_score'] = max(0.0, stats['health_score'])
+        
+        self.gradient_history.append(stats)
+        
+        # Aggregate logging every 10 steps or on critical issues
+        if step % 10 == 0 or stats['weight_hh_critical'] > 0:
+            self._log_gradient_summary(stats, step)
+        
+        return stats
+    
+    def _log_gradient_summary(self, stats: Dict[str, Any], step: int):
+        """Log aggregated gradient statistics"""
+        zero_pct = stats.get('zero_ratio_pct', 0)
+        vanishing_pct = stats.get('vanishing_ratio_pct', 0)
+        health = stats.get('health_score', 0)
+        critical_hh = stats.get('weight_hh_critical', 0)
+        
+        status_emoji = "🟢" if health > 70 else "🟡" if health > 30 else "🔴"
+        
+        summary = (f"{status_emoji} GRADIENT HEALTH [Step {step}]: "
+                  f"Zero={zero_pct:.1f}% | Vanishing={vanishing_pct:.1f}% | "
+                  f"Critical_HH={critical_hh} | Health={health:.1f}%")
+        
+        should_log, count = _rate_limiter.should_log(summary, 'gradient_debug')
+        if should_log:
+            # Usa direttamente safe_print per evitare interferenze con aggregatore
+            safe_print(f"[GRADIENT_DEBUG] {summary}")
+    
+    def get_health_report(self) -> Dict[str, Any]:
+        """Generate comprehensive health report"""
+        if not self.gradient_history:
+            return {'status': 'no_data'}
+        
+        recent_stats = list(self.gradient_history)[-10:]  # Last 10 steps
+        
+        avg_zero_ratio = sum(s['zero_gradients'] / max(1, s['total_params']) for s in recent_stats) / len(recent_stats)
+        avg_health_score = sum(s['health_score'] for s in recent_stats) / len(recent_stats)
+        
+        return {
+            'status': 'healthy' if avg_health_score > 70 else 'critical' if avg_health_score < 30 else 'warning',
+            'avg_zero_gradient_ratio': avg_zero_ratio,
+            'avg_health_score': avg_health_score,
+            'recent_alerts': self.zero_gradient_alerts[-5:],  # Last 5 alerts
+            'total_steps_monitored': len(self.gradient_history)
+        }
+
+
+class CustomLossWithGradientPenalty(nn.Module):
+    """🚀 FASE 3.2: Custom loss con gradient penalty per weight_hh"""
+    
+    def __init__(self, base_criterion=None, gradient_penalty_weight=0.001):
+        super().__init__()
+        self.base_criterion = base_criterion or nn.MSELoss()
+        self.gradient_penalty_weight = gradient_penalty_weight
+        
+    def forward(self, outputs, targets, model=None):
+        # Standard loss
+        base_loss = self.base_criterion(outputs, targets)
+        
+        # Gradient penalty per weight_hh parameters
+        if model is not None:
+            gradient_penalty = 0.0
+            penalty_count = 0
+            
+            for name, param in model.named_parameters():
+                if 'weight_hh' in name and param.grad is not None:
+                    # Penalty per gradienti troppo piccoli
+                    grad_norm = param.grad.norm()
+                    if grad_norm < 1e-6:
+                        # Aggiungi penalty inversamente proporzionale alla norma
+                        gradient_penalty += 1.0 / (grad_norm + 1e-8)
+                        penalty_count += 1
+            
+            if penalty_count > 0:
+                gradient_penalty = gradient_penalty / penalty_count
+                total_loss = base_loss + self.gradient_penalty_weight * gradient_penalty
+                return total_loss
+        
+        return base_loss
+
+
 class CNNPatternRecognizer(nn.Module):
     """CNN 1D per riconoscimento pattern grafici"""
     def __init__(self, input_channels: int = 1, sequence_length: int = 100, num_patterns: int = 50):
@@ -4300,22 +4653,305 @@ class OptimizedLSTMTrainer:
         self.config = config or get_analyzer_config()  # 🔧 ADDED
         self.parent: Optional['AssetAnalyzer'] = None  # ✅ Inizializza parent reference
         
-        # 🔧 USA CONFIGURAZIONE per parametri training con weight decay per regolarizzazione
-        self.optimizer = torch.optim.Adam(
-            model.parameters(), 
-            lr=self.config.learning_rate,
-            weight_decay=1e-4  # 🔧 FIXED: Weight decay aggiunto per prevenire overfitting
-        )
+        # 🚀 FASE 1 - VANISHING GRADIENTS SOLUTIONS
+        self.vanishing_gradient_fixes = {
+            'selective_clipping': True,
+            'differential_lr': True,
+            'lstm_reinit': True,
+            'gradient_noise': True
+        }
+        
+        # 🔧 FASE 1.2: DIFFERENTIAL LEARNING RATES
+        # Separa weight_hh (hidden-to-hidden) da altri parametri
+        lstm_weight_hh_params = []
+        other_params = []
+        
+        for name, param in model.named_parameters():
+            if 'weight_hh' in name or ('lstm' in name.lower() and 'hh' in name):
+                lstm_weight_hh_params.append(param)
+                self._log(f"🎯 LSTM weight_hh parameter found: {name}", "gradient_fixes", "info")
+            else:
+                other_params.append(param)
+        
+        # 🔧 OPTIMIZER GROUPS con learning rate differenziate
+        if lstm_weight_hh_params:
+            self.optimizer = torch.optim.Adam([
+                {'params': lstm_weight_hh_params, 'lr': self.config.learning_rate * 10, 'weight_decay': 1e-5},  # 10x LR per weight_hh
+                {'params': other_params, 'lr': self.config.learning_rate, 'weight_decay': 1e-4}  # LR normale per altri
+            ])
+            self._log(f"✅ Differential LR: weight_hh={self.config.learning_rate * 10:.2e}, others={self.config.learning_rate:.2e}", 
+                     "gradient_fixes", "info")
+        else:
+            # Fallback se non trova weight_hh
+            self.optimizer = torch.optim.Adam(
+                model.parameters(), 
+                lr=self.config.learning_rate,
+                weight_decay=1e-4
+            )
+            self._log("⚠️ No weight_hh parameters found, using standard optimizer", "gradient_fixes", "warning")
+        
         self.max_grad_norm = self.config.max_grad_norm
         
         # Scheduler per learning rate adattivo
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, mode='min', factor=0.5, patience=self.config.training_patience // 2
         )
+        
+        # 🔧 FASE 1.3: LSTM RE-INITIALIZATION
+        self._apply_lstm_initialization()
+        
+        # 🚀 FASE 3: NUCLEAR OPTIONS INTEGRATION
+        self.nuclear_options = {
+            'gru_fallback': True,
+            'gradient_monitoring': True,
+            'custom_loss': True,
+            'auto_fallback': True
+        }
+        
+        # 🔧 FASE 3.3: Initialize gradient monitor
+        if self.nuclear_options['gradient_monitoring']:
+            self.gradient_monitor = GradientMonitor()
+            self.training_step_count = 0
+            self._log("✅ Gradient monitoring system initialized", "nuclear_options", "info")
+        
+        # 🔧 FASE 3.2: Initialize custom loss with gradient penalty
+        if self.nuclear_options['custom_loss']:
+            self.custom_loss = CustomLossWithGradientPenalty(
+                base_criterion=nn.MSELoss(),
+                gradient_penalty_weight=0.001
+            )
+            self._log("✅ Custom loss with gradient penalty initialized", "nuclear_options", "info")
+        
+        # 🔧 FASE 3.1: Initialize GRU fallback model
+        if self.nuclear_options['gru_fallback'] and hasattr(model, 'expected_input_size'):
+            try:
+                # Get model dimensions safely
+                if hasattr(model, 'expected_input_size'):
+                    input_size = model.expected_input_size
+                else:
+                    input_size = 10  # Default fallback
+                
+                if hasattr(model, 'hidden_size'):
+                    hidden_size = model.hidden_size
+                else:
+                    hidden_size = 64  # Default fallback
+                
+                if (hasattr(model, 'fc2') and 
+                    hasattr(model.fc2, 'out_features') and 
+                    isinstance(getattr(model.fc2, 'out_features', None), int)):
+                    output_size = getattr(model.fc2, 'out_features', 1)
+                else:
+                    output_size = 1  # Default fallback
+                
+                # Ensure all parameters are integers
+                safe_input_size = int(input_size) if isinstance(input_size, (int, float)) else 10
+                safe_hidden_size = int(hidden_size) if isinstance(hidden_size, (int, float)) else 64
+                safe_output_size = int(output_size) if isinstance(output_size, (int, float)) else 1
+                
+                self.gru_fallback = AdvancedGRU(
+                    input_size=safe_input_size,
+                    hidden_size=safe_hidden_size,
+                    num_layers=2,  # Reduced layers for GRU
+                    output_size=safe_output_size
+                )
+                self.gru_fallback_optimizer = torch.optim.Adam(
+                    self.gru_fallback.parameters(),
+                    lr=self.config.learning_rate * 5  # Higher LR for GRU
+                )
+                self.fallback_triggered = False
+                self._log("✅ GRU fallback model initialized", "nuclear_options", "info")
+            except Exception as e:
+                self._log(f"⚠️ GRU fallback initialization failed: {e}", "nuclear_options", "warning")
+                self.gru_fallback = None
     
     def _log(self, message: str, category: str = "training", severity: str = "info"):
         """Helper per logging che funziona con o senza parent"""
         smart_print(f"[{category}] {message}", category)
+    
+    def _apply_lstm_initialization(self):
+        """🔧 FASE 1.3: Applica re-inizializzazione specifica per LSTM contro vanishing gradients"""
+        if not self.vanishing_gradient_fixes['lstm_reinit']:
+            return
+        
+        init_count = 0
+        for name, module in self.model.named_modules():
+            if isinstance(module, nn.LSTM):
+                self._log(f"🔧 Re-initializing LSTM module: {name}", "gradient_fixes", "info")
+                
+                for param_name, param in module.named_parameters():
+                    if 'weight_hh' in param_name:
+                        # Orthogonal initialization per weight_hh (contro vanishing gradients)
+                        nn.init.orthogonal_(param.data)
+                        self._log(f"✅ Orthogonal init applied to {name}.{param_name}", "gradient_fixes", "debug")
+                        init_count += 1
+                        
+                    elif 'weight_ih' in param_name:
+                        # Xavier uniform per weight_ih (migliore gradiente flow)
+                        nn.init.xavier_uniform_(param.data)
+                        self._log(f"✅ Xavier uniform init applied to {name}.{param_name}", "gradient_fixes", "debug")
+                        init_count += 1
+                        
+                    elif 'bias' in param_name:
+                        # Constant 0.1 per bias (evita saturazione)
+                        nn.init.constant_(param.data, 0.1)
+                        self._log(f"✅ Constant 0.1 init applied to {name}.{param_name}", "gradient_fixes", "debug")
+                        init_count += 1
+        
+        if init_count > 0:
+            self._log(f"✅ LSTM initialization completed: {init_count} parameters re-initialized", "gradient_fixes", "info")
+        else:
+            self._log("⚠️ No LSTM modules found for re-initialization", "gradient_fixes", "warning")
+    
+    def train_step_with_fallback(self, inputs: torch.Tensor, targets: torch.Tensor) -> float:
+        """🚀 FASE 3.1: Train step con fallback automatico a GRU"""
+        
+        # Check if fallback is triggered
+        if (getattr(self, 'fallback_triggered', False) and 
+            hasattr(self, 'gru_fallback') and 
+            self.gru_fallback is not None):
+            
+            return self._train_step_gru_fallback(inputs, targets)
+        else:
+            return self.train_step(inputs, targets)
+    
+    def _train_step_gru_fallback(self, inputs: torch.Tensor, targets: torch.Tensor) -> float:
+        """GRU fallback training step"""
+        try:
+            self._log("🚀 Using GRU fallback model for training", "nuclear_options", "info")
+            
+            # Validate inputs
+            if torch.isnan(inputs).any() or torch.isinf(inputs).any():
+                inputs = torch.nan_to_num(inputs, nan=0.0, posinf=1.0, neginf=-1.0)
+            if torch.isnan(targets).any() or torch.isinf(targets).any():
+                targets = torch.nan_to_num(targets, nan=0.0, posinf=1.0, neginf=-1.0)
+            
+            # Forward pass with GRU - Check if gru_fallback exists and is not None
+            if self.gru_fallback is None:
+                raise RuntimeError("GRU fallback model is not initialized")
+                
+            self.gru_fallback.train()
+            
+            if self.gru_fallback_optimizer is None:
+                raise RuntimeError("GRU fallback optimizer is not initialized")
+                
+            self.gru_fallback_optimizer.zero_grad()
+            
+            outputs = self.gru_fallback(inputs)
+            
+            # Compute loss
+            if self.nuclear_options['custom_loss'] and hasattr(self, 'custom_loss'):
+                loss = self.custom_loss(outputs, targets, self.gru_fallback)
+            else:
+                criterion = nn.MSELoss()
+                loss = criterion(outputs, targets)
+            
+            # Backward pass
+            loss.backward()
+            
+            # Gradient clipping for GRU
+            torch.nn.utils.clip_grad_norm_(self.gru_fallback.parameters(), 1.0)
+            
+            # Optimizer step
+            self.gru_fallback_optimizer.step()
+            
+            return loss.item()
+            
+        except Exception as e:
+            self._log(f"❌ GRU fallback training error: {e}", "nuclear_options", "error")
+            # Fallback to original model
+            self.fallback_triggered = False
+            return self.train_step(inputs, targets)
+    
+    def get_training_diagnostics(self) -> Dict[str, Any]:
+        """🚀 FASE 3: Get comprehensive training diagnostics"""
+        diagnostics = {
+            'gradient_fixes_active': self.vanishing_gradient_fixes,
+            'architecture_fixes_active': getattr(self.model, 'architecture_fixes', {}),
+            'nuclear_options_active': self.nuclear_options,
+            'fallback_triggered': getattr(self, 'fallback_triggered', False),
+            'training_steps_completed': getattr(self, 'training_step_count', 0)
+        }
+        
+        # Add gradient health report if available
+        if hasattr(self, 'gradient_monitor'):
+            diagnostics['gradient_health'] = self.gradient_monitor.get_health_report()
+        
+        return diagnostics
+    
+    def configure_vanishing_gradient_fixes(self, 
+                                         selective_clipping: bool = True,
+                                         differential_lr: bool = True, 
+                                         lstm_reinit: bool = True,
+                                         gradient_noise: bool = True,
+                                         enable_architecture_fixes: bool = True,
+                                         enable_nuclear_options: bool = True) -> None:
+        """🚀 Configure all vanishing gradient fixes with feature flags"""
+        
+        # Update FASE 1 fixes
+        self.vanishing_gradient_fixes.update({
+            'selective_clipping': selective_clipping,
+            'differential_lr': differential_lr,
+            'lstm_reinit': lstm_reinit,
+            'gradient_noise': gradient_noise
+        })
+        
+        # Update FASE 2 architecture fixes
+        if (hasattr(self.model, 'architecture_fixes') and 
+            enable_architecture_fixes and
+            hasattr(self.model.architecture_fixes, 'update')):
+            arch_fixes = getattr(self.model, 'architecture_fixes', None)
+            if arch_fixes is not None and hasattr(arch_fixes, 'update'):
+                arch_fixes.update({
+                    'reduce_layers': True,
+                    'layer_norm': True,
+                    'residual_connections': True,
+                    'disable_bidirectional': False
+                })
+        
+        # Update FASE 3 nuclear options
+        if enable_nuclear_options:
+            self.nuclear_options.update({
+                'gru_fallback': True,
+                'gradient_monitoring': True,
+                'custom_loss': True,
+                'auto_fallback': True
+            })
+        
+        self._log(f"🚀 Vanishing gradient fixes configured: FASE1={self.vanishing_gradient_fixes}, "
+                 f"FASE2={enable_architecture_fixes}, FASE3={enable_nuclear_options}", 
+                 "gradient_fixes", "info")
+    
+    def test_gradient_health(self) -> Dict[str, Any]:
+        """🚀 Test current gradient health and provide recommendations"""
+        if not hasattr(self, 'gradient_monitor'):
+            return {'status': 'monitoring_not_available'}
+        
+        health_report = self.gradient_monitor.get_health_report()
+        
+        recommendations = []
+        if health_report['avg_zero_gradient_ratio'] > 0.15:
+            recommendations.append("CRITICAL: Zero gradient ratio > 15% - Enable gradient noise injection")
+        
+        if health_report['avg_health_score'] < 30:
+            recommendations.append("CRITICAL: Health score < 30 - Consider GRU fallback")
+        elif health_report['avg_health_score'] < 70:
+            recommendations.append("WARNING: Health score < 70 - Monitor closely")
+        
+        if len(self.gradient_monitor.zero_gradient_alerts) > 0:
+            recommendations.append("weight_hh vanishing gradients detected - Apply LSTM re-initialization")
+        
+        return {
+            **health_report,
+            'recommendations': recommendations,
+            'fixes_status': {
+                'selective_clipping': self.vanishing_gradient_fixes.get('selective_clipping', False),
+                'differential_lr': self.vanishing_gradient_fixes.get('differential_lr', False),
+                'lstm_reinit': self.vanishing_gradient_fixes.get('lstm_reinit', False),
+                'gradient_noise': self.vanishing_gradient_fixes.get('gradient_noise', False),
+                'gru_fallback_available': hasattr(self, 'gru_fallback') and self.gru_fallback is not None,
+                'fallback_triggered': getattr(self, 'fallback_triggered', False)
+            }
+        }
     
     def validate_data(self, data: torch.Tensor, name: str = "data") -> torch.Tensor:
         """Valida che i dati non contengano NaN o Inf"""
@@ -4629,38 +5265,69 @@ class OptimizedLSTMTrainer:
             self.optimizer.zero_grad()
             raise ValueError(f"Backward pass fallito: {backward_error}")
         
-        # 🛡️ GRADIENT CLIPPING CRITICO CON DEBUG VANISHING GRADIENTS
+        # 🚀 FASE 1.1: GRADIENT CLIPPING SELETTIVO + NOISE INJECTION
         try:
             # 🔧 DEBUG: Controlla gradienti zero (problema weight_hh LSTM)
             zero_grad_count = 0
             total_grad_count = 0
             min_grad_norm = float('inf')
             max_grad_norm = 0.0
+            weight_hh_fixed = 0
             
+            # 🚀 FASE 1.1: SELECTIVE CLIPPING + GRADIENT NOISE
             for name, param in self.model.named_parameters():
                 if param.grad is not None:
                     total_grad_count += 1
                     param_grad_norm = param.grad.norm().item()
                     
+                    # 🔧 SELECTIVE CLIPPING per weight_hh problematici
+                    if 'weight_hh' in name and self.vanishing_gradient_fixes['selective_clipping']:
+                        if param_grad_norm < 1e-6:  # Gradiente quasi zero
+                            self._log(f"🚀 FIXING vanishing gradient in {name}: {param_grad_norm:.2e}", 
+                                     category="gradient_fixes", severity="warning")
+                            
+                            # 🔧 GRADIENT NOISE INJECTION
+                            if self.vanishing_gradient_fixes['gradient_noise']:
+                                noise = torch.randn_like(param.grad) * 1e-6
+                                param.grad.data += noise
+                                weight_hh_fixed += 1
+                                self._log(f"✅ Added gradient noise to {name}", "gradient_fixes", "debug")
+                        
+                        # 🔧 SELECTIVE CLIPPING con valore più basso per weight_hh
+                        torch.nn.utils.clip_grad_norm_([param], max_norm=0.5)
+                        
                     if param_grad_norm < 1e-8:  # Praticamente zero
                         zero_grad_count += 1
-                        if 'weight_hh' in name or 'lstm' in name.lower():
-                            self._log(f"⚠️ VANISHING GRADIENT: {name} ha gradiente quasi zero: {param_grad_norm:.2e}", 
-                                     category="gradient_debug", severity="warning")
+                        # Aggregate vanishing gradients instead of logging each one
                     
-                    min_grad_norm = min(min_grad_norm, param_grad_norm)
-                    max_grad_norm = max(max_grad_norm, param_grad_norm)
+                    min_grad_norm = min(min_grad_norm, param.grad.norm().item())  # Re-calcola dopo modifiche
+                    max_grad_norm = max(max_grad_norm, param.grad.norm().item())
             
-            # 🔧 DEBUG: Log statistiche gradienti
+            # 🔧 AGGREGATED: Log statistiche gradienti in modo compatto
             if total_grad_count > 0:
                 zero_grad_ratio = zero_grad_count / total_grad_count
-                if zero_grad_ratio > 0.3:  # Più del 30% gradienti zero
-                    self._log(f"❌ PROBLEMA VANISHING GRADIENTS: {zero_grad_ratio:.1%} parametri hanno gradiente zero", 
-                             category="gradient_debug", severity="error")
                 
-                self._log(f"📊 Gradient stats: min={min_grad_norm:.2e}, max={max_grad_norm:.2e}, zero_ratio={zero_grad_ratio:.1%}", 
-                         category="gradient_debug", severity="info")
+                # Crea un log aggregato ogni 10 step oppure quando ci sono problemi critici
+                if hasattr(self, '_gradient_log_counter'):
+                    self._gradient_log_counter += 1
+                else:
+                    self._gradient_log_counter = 1
+                
+                should_log_detailed = (self._gradient_log_counter % 10 == 0) or (zero_grad_ratio > 0.20)
+                
+                if should_log_detailed:
+                    status_emoji = "🟢" if zero_grad_ratio < 0.10 else "🟡" if zero_grad_ratio < 0.20 else "🔴"
+                    
+                    summary = (f"{status_emoji} GRADIENT HEALTH: "
+                              f"zero={zero_grad_ratio:.1%} | range=[{min_grad_norm:.2e}, {max_grad_norm:.2e}] | "
+                              f"fixes={weight_hh_fixed} | total_params={total_grad_count}")
+                    
+                    should_log, count = _rate_limiter.should_log(summary, 'gradient_debug')
+                    if should_log:
+                        # Usa direttamente safe_print per evitare loop con smart_print
+                        safe_print(f"[GRADIENT_DEBUG] {summary}")
             
+            # 🔧 STANDARD CLIPPING per tutto il resto
             grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
             
             if torch.isnan(grad_norm) or torch.isinf(grad_norm):
@@ -4668,7 +5335,12 @@ class OptimizedLSTMTrainer:
                 raise ValueError("Gradient norm non valida")
             
             if grad_norm > self.max_grad_norm:
-                safe_print(f"⚠️ Gradienti clippati: norma {grad_norm:.4f} → {self.max_grad_norm}")
+                # Rate-limited clipping notification
+                clipping_msg = f"⚠️ Gradienti clippati: norma {grad_norm:.4f} → {self.max_grad_norm}"
+                should_log, count = _rate_limiter.should_log(clipping_msg, 'gradient_debug')
+                if should_log:
+                    # Usa direttamente safe_print per evitare loop con smart_print
+                    safe_print(f"[GRADIENT_DEBUG] {clipping_msg} (x{count})")
             
         except Exception as clipping_error:
             safe_print(f"❌ Errore durante gradient clipping: {clipping_error}")
@@ -4699,6 +5371,43 @@ class OptimizedLSTMTrainer:
         except Exception as optimizer_error:
             safe_print(f"❌ Errore nell'optimizer step: {optimizer_error}")
             raise ValueError(f"Optimizer step fallito: {optimizer_error}")
+        
+        # 🚀 FASE 3: NUCLEAR OPTIONS MONITORING & FALLBACK
+        try:
+            self.training_step_count += 1
+            
+            # 🔧 FASE 3.3: Real-time gradient monitoring
+            if self.nuclear_options['gradient_monitoring'] and hasattr(self, 'gradient_monitor'):
+                gradient_stats = self.gradient_monitor.monitor_gradients(self.model, self.training_step_count)
+                
+                # Check if we need to trigger fallback
+                if (self.nuclear_options['auto_fallback'] and 
+                    hasattr(self, 'gru_fallback') and 
+                    self.gru_fallback is not None and 
+                    not getattr(self, 'fallback_triggered', False)):
+                    
+                    # Trigger fallback if gradient health is critical
+                    if gradient_stats['health_score'] < 20:  # Critical threshold
+                        self._log(f"🚀 CRITICAL: Triggering GRU fallback! Health score: {gradient_stats['health_score']:.1f}", 
+                                 "nuclear_options", "error")
+                        self.fallback_triggered = True
+                        
+                        # Log the issue
+                        weight_hh_issues = len(gradient_stats['weight_hh_status'])
+                        zero_ratio = gradient_stats['zero_gradients'] / max(1, gradient_stats['total_params'])
+                        self._log(f"🚀 Fallback reason: weight_hh_issues={weight_hh_issues}, zero_ratio={zero_ratio:.1%}", 
+                                 "nuclear_options", "error")
+                
+                # Periodic health reporting
+                if self.training_step_count % 100 == 0:
+                    health_report = self.gradient_monitor.get_health_report()
+                    self._log(f"📊 Gradient Health Report: {health_report['status']} "
+                             f"(score: {health_report['avg_health_score']:.1f}, "
+                             f"zero_ratio: {health_report['avg_zero_gradient_ratio']:.1%})", 
+                             "gradient_monitor", "info")
+        
+        except Exception as monitoring_error:
+            self._log(f"❌ Monitoring error: {monitoring_error}", "nuclear_options", "warning")
         
         # 🛡️ FINAL VALIDATION
         final_loss = loss.item()
