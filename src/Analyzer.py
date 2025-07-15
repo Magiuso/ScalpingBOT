@@ -1045,6 +1045,20 @@ from utils.universal_encoding_fix import (
 # Inizializza encoding una sola volta
 init_universal_encoding(silent=False)
 
+# ================== UTILS ML MODULES IMPORTS ==================
+
+try:
+    from src.utils.adaptive_trainer import AdaptiveTrainer, TrainingConfig
+    from src.utils.data_preprocessing import AdvancedDataPreprocessor, PreprocessingConfig
+    from src.utils.optimized_lstm import OptimizedLSTM, LSTMConfig
+    from src.utils.training_monitor import TrainingMonitor, MonitorConfig
+    from src.utils.analyzer_ml_integration import EnhancedLSTMTrainer
+    UTILS_ML_AVAILABLE = True
+    safe_print("✅ Utils ML modules imported successfully")
+except ImportError as e:
+    UTILS_ML_AVAILABLE = False
+    safe_print(f"⚠️ Utils ML modules not available: {e}")
+
 # ================== ML TRAINING LOGGER IMPORTS ==================
 
 try:
@@ -6201,7 +6215,7 @@ class RollingWindowTrainer:
         if np.isnan(rsi).sum() > len(rsi) * 0.5:
             rsi = np.where(np.isnan(rsi), 50.0, rsi)
         
-        return {
+        result_data = {
             'prices': prices,
             'volumes': volumes,
             'timestamps': np.array(timestamps),
@@ -6211,6 +6225,42 @@ class RollingWindowTrainer:
             'sma_50': sma_50,
             'rsi': rsi
         }
+        
+        # Applica preprocessing avanzato se disponibile
+        if UTILS_ML_AVAILABLE:
+            try:
+                preprocessor_config = PreprocessingConfig(
+                    outlier_threshold=3.0,
+                    outlier_method='isolation_forest',
+                    normalization_method='auto',
+                    adaptive_windowing=True
+                )
+                
+                preprocessor = AdvancedDataPreprocessor(preprocessor_config)
+                
+                # Combina le features numeriche per il preprocessing
+                features_matrix = np.column_stack([
+                    prices, volumes, returns, log_returns, 
+                    np.nan_to_num(sma_20), np.nan_to_num(sma_50), np.nan_to_num(rsi)
+                ])
+                
+                # Applica preprocessing avanzato
+                processed_features = preprocessor.smart_normalize(features_matrix, 'training_features')
+                processed_features = preprocessor.detect_and_handle_outliers(processed_features)
+                
+                # Aggiungi le features processate ai dati
+                result_data['processed_features'] = processed_features
+                result_data['preprocessing_applied'] = True
+                
+                safe_print("✅ Advanced data preprocessing applied")
+                
+            except Exception as e:
+                safe_print(f"⚠️ Advanced preprocessing failed, using basic features: {e}")
+                result_data['preprocessing_applied'] = False
+        else:
+            result_data['preprocessing_applied'] = False
+        
+        return result_data
     
     def _calculate_sma(self, prices: np.ndarray, period: int) -> np.ndarray:
         """Calcola Simple Moving Average con gestione migliorata dei NaN"""
@@ -6308,6 +6358,24 @@ class RollingWindowTrainer:
         
         start_time = datetime.now()
         
+        # Inizializza training monitor se disponibile
+        training_monitor = None
+        if UTILS_ML_AVAILABLE:
+            try:
+                monitor_config = MonitorConfig(
+                    metrics_update_interval=1.0,
+                    memory_check_interval=5.0,
+                    health_check_interval=10.0,
+                    enable_plots=False  # Disabilita plotting per performance
+                )
+                training_monitor = TrainingMonitor(monitor_config)
+                # Initialize training monitoring
+                training_monitor.start_monitoring()
+                safe_print("✅ Training monitor initialized")
+            except Exception as e:
+                safe_print(f"⚠️ Training monitor initialization failed: {e}")
+                training_monitor = None
+        
         # Prepara dataset basato sul tipo di modello
         if model_type == ModelType.SUPPORT_RESISTANCE:
             X, y = self._prepare_sr_dataset(training_data)
@@ -6341,6 +6409,26 @@ class RollingWindowTrainer:
         key = f"{model_type.value}_{algorithm_name}"
         self.training_history[key].append(training_record)
         self.last_training_dates[f"unknown_{key}"] = datetime.now()
+        
+        # Finalizza training monitor se disponibile
+        if training_monitor is not None:
+            try:
+                final_metrics = {
+                    'final_loss': result.get('final_loss', 0),
+                    'improvement': result.get('improvement', 0),
+                    'duration_seconds': duration,
+                    'data_points': len(X)
+                }
+                training_monitor.log_training_step(
+                    step=result.get('epochs_completed', 0),
+                    loss=final_metrics['final_loss'],
+                    learning_rate=0.001,
+                    grad_norm=0.0
+                )
+                training_monitor.stop_monitoring()
+                safe_print("✅ Training monitor finalized")
+            except Exception as e:
+                safe_print(f"⚠️ Training monitor finalization failed: {e}")
         
         return result
     
@@ -6809,7 +6897,26 @@ class RollingWindowTrainer:
         
         # CREA TRAINER PROTETTO CON GESTIONE ERRORI
         try:
-            protected_trainer = OptimizedLSTMTrainer(model)
+            if UTILS_ML_AVAILABLE:
+                # Usa il nuovo EnhancedLSTMTrainer se disponibile
+                input_size = getattr(model, 'input_size', 64)  # Fallback value
+                hidden_size = getattr(model, 'hidden_size', 256)  # Fallback value
+                num_layers = getattr(model, 'num_layers', 3)  # Fallback value
+                output_size = getattr(model, 'output_size', 1)  # Fallback value
+                
+                protected_trainer = EnhancedLSTMTrainer(
+                    input_size=input_size,
+                    hidden_size=hidden_size,
+                    num_layers=num_layers,
+                    output_size=output_size,
+                    model_type="support_resistance",  # Default type
+                    optimization_profile="stable_training"
+                )
+                safe_print("✅ Using EnhancedLSTMTrainer")
+            else:
+                # Fallback al vecchio trainer
+                protected_trainer = OptimizedLSTMTrainer(model)
+                safe_print("⚠️ Using legacy OptimizedLSTMTrainer")
         except Exception as trainer_error:
             self._store_training_event('trainer_creation_failed', {
                 **training_info,
@@ -6852,8 +6959,18 @@ class RollingWindowTrainer:
                 epochs_in_batch = min(checkpoint_frequency, original_epochs - epoch_batch)
                 
                 try:
-                    # Training batch con protezione
-                    batch_result = protected_trainer.train_model_protected(X, y, epochs=epochs_in_batch)
+                    # Training batch con protezione - uso getattr per evitare errori statici
+                    if hasattr(protected_trainer, 'fit'):
+                        # EnhancedLSTMTrainer with fit method
+                        fit_method = getattr(protected_trainer, 'fit')
+                        batch_result = fit_method(X, y, epochs=epochs_in_batch)
+                    elif hasattr(protected_trainer, 'train_model_protected'):
+                        # OptimizedLSTMTrainer with train_model_protected method
+                        train_method = getattr(protected_trainer, 'train_model_protected')
+                        batch_result = train_method(X, y, epochs=epochs_in_batch)
+                    else:
+                        # Fallback error
+                        raise AttributeError(f"Trainer {type(protected_trainer).__name__} has no compatible training method")
                     
                     if batch_result['status'] != 'success':
                         break
@@ -8921,13 +9038,27 @@ class AssetAnalyzer:
         }
         
         for model_name, config in lstm_configs.items():
-            self.ml_models[model_name] = AdvancedLSTM(
-                input_size=config['input_size'],
-                hidden_size=config['hidden_size'],
-                num_layers=config['num_layers'],
-                output_size=config['output_size'],
-                dropout=config['dropout']
-            )
+            if UTILS_ML_AVAILABLE:
+                # Usa OptimizedLSTM se disponibile
+                lstm_config = LSTMConfig(
+                    input_size=config['input_size'],
+                    hidden_size=config['hidden_size'],
+                    num_layers=config['num_layers'],
+                    output_size=config['output_size'],
+                    dropout_rate=config['dropout']
+                )
+                self.ml_models[model_name] = OptimizedLSTM(lstm_config)
+                safe_print(f"✅ Using OptimizedLSTM for {model_name}")
+            else:
+                # Fallback al vecchio AdvancedLSTM
+                self.ml_models[model_name] = AdvancedLSTM(
+                    input_size=config['input_size'],
+                    hidden_size=config['hidden_size'],
+                    num_layers=config['num_layers'],
+                    output_size=config['output_size'],
+                    dropout=config['dropout']
+                )
+                safe_print(f"⚠️ Using legacy AdvancedLSTM for {model_name}")
         
         # Transformer models con configurazione
         transformer_configs = {
