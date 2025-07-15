@@ -185,14 +185,14 @@ class EventHook:
         try:
             target = self.target_object() if self.target_object else None
             if not target or not hasattr(target, self.method_name):
-                print(f"⚠️ Target object or method {self.method_name} not found")  # DEBUG
+                # print(f"⚠️ Target object or method {self.method_name} not found")  # 🔧 SPAM FIX: Rimosso debug print
                 return False
             
             self.original_method = getattr(target, self.method_name)
             
             # AGGIUNGI QUESTO CONTROLLO
             if self.original_method is None:
-                print(f"⚠️ Method {self.method_name} is None")  # DEBUG
+                # print(f"⚠️ Method {self.method_name} is None")  # 🔧 SPAM FIX: Rimosso debug print
                 return False
             
             # Create wrapper function
@@ -201,7 +201,7 @@ class EventHook:
                 
                 # AGGIUNGI QUESTO CONTROLLO
                 if self.original_method is None:
-                    print(f"❌ original_method is None in {self.method_name}")
+                    # print(f"❌ original_method is None in {self.method_name}")  # 🔧 SPAM FIX: Rimosso debug print
                     return None
                 
                 # Call original method
@@ -216,11 +216,11 @@ class EventHook:
             # Replace method
             setattr(target, self.method_name, hooked_method)
             self.is_active = True
-            print(f"✅ Hook installed on {target.__class__.__name__}.{self.method_name}")  # DEBUG
+            # print(f"✅ Hook installed on {target.__class__.__name__}.{self.method_name}")  # 🔧 SPAM FIX: Rimosso debug print
             return True
             
         except Exception as e:
-            print(f"❌ Failed to install hook on {self.method_name}: {e}")
+            # print(f"❌ Failed to install hook on {self.method_name}: {e}")  # 🔧 SPAM FIX: Rimosso debug print
             return False
     
     def uninstall(self) -> bool:
