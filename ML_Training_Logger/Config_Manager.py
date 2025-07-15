@@ -131,13 +131,16 @@ class EventFilterSettings:
     ])
     disabled_sources: List[str] = field(default_factory=list)
     
-    # Rate limiting per event type
+    # Rate limiting per event type - 🔧 SPAM FIX: Rate limits molto più aggressivi
     event_rate_limits: Dict[str, float] = field(default_factory=lambda: {
-        "learning_progress": 1.0,    # Max 1 ogni secondo
+        "learning_progress": 0.1,    # 🔧 SPAM FIX: Era 1.0 -> 10x meno frequente (1 ogni 10 sec)
         "champion_change": 0.0,      # No limit (eventi rari)
-        "model_training": 0.5,       # Max 1 ogni 2 secondi
-        "performance_metrics": 0.1,  # Max 1 ogni 10 secondi
-        "prediction_generated": 10.0 # Max 10 al secondo
+        "model_training": 0.05,      # 🔧 SPAM FIX: Era 0.5 -> 10x meno frequente (1 ogni 20 sec)
+        "performance_metrics": 0.01, # 🔧 SPAM FIX: Era 0.1 -> 10x meno frequente (1 ogni 100 sec)
+        "prediction_generated": 1.0, # 🔧 SPAM FIX: Era 10.0 -> 10x meno frequente (1 al secondo)
+        "overfitting_debug": 0.05,   # 🔧 NUOVO: Rate limit per debug overfitting (1 ogni 20 sec)
+        "tensor_validation": 0.01,   # 🔧 NUOVO: Rate limit per tensor validation (1 ogni 100 sec)
+        "gradient_debug": 0.02       # 🔧 NUOVO: Rate limit per gradient debug (1 ogni 50 sec)
     })
 
 
