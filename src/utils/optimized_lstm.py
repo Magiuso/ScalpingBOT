@@ -104,8 +104,10 @@ class LayerNormLSTMCell(nn.Module):
     def _initialize_weights(self):
         """Inizializzazione ottimizzata dei pesi"""
         # Xavier uniform per input e hidden transforms
-        nn.init.xavier_uniform_(self.input_transform.weight)
-        nn.init.xavier_uniform_(self.hidden_transform.weight)
+        if self.input_transform.weight.dim() >= 2:
+            nn.init.xavier_uniform_(self.input_transform.weight)
+        if self.hidden_transform.weight.dim() >= 2:
+            nn.init.xavier_uniform_(self.hidden_transform.weight)
         
         if self.bias:
             # Bias forget gate a 1 per combattere vanishing gradients
@@ -199,7 +201,8 @@ class MultiHeadAttention(nn.Module):
     def _initialize_weights(self):
         """Inizializzazione pesi attention"""
         for module in [self.query_proj, self.key_proj, self.value_proj, self.output_proj]:
-            nn.init.xavier_uniform_(module.weight)
+            if module.weight.dim() >= 2:
+                nn.init.xavier_uniform_(module.weight)
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
     
@@ -267,8 +270,15 @@ class HighwayNetwork(nn.Module):
         nn.init.constant_(self.carry_gate.bias, bias_init)
         
         # Initialize other weights
-        nn.init.xavier_uniform_(self.transform_gate.weight)
-        nn.init.xavier_uniform_(self.transform_layer.weight)
+        if self.transform_gate.weight.dim() >= 2:
+            nn.init.xavier_uniform_(self.transform_gate.weight)
+        else:
+            nn.init.normal_(self.transform_gate.weight, mean=0.0, std=0.01)
+        
+        if self.transform_layer.weight.dim() >= 2:
+            nn.init.xavier_uniform_(self.transform_layer.weight)
+        else:
+            nn.init.normal_(self.transform_layer.weight, mean=0.0, std=0.01)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -367,15 +377,16 @@ class OptimizedLSTM(nn.Module):
         
         for name, param in self.named_parameters():
             if 'weight' in name:
-                if self.config.weight_init_method == 'xavier_uniform':
-                    nn.init.xavier_uniform_(param)
-                elif self.config.weight_init_method == 'kaiming_normal':
-                    nn.init.kaiming_normal_(param)
-                elif self.config.weight_init_method == 'orthogonal':
-                    if param.dim() >= 2:
-                        nn.init.orthogonal_(param)
-                    else:
+                if param.dim() >= 2:  # Solo per tensori 2D o superiori
+                    if self.config.weight_init_method == 'xavier_uniform':
                         nn.init.xavier_uniform_(param)
+                    elif self.config.weight_init_method == 'kaiming_normal':
+                        nn.init.kaiming_normal_(param)
+                    elif self.config.weight_init_method == 'orthogonal':
+                        nn.init.orthogonal_(param)
+                else:
+                    # Per tensori 1D (bias), usa normal initialization
+                    nn.init.normal_(param, mean=0.0, std=0.01)
             
             elif 'bias' in name:
                 nn.init.constant_(param, self.config.bias_init_value)
@@ -383,7 +394,8 @@ class OptimizedLSTM(nn.Module):
         # Special initialization for output projection
         for module in self.output_projection:
             if isinstance(module, nn.Linear):
-                nn.init.xavier_uniform_(module.weight)
+                if module.weight.dim() >= 2:
+                    nn.init.xavier_uniform_(module.weight)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
     

@@ -63,12 +63,21 @@ class DataStabilityTracker:
         
     def update(self, data: np.ndarray):
         """Aggiorna le statistiche di stabilità"""
-        current_mean = np.mean(data)
-        current_std = np.std(data)
-        
-        self.history.append(data.copy())
-        self.mean_history.append(current_mean)
-        self.std_history.append(current_std)
+        try:
+            # Ensure data is flattened for statistical operations
+            flat_data = data.flatten() if data.ndim > 1 else data
+            current_mean = float(np.mean(flat_data))
+            current_std = float(np.std(flat_data))
+            
+            self.history.append(flat_data.copy())
+            self.mean_history.append(current_mean)
+            self.std_history.append(current_std)
+        except Exception as e:
+            # Fallback for problematic data
+            print(f"[WARNING] DataStabilityTracker.update failed: {e}, data shape: {data.shape}")
+            # Use basic fallback values
+            self.mean_history.append(0.0)
+            self.std_history.append(1.0)
     
     def detect_drift(self, threshold: float = 0.1) -> Dict[str, Any]:
         """Detecta drift nei dati"""
@@ -140,54 +149,80 @@ class AdvancedDataPreprocessor:
         Returns:
             np.ndarray: Dati normalizzati
         """
-        if data.size == 0:
-            return data
-        
-        # Inizializza tracker se necessario
-        if column_name not in self.stability_tracker:
-            self.stability_tracker[column_name] = DataStabilityTracker(self.config.stability_window)
-        
-        # Aggiorna tracker stabilità
-        self.stability_tracker[column_name].update(data)
-        
-        # Determina metodo di normalizzazione
-        if self.config.normalization_method == 'auto':
-            normalization_method = self._select_normalization_method(data)
-        else:
-            normalization_method = self.config.normalization_method
-        
-        # Cache key per scaler
-        scaler_key = f"{column_name}_{normalization_method}"
-        
-        # Riutilizza scaler se disponibile e stabile
-        if (self.config.cache_scalers and 
-            scaler_key in self.scalers and 
-            self._is_data_stable(column_name)):
+        try:
+            if data.size == 0:
+                return data
             
-            scaler = self.scalers[scaler_key]
-            normalized_data = scaler.transform(data.reshape(-1, 1)).flatten()
+            # Ensure data is properly shaped for preprocessing
+            if data.ndim > 2:
+                print(f"[WARNING] Advanced preprocessing: data has {data.ndim} dimensions, flattening for {column_name}")
+                data = data.flatten()
             
-        else:
-            # Crea nuovo scaler
-            scaler = self._create_scaler(normalization_method)
+            # Inizializza tracker se necessario
+            if column_name not in self.stability_tracker:
+                self.stability_tracker[column_name] = DataStabilityTracker(self.config.stability_window)
             
-            try:
-                normalized_data = scaler.fit_transform(data.reshape(-1, 1)).flatten()
+            # Aggiorna tracker stabilità
+            self.stability_tracker[column_name].update(data)
+        except Exception as e:
+            print(f"[WARNING] Advanced preprocessing failed, using basic features: {e}")
+            # Return basic normalized data as fallback
+            if data.size == 0:
+                return data
+            data_flat = data.flatten() if data.ndim > 1 else data
+            if np.std(data_flat) > 0:
+                return (data_flat - np.mean(data_flat)) / np.std(data_flat)
+            else:
+                return np.zeros_like(data_flat)
+        
+        try:
+            # Determina metodo di normalizzazione
+            if self.config.normalization_method == 'auto':
+                normalization_method = self._select_normalization_method(data)
+            else:
+                normalization_method = self.config.normalization_method
+            
+            # Cache key per scaler
+            scaler_key = f"{column_name}_{normalization_method}"
+            
+            # Riutilizza scaler se disponibile e stabile
+            if (self.config.cache_scalers and 
+                scaler_key in self.scalers and 
+                self._is_data_stable(column_name)):
                 
-                # Cache scaler se configurato
-                if self.config.cache_scalers:
-                    self.scalers[scaler_key] = scaler
+                scaler = self.scalers[scaler_key]
+                normalized_data = scaler.transform(data.reshape(-1, 1)).flatten()
+                
+            else:
+                # Crea nuovo scaler
+                scaler = self._create_scaler(normalization_method)
+                
+                try:
+                    normalized_data = scaler.fit_transform(data.reshape(-1, 1)).flatten()
                     
-            except Exception as e:
-                self.logger.warning(f"Normalization fallback for {column_name}: {e}")
-                # Fallback a robust scaler
-                scaler = RobustScaler()
-                normalized_data = scaler.fit_transform(data.reshape(-1, 1)).flatten()
-        
-        # Salva statistiche
-        self._update_preprocessing_stats(column_name, data, normalized_data, normalization_method)
-        
-        return normalized_data
+                    # Cache scaler se configurato
+                    if self.config.cache_scalers:
+                        self.scalers[scaler_key] = scaler
+                        
+                except Exception as e:
+                    self.logger.warning(f"Normalization fallback for {column_name}: {e}")
+                    # Fallback a robust scaler
+                    scaler = RobustScaler()
+                    normalized_data = scaler.fit_transform(data.reshape(-1, 1)).flatten()
+            
+            # Salva statistiche
+            self._update_preprocessing_stats(column_name, data, normalized_data, normalization_method)
+            
+            return normalized_data
+            
+        except Exception as e:
+            print(f"[WARNING] Advanced preprocessing failed, using basic features: {e}")
+            # Ultimate fallback: basic z-score normalization
+            data_flat = data.flatten() if data.ndim > 1 else data
+            if len(data_flat) > 0 and np.std(data_flat) > 0:
+                return (data_flat - np.mean(data_flat)) / np.std(data_flat)
+            else:
+                return np.zeros_like(data_flat) if len(data_flat) > 0 else data
     
     def _select_normalization_method(self, data: np.ndarray) -> str:
         """Seleziona automaticamente il metodo di normalizzazione ottimale"""
@@ -214,28 +249,52 @@ class AdvancedDataPreprocessor:
     def _calculate_skewness(self, data: np.ndarray) -> float:
         """Calcola skewness della distribuzione"""
         try:
+            # Ensure data is 1D for skewness calculation
+            flat_data = data.flatten() if data.ndim > 1 else data
+            
             from scipy import stats
-            skew_value = stats.skew(data)
+            skew_value = stats.skew(flat_data)
             return float(skew_value)
         except ImportError:
             # Fallback manual calculation
-            mean = np.mean(data)
-            std = np.std(data)
+            flat_data = data.flatten() if data.ndim > 1 else data
+            mean = float(np.mean(flat_data))
+            std = float(np.std(flat_data))
             if std == 0:
                 return 0.0
             
-            n = len(data)
-            skewness = (n / ((n-1) * (n-2))) * np.sum(((data - mean) / std) ** 3)
-            return float(skew_value)
+            n = len(flat_data)
+            if n < 3:
+                return 0.0  # Need at least 3 points for skewness
+            
+            skewness = (n / ((n-1) * (n-2))) * np.sum(((flat_data - mean) / std) ** 3)
+            return float(skewness)
+        except Exception as e:
+            # Ultimate fallback
+            print(f"[WARNING] Skewness calculation failed: {e}, data shape: {data.shape}")
+            return 0.0
     
     def _estimate_outlier_ratio(self, data: np.ndarray, threshold: float = 3.0) -> float:
         """Stima la percentuale di outliers usando Z-score"""
-        if len(data) < 10:
-            return 0.0
-        
-        z_scores = np.abs((data - np.mean(data)) / (np.std(data) + 1e-8))
-        outliers = int(np.sum(z_scores > threshold))
-        return outliers / len(data)
+        try:
+            # Ensure data is 1D for outlier calculation
+            flat_data = data.flatten() if data.ndim > 1 else data
+            
+            if len(flat_data) < 10:
+                return 0.0
+            
+            mean_val = float(np.mean(flat_data))
+            std_val = float(np.std(flat_data))
+            
+            if std_val == 0:
+                return 0.0
+            
+            z_scores = np.abs((flat_data - mean_val) / (std_val + 1e-8))
+            outliers = int(np.sum(z_scores > threshold))
+            return outliers / len(flat_data)
+        except Exception as e:
+            print(f"[WARNING] Outlier ratio calculation failed: {e}, data shape: {data.shape}")
+            return 0.1  # Default conservative estimate
     
     def _create_scaler(self, method: str) -> Any:
         """Crea scaler basato sul metodo specificato"""

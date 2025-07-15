@@ -8012,13 +8012,14 @@ class AlgorithmCompetition:
             touches = 0
             respects = 0
             
-            for i, price in enumerate(price_history[-20:]):  # Ultimi 20 tick
+            recent_prices = price_history[-20:]  # Ultimi 20 tick
+            for i, price in enumerate(recent_prices):
                 if abs(price - level) <= level_tolerance:
                     touches += 1
                     
-                    # Controlla se il livello ha tenuto
-                    if i < len(price_history) - 21:
-                        next_price = price_history[-20:][i + 1]
+                    # Controlla se il livello ha tenuto (se c'è un tick successivo)
+                    if i < len(recent_prices) - 1:  # Verifica che non sia l'ultimo elemento
+                        next_price = recent_prices[i + 1]
                         if level_type == 'support' and next_price > level:
                             respects += 1
                         elif level_type == 'resistance' and next_price < level:
