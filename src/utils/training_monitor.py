@@ -592,9 +592,30 @@ class TrainingMonitor:
         # Calculate health score
         health_info = self.health_scorer.calculate_health_score(self.metrics_collector)
         
-        # Log health status
+        # 🔧 RATE LIMITING per Health Score: log solo se cambiato o ogni 5 minuti
+        current_score = health_info['overall_score']
+        current_time = time.time()
+        
+        # Log health status con rate limiting intelligente
         if self.config.enable_detailed_logging:
-            self.logger.info(f"Health Score: {health_info['overall_score']:.1f} ({health_info['health_status']})")
+            should_log = False
+            
+            # Log se score cambiato di più di 5 punti
+            if not hasattr(self, '_last_health_score'):
+                self._last_health_score = current_score
+                self._last_health_log_time = current_time
+                should_log = True
+            elif abs(current_score - self._last_health_score) >= 5.0:
+                should_log = True
+                self._last_health_score = current_score
+                self._last_health_log_time = current_time
+            # Oppure ogni 5 minuti (300 secondi)
+            elif current_time - self._last_health_log_time >= 300:
+                should_log = True
+                self._last_health_log_time = current_time
+            
+            if should_log:
+                self.logger.info(f"Health Score: {health_info['overall_score']:.1f} ({health_info['health_status']})")
         
         # Trigger alerts for anomalies
         for anomaly in anomalies:
