@@ -194,13 +194,15 @@ def test_sr_target_generation():
     return not is_degenerate
 
 def test_actual_analyzer():
-    """Test the actual Analyzer implementation"""
-    print('\n🔍 Testing actual Analyzer implementation...')
+    """Test the actual Analyzer implementation with REAL DATA"""
+    print('\n🔍 Testing actual Analyzer implementation with REAL DATA...')
     
     try:
         # Import con percorso completo per risolvere i problemi dell'IDE
         from src.Analyzer import AdvancedMarketAnalyzer as Analyzer
         from src.Unified_Analyzer_System import UnifiedConfig, SystemMode, PerformanceProfile
+        import os
+        import json
         
         # Create test config
         config = UnifiedConfig.for_backtesting("USTEC")
@@ -213,21 +215,67 @@ def test_actual_analyzer():
         # Initialize analyzer
         analyzer = Analyzer("./test_analyzer_data")
         
-        # Generate realistic test data
-        np.random.seed(42)
-        n_samples = 500
-        base_price = 21400
+        # Carica dati reali dal file di backtesting
+        data_file = "./test_analyzer_data/backtest_USTEC_20250516_20250715.jsonl"
+        if not os.path.exists(data_file):
+            raise FileNotFoundError(f"❌ Real backtest data file not found: {data_file}")
         
-        # Create price data with realistic volatility
-        returns = np.random.normal(0, 0.001, n_samples)
-        log_prices = np.cumsum(returns)
-        prices = base_price * np.exp(log_prices)
+        print(f"📊 Loading REAL data from: {data_file}")
         
-        # Generate other required data
-        volumes = np.random.exponential(1000, n_samples)
+        # Leggi i dati reali - struttura completa (limitato per test performance)
+        real_data = []
+        tick_count = 0
+        max_ticks = 10000  # Limita per test performance
+        
+        with open(data_file, 'r') as f:
+            for line in f:
+                try:
+                    data = json.loads(line.strip())
+                    real_data.append(data)
+                    if data.get('type') == 'tick':
+                        tick_count += 1
+                        if tick_count >= max_ticks:
+                            break
+                except:
+                    continue
+        
+        print(f"📊 Loaded {len(real_data)} real data entries")
+        
+        if len(real_data) < 100:
+            raise ValueError(f"❌ Not enough real data ({len(real_data)} samples). Need at least 100 samples for valid test.")
+        
+        # Estrai prezzi e volumi dai dati reali
+        prices = []
+        volumes = []
+        
+        for entry in real_data:
+            try:
+                # Filtra solo i tick (ignora metadati)
+                if entry.get('type') == 'tick':
+                    # Struttura: {"type": "tick", "bid": 21389.2, "ask": 21390.15, "volume": 0, ...}
+                    bid = entry.get('bid')
+                    ask = entry.get('ask')
+                    volume = entry.get('volume', 1)
+                    
+                    if bid is not None and ask is not None and bid > 0 and ask > 0:
+                        price = (bid + ask) / 2  # Mid price
+                        prices.append(float(price))
+                        volumes.append(float(max(volume, 1)))  # Evita volume 0
+                    
+            except Exception as e:
+                continue
+        
+        if len(prices) < 100:
+            raise ValueError(f"❌ Not enough valid price data ({len(prices)} samples). Need at least 100 samples for valid test.")
+        
+        # Converti in numpy arrays
+        prices = np.array(prices)
+        volumes = np.array(volumes)
+        
+        # Calcola indicatori tecnici dai dati reali
         sma_20 = np.convolve(prices, np.ones(20)/20, mode='same')
         
-        # Simple RSI
+        # RSI sui dati reali
         price_changes = np.diff(prices, prepend=prices[0])
         gains = np.where(price_changes > 0, price_changes, 0)
         losses = np.where(price_changes < 0, -price_changes, 0)
@@ -243,10 +291,11 @@ def test_actual_analyzer():
             'rsi': rsi
         }
         
-        print(f'📊 Generated test data:')
+        print(f'📊 Loaded REAL data:')
         print(f'   Samples: {len(prices)}')
         print(f'   Price range: {np.min(prices):.2f} - {np.max(prices):.2f}')
         print(f'   Price volatility: {np.std(prices):.2f}')
+        print(f'   Volume range: {np.min(volumes):.2f} - {np.max(volumes):.2f}')
         
         # Test the actual method through AdvancedMarketAnalyzer
         print('\n🔧 Testing actual _prepare_sr_dataset...')
@@ -265,7 +314,7 @@ def test_actual_analyzer():
         print(f'   y shape: {y.shape}')
         
         if len(y) > 0:
-            print(f'\n📊 Real Implementation Target Analysis:')
+            print(f'\n📊 Real Implementation S/R Analysis (REAL DATA):')
             
             support_targets = y[:, 0]
             resistance_targets = y[:, 1]
@@ -282,20 +331,32 @@ def test_actual_analyzer():
             all_zeros = np.all(y == 0)
             support_std = np.std(support_targets)
             resistance_std = np.std(resistance_targets)
+            support_unique = len(np.unique(support_targets))
+            resistance_unique = len(np.unique(resistance_targets))
             
             print(f'\n🚨 Degeneration Check:')
             print(f'   All zeros: {all_zeros}')
-            print(f'   Support std: {support_std:.8f}')
-            print(f'   Resistance std: {resistance_std:.8f}')
+            print(f'   Support std: {support_std:.8f} (threshold: 1e-6)')
+            print(f'   Resistance std: {resistance_std:.8f} (threshold: 1e-6)')
+            print(f'   Support unique: {support_unique} (threshold: 5)')
+            print(f'   Resistance unique: {resistance_unique} (threshold: 5)')
             
-            if all_zeros:
-                print('❌ CRITICAL: All targets are zero in real implementation!')
-                return False
-            elif support_std < 1e-6 and resistance_std < 1e-6:
-                print('⚠️ WARNING: Very low variance in real implementation')
+            # More comprehensive degeneration check
+            is_degenerate = (all_zeros or 
+                           (support_std < 1e-6 and resistance_std < 1e-6) or
+                           (support_unique < 5 and resistance_unique < 5))
+            
+            if is_degenerate:
+                print('❌ FAIL: Real implementation shows degeneration with REAL DATA!')
+                if all_zeros:
+                    print('   Reason: All targets are zero')
+                elif support_std < 1e-6 and resistance_std < 1e-6:
+                    print('   Reason: Very low variance in both support and resistance')
+                else:
+                    print('   Reason: Too few unique values in targets')
                 return False
             else:
-                print('✅ SUCCESS: Real implementation generates valid targets')
+                print('✅ SUCCESS: Real implementation generates valid S/R targets from REAL DATA')
                 return True
         else:
             print('❌ No samples generated by real implementation')
