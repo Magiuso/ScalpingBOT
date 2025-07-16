@@ -9765,15 +9765,18 @@ class AssetAnalyzer:
             prices = training_data['prices']
             # Training data ready for processing
         else:
-            # No prices in training data\n            return
+            # No prices in training data
+            retraining_info['error'] = 'no_prices_in_training_data'
+            self._store_retraining_event('no_prices_in_training_data', retraining_info)
+            return
         
-            # Ottieni il modello
-            if algorithm_name not in self.ml_models:
-                retraining_info['error'] = 'model_not_found'
-                self._store_retraining_event('model_not_found', retraining_info)
-                return
-            
-            model = self.ml_models[algorithm_name]
+        # Ottieni il modello
+        if algorithm_name not in self.ml_models:
+            retraining_info['error'] = 'model_not_found'
+            self._store_retraining_event('model_not_found', retraining_info)
+            return
+        
+        model = self.ml_models[algorithm_name]
         
         try:
             # Train con preservazione dei pesi se il modello stava performando decentemente
