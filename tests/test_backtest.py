@@ -382,7 +382,7 @@ class MLLearningTestSuite:
         
         # Test config
         self.symbol = 'USTEC'
-        self.learning_days = 60  # Tempo di apprendimento in giorni
+        self.learning_days = 60 # Tempo di apprendimento in giorni
 
         self.stop_requested = False
         self.monitoring_active = False

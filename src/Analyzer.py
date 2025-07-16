@@ -7291,24 +7291,65 @@ class PostErrorReanalyzer:
         self.logger = logger
         self.error_patterns_db: Dict[str, List[Dict]] = defaultdict(list)
         self.lessons_learned: Dict[str, Dict[str, Any]] = {}
-        self.reanalysis_queue: deque = deque(maxlen=1000)
+        # 🚨 CIRCUIT BREAKER: Ridotto da 1000 a 50 per prevenire loop infiniti
+        self.reanalysis_queue: deque = deque(maxlen=50)
+        # Tracker per algoritmi permanentemente disabilitati
+        self.permanently_disabled_algorithms: Set[str] = set()
         
     def add_to_reanalysis_queue(self, failed_prediction: Prediction, 
                               actual_outcome: Dict[str, Any],
                               market_data_snapshot: Dict[str, Any]):
-        """Aggiunge una predizione fallita alla coda di rianalisi"""
+        """Aggiunge una predizione fallita alla coda di rianalisi - CON CIRCUIT BREAKER"""
+        
+        algorithm_key = f"{failed_prediction.model_type.value}_{failed_prediction.algorithm_name}"
+        
+        # 🚨 CHECK SE ALGORITMO È GIÀ DISABILITATO PERMANENTEMENTE
+        if algorithm_key in self.permanently_disabled_algorithms:
+            safe_print(f"⚠️ {failed_prediction.algorithm_name} is permanently disabled - ignoring error")
+            return
+        
         self.reanalysis_queue.append({
             'prediction': failed_prediction,
             'actual_outcome': actual_outcome,
             'market_data': market_data_snapshot,
             'added_timestamp': datetime.now()
         })
+        
+        # 🔥 CIRCUIT BREAKER LOGIC: Conta errori consecutivi
+        recent_errors = [
+            item for item in self.reanalysis_queue
+            if (item['prediction'].model_type == failed_prediction.model_type and 
+                item['prediction'].algorithm_name == failed_prediction.algorithm_name)
+        ]
+        
+        # Se più del 90% della queue è lo stesso algoritmo = DISABLE PERMANENTEMENTE
+        if len(recent_errors) > 45:  # 90% di 50
+            self.permanently_disabled_algorithms.add(algorithm_key)
+            safe_print(f"🚨 PERMANENT DISABLE: {failed_prediction.algorithm_name} - too many consecutive failures")
+            
+            # Aggiorna lessons learned con disable permanente
+            self.lessons_learned[algorithm_key] = {
+                'timestamp': datetime.now(),
+                'errors_analyzed': len(recent_errors),
+                'status': 'PERMANENTLY_DISABLED',
+                'reason': 'excessive_failure_rate',
+                'disable_threshold_reached': True
+            }
     
     def perform_reanalysis(self, asset: str, model_type: ModelType, 
                          algorithm_name: str) -> Dict[str, Any]:
-        """Esegue rianalisi sugli errori recenti"""
+        """Esegue rianalisi sugli errori recenti - CON CIRCUIT BREAKER CHECK"""
         
         key = f"{asset}_{model_type.value}_{algorithm_name}"
+        
+        # 🚨 CHECK SE ALGORITMO È DISABILITATO PERMANENTEMENTE
+        if key in self.permanently_disabled_algorithms:
+            return {
+                'status': 'permanently_disabled',
+                'errors_analyzed': 0,
+                'reason': 'Algorithm disabled due to excessive failures'
+            }
+        
         relevant_errors = [
             item for item in self.reanalysis_queue
             if (item['prediction'].model_type == model_type and 
@@ -7549,39 +7590,86 @@ class PostErrorReanalyzer:
     
     def apply_lessons_to_prediction(self, prediction: Prediction, 
                                   market_conditions: Dict[str, Any]) -> Dict[str, Any]:
-        """Applica le lezioni apprese a una nuova predizione"""
+        """Applica le lezioni apprese a una nuova predizione - IMPLEMENTAZIONE COMPLETA"""
         
         key = f"{prediction.model_type.value}_{prediction.algorithm_name}"
         lessons = self.lessons_learned.get(key)
         
         if not lessons:
-            return {'adjusted': False, 'confidence_multiplier': 1.0}
+            return {'adjusted': False, 'confidence_multiplier': 1.0, 'should_skip': False}
         
         confidence_multiplier = 1.0
         adjustments = []
+        should_skip = False
+        
+        # 🚨 CIRCUIT BREAKER: Se troppi errori recenti, SKIPPA l'algoritmo
+        if lessons.get('errors_analyzed', 0) > 50:
+            total_patterns = lessons.get('patterns_found', {})
+            if isinstance(total_patterns, dict):
+                high_severity_patterns = sum(1 for p in total_patterns.get('patterns', []) 
+                                           if p.get('severity') == 'high')
+            else:
+                high_severity_patterns = total_patterns
+            
+            if high_severity_patterns > 3:
+                should_skip = True
+                adjustments.append('circuit_breaker_triggered')
+                safe_print(f"🚨 CIRCUIT BREAKER: Skipping {prediction.algorithm_name} - too many high severity patterns")
         
         # Applica aggiustamenti basati sulle lezioni
         for lesson in lessons.get('lessons', []):
             if lesson['type'] == 'temporal_adjustment':
                 # Aggiusta per ora del giorno
                 current_hour = prediction.timestamp.hour
-                # Implementa logica specifica...
+                problematic_hours = lesson.get('problematic_hours', [])
+                if current_hour in problematic_hours:
+                    confidence_multiplier *= 0.5
+                    adjustments.append(f'temporal_adjustment_hour_{current_hour}')
                 
             elif lesson['type'] == 'bias_correction':
                 # Applica correzione bias
-                # Implementa logica specifica...
-                pass
+                bias_factor = lesson.get('bias_factor', 0)
+                if abs(bias_factor) > 0.1:
+                    confidence_multiplier *= (1.0 - abs(bias_factor))
+                    adjustments.append(f'bias_correction_{bias_factor:.2f}')
             
             elif lesson['type'] == 'condition_awareness':
-                # Controlla condizioni di mercato
-                if market_conditions.get('volatility', 0) > 0.02:
-                    confidence_multiplier *= 0.8
-                    adjustments.append('high_volatility_adjustment')
+                # Controlla condizioni di mercato problematiche
+                current_volatility = market_conditions.get('volatility', 0)
+                problematic_volatility = lesson.get('problematic_volatility_threshold', 0.02)
+                
+                if current_volatility > problematic_volatility:
+                    confidence_multiplier *= 0.3  # Riduce drasticamente la confidence
+                    adjustments.append('high_volatility_penalty')
+                    
+            elif lesson['type'] == 'systematic_failure':
+                # Se c'è un fallimento sistematico, skippa completamente
+                failure_rate = lesson.get('failure_rate', 0)
+                if failure_rate > 0.8:  # >80% failure rate
+                    should_skip = True
+                    adjustments.append('systematic_failure_skip')
+        
+        # 🔥 ADAPTIVE CONFIDENCE REDUCTION basata sui pattern
+        patterns = lessons.get('patterns_found', {})
+        if isinstance(patterns, dict) and 'patterns' in patterns:
+            for pattern in patterns['patterns']:
+                if pattern.get('type') == 'systematic_bias':
+                    confidence_multiplier *= 0.6
+                    adjustments.append('systematic_bias_penalty')
+                elif pattern.get('type') == 'market_condition' and pattern.get('severity') == 'high':
+                    confidence_multiplier *= 0.4
+                    adjustments.append('market_condition_penalty')
+        
+        # 🛡️ MINIMUM CONFIDENCE THRESHOLD
+        if confidence_multiplier < 0.1:
+            should_skip = True
+            adjustments.append('minimum_confidence_threshold')
         
         return {
             'adjusted': len(adjustments) > 0,
             'confidence_multiplier': confidence_multiplier,
-            'adjustments_applied': adjustments
+            'adjustments_applied': adjustments,
+            'should_skip': should_skip
         }
         
 # ================== ALGORITHM COMPETITION SYSTEM ==================
@@ -7672,7 +7760,7 @@ class AlgorithmCompetition:
             })
             return "REJECTED_EMERGENCY_STOP"
         
-        # Applica lezioni apprese se disponibili
+        # 🚨 APPLICA LEZIONI APPRESE - IMPLEMENTAZIONE COMPLETA
         lessons_adjustment = self.reanalyzer.apply_lessons_to_prediction(
             Prediction(
                 id="temp",
@@ -7687,8 +7775,19 @@ class AlgorithmCompetition:
             market_conditions
         )
         
+        # 🛡️ CHECK CIRCUIT BREAKER - SE LESSON LEARNED DICE DI SKIPPARE
+        if lessons_adjustment.get('should_skip', False):
+            skip_reason = ', '.join(lessons_adjustment.get('adjustments_applied', []))
+            safe_print(f"🚫 SKIPPING {algorithm_name} - Lesson Learned: {skip_reason}")
+            return f"SKIPPED_BY_LESSONS: {skip_reason}"
+        
         # Aggiusta confidence basato sulle lezioni
         adjusted_confidence = confidence * lessons_adjustment['confidence_multiplier']
+        
+        # 🔒 MINIMUM CONFIDENCE CHECK
+        if adjusted_confidence < 0.1:
+            safe_print(f"🚫 SKIPPING {algorithm_name} - Adjusted confidence too low: {adjusted_confidence:.3f}")
+            return f"SKIPPED_LOW_CONFIDENCE: {adjusted_confidence:.3f}"
         
         prediction_id = f"{self.asset}_{self.model_type.value}_{algorithm_name}_{datetime.now().isoformat()}"
         
@@ -11532,6 +11631,18 @@ class AssetAnalyzer:
         """Esegue algoritmi di Volatility Prediction con error handling standardizzato"""
         
         if algorithm_name == "GARCH_Volatility":
+            # 🚨 CHECK LESSONS LEARNED PRIMA DI ESEGUIRE
+            lessons_key = f"VOLATILITY_PREDICTION_{algorithm_name}"
+            lessons = getattr(self, 'reanalyzer', None)
+            if lessons and hasattr(lessons, 'lessons_learned'):
+                lesson_data = lessons.lessons_learned.get(lessons_key, {})
+                if lesson_data.get('errors_analyzed', 0) > 100:
+                    safe_print(f"⚠️ GARCH_Volatility has {lesson_data['errors_analyzed']} errors - applying restrictions")
+                    # Check se dovremmo skippare completamente
+                    patterns = lesson_data.get('patterns_found', {})
+                    if isinstance(patterns, dict) and patterns.get('total_patterns', 0) > 5:
+                        raise PredictionError("GARCH_Volatility", "Too many error patterns detected - algorithm temporarily disabled by lesson learned system")
+            
             # GARCH implementation
             prices = np.array(market_data['price_history'])
             
