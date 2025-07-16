@@ -9767,13 +9767,13 @@ class AssetAnalyzer:
         else:
             # No prices in training data\n            return
         
-        # Ottieni il modello
-        if algorithm_name not in self.ml_models:
-            retraining_info['error'] = 'model_not_found'
-            self._store_retraining_event('model_not_found', retraining_info)
-            return
-        
-        model = self.ml_models[algorithm_name]
+            # Ottieni il modello
+            if algorithm_name not in self.ml_models:
+                retraining_info['error'] = 'model_not_found'
+                self._store_retraining_event('model_not_found', retraining_info)
+                return
+            
+            model = self.ml_models[algorithm_name]
         
         try:
             # Train con preservazione dei pesi se il modello stava performando decentemente
