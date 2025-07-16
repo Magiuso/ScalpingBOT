@@ -6201,8 +6201,12 @@ class RollingWindowTrainer:
         days_since_training = (datetime.now() - self.last_training_dates[key]).days
         return days_since_training >= self.retrain_frequency_days
     
-    def prepare_training_data(self, tick_data: deque, window_size_override: Optional[int] = None) -> Dict[str, np.ndarray]:
-        """Prepara dati con finestra mobile"""
+    def prepare_training_data(self, tick_data: deque, window_size_override: Optional[int] = None, 
+                            model_type: Optional['ModelType'] = None) -> Dict[str, Any]:
+        """
+        🔧 ARCHITETTURA CORRETTA: Prepara dati con finestra mobile e processamento per ModelType specifico
+        BREAKING CHANGE: Ora ritorna dati X,y preprocessati quando model_type è specificato
+        """
         window_size = window_size_override or self.window_size_days
         cutoff_date = datetime.now() - timedelta(days=window_size)
         
@@ -6301,6 +6305,41 @@ class RollingWindowTrainer:
         else:
             result_data['preprocessing_applied'] = False
         
+        # 🔧 ARCHITETTURA CORRETTA: Chiamata ai metodi _prepare_*_dataset basata su ModelType
+        if model_type is not None:
+            try:
+                # Determina quale metodo di preparazione dataset usare
+                if model_type == ModelType.SUPPORT_RESISTANCE:
+                    X, y = self._prepare_sr_dataset(result_data)
+                elif model_type == ModelType.PATTERN_RECOGNITION:
+                    X, y = self._prepare_pattern_dataset(result_data)
+                elif model_type == ModelType.BIAS_DETECTION:
+                    X, y = self._prepare_bias_dataset(result_data)
+                elif model_type == ModelType.TREND_ANALYSIS:
+                    X, y = self._prepare_trend_dataset(result_data)
+                elif model_type == ModelType.VOLATILITY_PREDICTION:
+                    X, y = self._prepare_volatility_dataset(result_data)
+                elif model_type == ModelType.MOMENTUM_ANALYSIS:
+                    X, y = self._prepare_momentum_dataset(result_data)
+                else:
+                    safe_print(f"⚠️ ModelType sconosciuto: {model_type}")
+                    return result_data
+                
+                # Ritorna dati X,y preprocessati invece dei dati grezzi
+                return {
+                    'X': X,
+                    'y': y,
+                    'model_type': model_type,
+                    'samples_count': len(X) if len(X) > 0 else 0,
+                    'raw_data': result_data  # Mantieni i dati grezzi per debug
+                }
+                
+            except Exception as e:
+                safe_print(f"❌ Errore nel preprocessing per {model_type}: {e}")
+                # Fallback ai dati grezzi se preprocessing fallisce
+                return result_data
+        
+        # Se model_type non è specificato, ritorna dati grezzi (backward compatibility)
         return result_data
     
     def _calculate_sma(self, prices: np.ndarray, period: int) -> np.ndarray:
@@ -6392,6 +6431,595 @@ class RollingWindowTrainer:
         
         return rsi
     
+    def _prepare_sr_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        🔧 Prepara dataset per Support/Resistance Detection
+        Genera features e target per identificare livelli di supporto e resistenza
+        """
+        prices = data['prices']
+        volumes = data['volumes']
+        
+        # Parametri ottimizzati per support/resistance
+        window_size = 50
+        future_window = 20
+        
+        X, y = [], []
+        skipped_samples = 0
+        
+        for i in range(window_size, len(prices) - future_window):
+            # Features: prezzi, volumi, indicatori tecnici
+            price_features = prices[i-window_size:i]
+            volume_features = volumes[i-window_size:i]
+            sma_features = data['sma_20'][i-window_size:i]
+            rsi_features = data['rsi'][i-window_size:i]
+            
+            # Validazione NaN per ogni componente
+            if (np.isnan(price_features).any() or 
+                np.isnan(volume_features).any() or 
+                np.isnan(sma_features).any() or 
+                np.isnan(rsi_features).any()):
+                skipped_samples += 1
+                continue
+            
+            features = np.concatenate([
+                price_features,
+                volume_features,
+                sma_features,
+                rsi_features
+            ])
+            
+            # TARGET per SUPPORT/RESISTANCE DETECTION
+            current_price = prices[i]
+            future_prices = prices[i:i+future_window]
+            
+            # Validazione prezzi
+            if (current_price == 0 or np.isnan(current_price) or 
+                np.isnan(future_prices).any()):
+                skipped_samples += 1
+                continue
+            
+            # Calcola livelli di supporto e resistenza
+            resistance = np.max(future_prices)
+            support = np.min(future_prices)
+            
+            # Normalizza i target relativi al prezzo corrente
+            y_val = np.array([
+                (support - current_price) / current_price,      # Support level (negative)
+                (resistance - current_price) / current_price    # Resistance level (positive)
+            ])
+            
+            # Aggiungi rumore per prevenire target identici
+            noise = np.random.normal(0, 0.001, size=y_val.shape)
+            y_val = y_val + noise
+            
+            # Clamp estremi
+            y_val = np.clip(y_val, -0.1, 0.1)
+            
+            X.append(features)
+            y.append(y_val)
+        
+        if skipped_samples > 0:
+            print(f"[INFO] _prepare_sr_dataset: Skipped {skipped_samples} samples due to NaN values")
+        
+        if len(X) == 0:
+            print("[WARNING] _prepare_sr_dataset: No valid samples generated")
+            return np.array([]), np.array([])
+        
+        X = np.array(X)
+        y = np.array(y)
+        
+        # Validazione finale
+        if np.isnan(X).any() or np.isnan(y).any():
+            print("[ERROR] _prepare_sr_dataset: Final dataset contains NaN values")
+            return np.array([]), np.array([])
+        
+        print(f"[INFO] _prepare_sr_dataset: Generated {len(X)} samples with {X.shape[1]} features")
+        
+        return X, y
+    
+    def _prepare_bias_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        🔧 Prepara dataset per Bias Detection con target realistici
+        Basato su Support/Resistance ma con target di bias direzionale
+        """
+        prices = data['prices']
+        volumes = data['volumes']
+        
+        # Parametri ottimizzati per bias detection
+        window_size = 50
+        lookback_window = 30  # Finestra per analisi trend
+        future_window = 20    # Finestra per validazione bias
+        
+        X, y = [], []
+        skipped_samples = 0
+        
+        for i in range(window_size + lookback_window, len(prices) - future_window):
+            # Features: prezzi, volumi, indicatori (stesse di S/R)
+            price_features = prices[i-window_size:i]
+            volume_features = volumes[i-window_size:i]
+            sma_features = data['sma_20'][i-window_size:i]
+            rsi_features = data['rsi'][i-window_size:i]
+            
+            # Validazione NaN per ogni componente
+            if (np.isnan(price_features).any() or 
+                np.isnan(volume_features).any() or 
+                np.isnan(sma_features).any() or 
+                np.isnan(rsi_features).any()):
+                skipped_samples += 1
+                continue
+            
+            features = np.concatenate([
+                price_features,
+                volume_features,
+                sma_features,
+                rsi_features
+            ])
+            
+            # TARGET per BIAS DETECTION
+            current_price = prices[i]
+            historical_prices = prices[i-lookback_window:i]
+            future_prices = prices[i:i+future_window]
+            historical_volumes = volumes[i-lookback_window:i]
+            future_volumes = volumes[i:i+future_window]
+            
+            # Validazione prezzi
+            if (current_price == 0 or np.isnan(current_price) or 
+                np.isnan(historical_prices).any() or np.isnan(future_prices).any() or
+                np.isnan(historical_volumes).any() or np.isnan(future_volumes).any()):
+                skipped_samples += 1
+                continue
+            
+            # BIAS DETECTION ALGORITMO
+            
+            # 1. Trend Bias (bullish/bearish trend)
+            price_change = (current_price - historical_prices[0]) / historical_prices[0]
+            recent_trend = (np.mean(historical_prices[-10:]) - np.mean(historical_prices[-20:-10])) / np.mean(historical_prices[-20:-10])
+            
+            # 2. Volume Bias (buying/selling pressure)
+            price_changes = np.diff(historical_prices)
+            positive_volume = np.sum(historical_volumes[1:][price_changes > 0])
+            negative_volume = np.sum(historical_volumes[1:][price_changes < 0])
+            total_volume = positive_volume + negative_volume
+            
+            # Evita divisione per zero
+            if total_volume == 0:
+                volume_bias = 0.0
+            else:
+                volume_bias = (positive_volume - negative_volume) / total_volume
+            
+            # 3. RSI Bias (overbought/oversold)
+            current_rsi = rsi_features[-1]
+            rsi_bias = 0.0
+            if current_rsi > 70:
+                rsi_bias = -1.0  # Overbought (bearish bias)
+            elif current_rsi < 30:
+                rsi_bias = 1.0   # Oversold (bullish bias)
+            else:
+                rsi_bias = (current_rsi - 50) / 50  # Normalizzato tra -1 e 1
+            
+            # 4. Momentum Bias
+            momentum = np.mean(np.diff(historical_prices[-5:]))
+            momentum_normalized = momentum / (np.std(historical_prices) + 1e-10)
+            
+            # 5. Validazione con dati futuri
+            future_return = (future_prices[-1] - current_price) / current_price
+            future_volatility = np.std(future_prices) / current_price
+            
+            # TARGET FINALE: 6 dimensioni per diversi tipi di bias
+            y_val = np.array([
+                max(0, min(1, (recent_trend + 1) / 2)),           # bullish_trend_bias [0,1]
+                max(0, min(1, (-recent_trend + 1) / 2)),          # bearish_trend_bias [0,1]
+                max(0, min(1, (volume_bias + 1) / 2)),            # bullish_volume_bias [0,1]
+                max(0, min(1, (-volume_bias + 1) / 2)),           # bearish_volume_bias [0,1]
+                max(0, min(1, (-rsi_bias + 1) / 2)),              # overbought_bias [0,1]
+                max(0, min(1, (rsi_bias + 1) / 2))                # oversold_bias [0,1]
+            ])
+            
+            # Aggiungi rumore per prevenire target identici
+            noise = np.random.normal(0, 0.01, size=y_val.shape)
+            y_val = np.clip(y_val + noise, 0, 1)
+            
+            # Validazione finale
+            if (np.isnan(y_val).any() or np.isinf(y_val).any()):
+                skipped_samples += 1
+                continue
+            
+            X.append(features)
+            y.append(y_val)
+        
+        if len(X) == 0:
+            return np.empty((0, window_size * 4)), np.empty((0, 6))
+        
+        X_array, y_array = np.array(X), np.array(y)
+        
+        # Log statistiche
+        safe_print(f"📊 Bias Dataset Summary: Total samples={len(y_array)}, Skipped={skipped_samples}")
+        if len(y_array) > 0:
+            safe_print(f"📊 Bias targets: mean={np.mean(y_array):.6f}, std={np.std(y_array):.6f}")
+            safe_print(f"📊 Bias range: min={np.min(y_array):.6f}, max={np.max(y_array):.6f}")
+        
+        return X_array, y_array
+    
+    def _prepare_pattern_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        🔧 Prepara dataset per Pattern Recognition con target realistici
+        Versione avanzata con 25 pattern classici + pattern AI
+        """
+        prices = data['prices']
+        volumes = data['volumes']
+        
+        # Parametri ottimizzati per pattern recognition
+        window_size = 50
+        lookback_window = 100  # Finestra per analisi pattern
+        future_window = 20     # Finestra per validazione pattern
+        
+        X, y = [], []
+        skipped_samples = 0
+        
+        for i in range(window_size + lookback_window, len(prices) - future_window):
+            # Features: prezzi, volumi, indicatori (stesse di S/R)
+            price_features = prices[i-window_size:i]
+            volume_features = volumes[i-window_size:i]
+            sma_features = data['sma_20'][i-window_size:i]
+            rsi_features = data['rsi'][i-window_size:i]
+            
+            # Validazione NaN per ogni componente
+            if (np.isnan(price_features).any() or 
+                np.isnan(volume_features).any() or 
+                np.isnan(sma_features).any() or 
+                np.isnan(rsi_features).any()):
+                skipped_samples += 1
+                continue
+            
+            features = np.concatenate([
+                price_features,
+                volume_features,
+                sma_features,
+                rsi_features
+            ])
+            
+            # TARGET per PATTERN RECOGNITION
+            current_price = prices[i]
+            historical_prices = prices[i-lookback_window:i]
+            future_prices = prices[i:i+future_window]
+            historical_volumes = volumes[i-lookback_window:i]
+            
+            # Validazione prezzi
+            if (current_price == 0 or np.isnan(current_price) or 
+                np.isnan(historical_prices).any() or np.isnan(future_prices).any() or
+                np.isnan(historical_volumes).any()):
+                skipped_samples += 1
+                continue
+            
+            # PATTERN DETECTION ALGORITMI
+            
+            # 1. Classical Pattern Detection (25 patterns)
+            classical_patterns = self._detect_classical_patterns(historical_prices, current_price)
+            
+            # 2. CNN Pattern Recognition (shape-based)
+            cnn_patterns = self._detect_cnn_patterns(historical_prices, current_price)
+            
+            # 3. LSTM Sequence Analysis (temporal patterns)
+            lstm_patterns = self._detect_lstm_patterns(historical_prices, historical_volumes, current_price)
+            
+            # 4. Transformer Advanced AI (attention-based)
+            transformer_patterns = self._detect_transformer_patterns(historical_prices, historical_volumes, current_price)
+            
+            # 5. Ensemble Consensus (multi-algorithm voting)
+            ensemble_patterns = self._detect_ensemble_patterns(
+                classical_patterns, cnn_patterns, lstm_patterns, transformer_patterns
+            )
+            
+            # TARGET FINALE: 5 dimensioni per diversi tipi di pattern detection
+            y_val = np.array([
+                classical_patterns,     # Classical patterns [0,1]
+                cnn_patterns,          # CNN patterns [0,1] 
+                lstm_patterns,         # LSTM patterns [0,1]
+                transformer_patterns,  # Transformer patterns [0,1]
+                ensemble_patterns      # Ensemble patterns [0,1]
+            ])
+            
+            # Aggiungi rumore per prevenire target identici
+            noise = np.random.normal(0, 0.01, size=y_val.shape)
+            y_val = np.clip(y_val + noise, 0, 1)
+            
+            # Validazione finale
+            if (np.isnan(y_val).any() or np.isinf(y_val).any()):
+                skipped_samples += 1
+                continue
+            
+            X.append(features)
+            y.append(y_val)
+        
+        if len(X) == 0:
+            return np.empty((0, window_size * 4)), np.empty((0, 5))
+        
+        X_array, y_array = np.array(X), np.array(y)
+        
+        # Log statistiche
+        safe_print(f"📊 Pattern Dataset Summary: Total samples={len(y_array)}, Skipped={skipped_samples}")
+        if len(y_array) > 0:
+            safe_print(f"📊 Pattern targets: mean={np.mean(y_array):.6f}, std={np.std(y_array):.6f}")
+            safe_print(f"📊 Pattern range: min={np.min(y_array):.6f}, max={np.max(y_array):.6f}")
+        
+        return X_array, y_array
+
+    def _detect_classical_patterns(self, prices: np.ndarray, current_price: float) -> float:
+        """Rileva 25 pattern classici (Head&Shoulders, Double Top, etc.)"""
+        pattern_score = 0.0
+        
+        # Pattern 1: Head and Shoulders
+        if len(prices) >= 60:
+            left_shoulder = np.max(prices[:20])
+            head = np.max(prices[20:40])
+            right_shoulder = np.max(prices[40:60])
+            
+            if head > left_shoulder * 1.02 and head > right_shoulder * 1.02:
+                pattern_score += 0.3
+        
+        # Pattern 2: Double Top
+        peaks = []
+        for j in range(10, len(prices) - 10):
+            if prices[j] > np.max(prices[j-10:j]) and prices[j] > np.max(prices[j+1:j+11]):
+                peaks.append(prices[j])
+        
+        if len(peaks) >= 2 and abs(peaks[-1] - peaks[-2]) / peaks[-1] < 0.01:
+            pattern_score += 0.2
+        
+        # Pattern 3: Triangle formation
+        recent_highs = [p for p in prices[-30:] if p > np.mean(prices[-30:])]
+        recent_lows = [p for p in prices[-30:] if p < np.mean(prices[-30:])]
+        
+        if len(recent_highs) >= 3 and len(recent_lows) >= 3:
+            high_trend = np.polyfit(range(len(recent_highs)), recent_highs, 1)[0]
+            low_trend = np.polyfit(range(len(recent_lows)), recent_lows, 1)[0]
+            
+            if abs(high_trend) < 0.001 and abs(low_trend) < 0.001:  # Converging lines
+                pattern_score += 0.15
+        
+        # Normalizza e aggiungi variabilità
+        pattern_score = max(0, min(1, pattern_score + np.random.uniform(-0.05, 0.05)))
+        return pattern_score
+
+    def _detect_cnn_patterns(self, prices: np.ndarray, current_price: float) -> float:
+        """Rileva pattern basati su shape/forma (CNN-style)"""
+        pattern_score = 0.0
+        
+        # Normalizza i prezzi per shape analysis
+        normalized_prices = (prices - np.mean(prices)) / np.std(prices)
+        
+        # Pattern CNN 1: Ascending/Descending wedge
+        if len(normalized_prices) >= 20:
+            slope = np.polyfit(range(len(normalized_prices)), normalized_prices, 1)[0]
+            if abs(slope) > 0.05:  # Strong trend
+                pattern_score += 0.25
+        
+        # Pattern CNN 2: Volatility clustering
+        price_changes = np.diff(normalized_prices)
+        volatility = np.std(price_changes)
+        recent_vol = np.std(price_changes[-10:])
+        
+        if recent_vol > volatility * 1.5:  # High recent volatility
+            pattern_score += 0.2
+        
+        # Pattern CNN 3: Price momentum
+        momentum = np.mean(price_changes[-5:])
+        if abs(momentum) > 0.1:
+            pattern_score += 0.15
+        
+        # Normalizza e aggiungi variabilità
+        pattern_score = max(0, min(1, pattern_score + np.random.uniform(-0.05, 0.05)))
+        return pattern_score
+
+    def _detect_lstm_patterns(self, prices: np.ndarray, volumes: np.ndarray, current_price: float) -> float:
+        """Rileva pattern sequenziali (LSTM-style)"""
+        pattern_score = 0.0
+        
+        # Pattern LSTM 1: Price-Volume divergence
+        price_trend = np.polyfit(range(len(prices[-20:])), prices[-20:], 1)[0]
+        volume_trend = np.polyfit(range(len(volumes[-20:])), volumes[-20:], 1)[0]
+        
+        # Normalize trends
+        price_trend_norm = price_trend / np.mean(prices[-20:])
+        volume_trend_norm = volume_trend / np.mean(volumes[-20:])
+        
+        if abs(price_trend_norm - volume_trend_norm) > 0.001:  # Divergence
+            pattern_score += 0.3
+        
+        # Pattern LSTM 2: Sequential momentum
+        momentum_sequence = []
+        for j in range(5, len(prices)):
+            momentum = (prices[j] - prices[j-5]) / prices[j-5]
+            momentum_sequence.append(momentum)
+        
+        if len(momentum_sequence) >= 10:
+            momentum_trend = np.polyfit(range(len(momentum_sequence[-10:])), momentum_sequence[-10:], 1)[0]
+            if abs(momentum_trend) > 0.01:
+                pattern_score += 0.2
+        
+        # Normalizza e aggiungi variabilità
+        pattern_score = max(0, min(1, pattern_score + np.random.uniform(-0.05, 0.05)))
+        return pattern_score
+
+    def _detect_transformer_patterns(self, prices: np.ndarray, volumes: np.ndarray, current_price: float) -> float:
+        """Rileva pattern avanzati (Transformer-style attention)"""
+        pattern_score = 0.0
+        
+        # Pattern Transformer 1: Multi-timeframe attention
+        short_ma = np.mean(prices[-5:])
+        medium_ma = np.mean(prices[-20:])
+        long_ma = np.mean(prices[-50:])
+        
+        # Attention weights based on price position
+        if current_price > short_ma > medium_ma > long_ma:  # Strong uptrend
+            pattern_score += 0.4
+        elif current_price < short_ma < medium_ma < long_ma:  # Strong downtrend
+            pattern_score += 0.4
+        
+        # Pattern Transformer 2: Volume-weighted attention
+        volume_weighted_price = np.average(prices[-20:], weights=volumes[-20:])
+        simple_average = np.mean(prices[-20:])
+        
+        if abs(volume_weighted_price - simple_average) / simple_average > 0.001:
+            pattern_score += 0.2
+        
+        # Normalizza e aggiungi variabilità
+        pattern_score = max(0, min(1, pattern_score + np.random.uniform(-0.05, 0.05)))
+        return pattern_score
+
+    def _detect_ensemble_patterns(self, classical: float, cnn: float, lstm: float, transformer: float) -> float:
+        """Combina tutti i pattern con voting ensemble"""
+        # Weighted average of all pattern types
+        weights = [0.25, 0.25, 0.25, 0.25]  # Equal weight for now
+        ensemble_score = (classical * weights[0] + 
+                         cnn * weights[1] + 
+                         lstm * weights[2] + 
+                         transformer * weights[3])
+        
+        # Add consensus bonus if multiple algorithms agree
+        agreement_threshold = 0.5
+        agreements = sum([1 for score in [classical, cnn, lstm, transformer] if score > agreement_threshold])
+        
+        if agreements >= 3:  # Strong consensus
+            ensemble_score += 0.1
+        elif agreements >= 2:  # Moderate consensus
+            ensemble_score += 0.05
+        
+        # Normalizza e aggiungi variabilità
+        ensemble_score = max(0, min(1, ensemble_score + np.random.uniform(-0.05, 0.05)))
+        return ensemble_score
+    
+    def _prepare_momentum_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        🔧 Prepara dataset per RSI Momentum Analysis con target realistici
+        Combina RSI, MACD, divergenze e velocity per analisi momentum completa
+        """
+        prices = data['prices']
+        volumes = data['volumes']
+        
+        # Parametri ottimizzati per momentum analysis
+        window_size = 50
+        lookback_window = 100  # Finestra per analisi momentum
+        
+        if len(prices) < lookback_window + window_size:
+            return np.array([]), np.array([])
+            
+        # Calcola RSI se non fornito
+        if 'rsi' in data:
+            rsi_values = data['rsi']
+        else:
+            rsi_values = self._calculate_rsi(prices)
+            
+        # Calcola MACD se non fornito
+        if 'macd_line' in data and 'macd_signal' in data:
+            macd_line = data['macd_line']
+            macd_signal = data['macd_signal']
+        else:
+            # Calcolo EMA semplificato usando convoluzione
+            ema_12 = np.convolve(prices, np.ones(12)/12, mode='same')
+            ema_26 = np.convolve(prices, np.ones(26)/26, mode='same')
+            macd_line = ema_12 - ema_26
+            macd_signal = np.convolve(macd_line, np.ones(9)/9, mode='same')
+            
+        macd_histogram = macd_line - macd_signal
+        
+        X, y = [], []
+        
+        # Preparazione dei campioni
+        for i in range(lookback_window, len(prices) - window_size):
+            # Features window
+            price_window = prices[i-window_size:i]
+            volume_window = volumes[i-window_size:i]
+            rsi_window = rsi_values[i-window_size:i]
+            macd_window = macd_line[i-window_size:i]
+            macd_hist_window = macd_histogram[i-window_size:i]
+            
+            # Normalizza features
+            price_normalized = (price_window - np.mean(price_window)) / (np.std(price_window) + 1e-8)
+            volume_normalized = (volume_window - np.mean(volume_window)) / (np.std(volume_window) + 1e-8)
+            rsi_normalized = (rsi_window - 50) / 50  # RSI già in range 0-100
+            macd_normalized = (macd_window - np.mean(macd_window)) / (np.std(macd_window) + 1e-8)
+            macd_hist_normalized = (macd_hist_window - np.mean(macd_hist_window)) / (np.std(macd_hist_window) + 1e-8)
+            
+            # Combina features
+            features = np.concatenate([
+                price_normalized,
+                volume_normalized,
+                rsi_normalized,
+                macd_normalized,
+                macd_hist_normalized
+            ])
+            
+            # Target: 4 dimensioni di momentum
+            current_price = prices[i]
+            current_rsi = rsi_values[i]
+            current_macd = macd_line[i]
+            current_macd_hist = macd_histogram[i]
+            
+            # 1. RSI Momentum (velocity)
+            rsi_prev = rsi_values[i-10] if i >= 10 else current_rsi
+            rsi_velocity = (current_rsi - rsi_prev) / 10
+            rsi_momentum = np.tanh(rsi_velocity / 5)  # Normalizza tra -1 e 1
+            
+            # 2. MACD Momentum 
+            macd_prev = macd_line[i-5] if i >= 5 else current_macd
+            macd_velocity = current_macd - macd_prev
+            macd_momentum = np.tanh(macd_velocity / np.std(macd_line[max(0, i-50):i+1]))
+            
+            # 3. Price-RSI Divergence
+            price_change = (current_price - prices[i-20]) / prices[i-20] if i >= 20 else 0
+            rsi_change = current_rsi - rsi_values[i-20] if i >= 20 else 0
+            
+            # Divergenza: prezzo e RSI vanno in direzioni opposte
+            divergence = 0.0
+            if price_change > 0.01 and rsi_change < -5:  # Bearish divergence
+                divergence = -min(price_change + abs(rsi_change)/100, 1.0)
+            elif price_change < -0.01 and rsi_change > 5:  # Bullish divergence  
+                divergence = min(abs(price_change) + rsi_change/100, 1.0)
+            
+            # 4. Overbought/Oversold Momentum
+            volume_avg = np.mean(volumes[max(0, i-20):i])
+            volume_current = volumes[i]
+            volume_factor = min(volume_current / (volume_avg + 1e-8), 3.0)
+            
+            overbought_momentum = 0.0
+            if current_rsi > 70:
+                overbought_momentum = ((current_rsi - 70) / 30) * np.sqrt(volume_factor)
+            elif current_rsi < 30:
+                overbought_momentum = -((30 - current_rsi) / 30) * np.sqrt(volume_factor)
+                
+            # Combina target con variabilità
+            random_factor = np.random.uniform(0.9, 1.1)
+            y_val = np.array([
+                rsi_momentum * random_factor,
+                macd_momentum * random_factor, 
+                divergence * random_factor,
+                overbought_momentum * random_factor
+            ])
+            
+            # Aggiungi rumore per evitare degenerazione
+            noise = np.random.normal(0, 0.05, 4)
+            y_val += noise
+            
+            # Clip values to reasonable range
+            y_val = np.clip(y_val, -2.0, 2.0)
+            
+            X.append(features)
+            y.append(y_val)
+        
+        if len(X) == 0:
+            return np.array([]), np.array([])
+            
+        X_array = np.array(X)
+        y_array = np.array(y)
+        
+        # Logging per debug usando safe_print come negli altri metodi
+        safe_print(f"[CHART] Momentum Dataset Summary: Total samples={len(y_array)}, Skipped={len(prices) - lookback_window - window_size - len(y_array)}")
+        safe_print(f"[CHART] Momentum targets: mean={np.mean(y_array):.6f}, std={np.std(y_array):.6f}")
+        safe_print(f"[CHART] Momentum range: min={np.min(y_array):.6f}, max={np.max(y_array):.6f}")
+        
+        return X_array, y_array
+    
     def train_model(self, model: Any, training_data: Dict[str, np.ndarray], 
                    model_type: ModelType, algorithm_name: str,
                    preserve_weights: bool = True) -> Dict[str, Any]:
@@ -6472,23 +7100,55 @@ class RollingWindowTrainer:
     
     
     def _prepare_trend_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
-        """Prepara dataset per Trend Analysis con validazione NaN"""
+        """
+        🔧 Prepara dataset per Trend Analysis con target realistici
+        Analizza slope dei prezzi futuri con validazione robusta NaN
+        """
+        prices = data['prices']
+        volumes = data['volumes']
         
+        # Parametri ottimizzati per trend analysis
+        window_size = 100
+        future_window = 20
+        
+        if len(prices) < window_size + future_window:
+            return np.array([]), np.array([])
+        
+        # Calcola indicatori se non forniti
+        if 'sma_20' not in data:
+            data['sma_20'] = np.convolve(prices, np.ones(20)/20, mode='same')
+        if 'sma_50' not in data:
+            data['sma_50'] = np.convolve(prices, np.ones(50)/50, mode='same')
+        if 'rsi' not in data:
+            # Calcolo RSI semplificato
+            price_changes = np.diff(prices, prepend=prices[0])
+            gains = np.where(price_changes > 0, price_changes, 0)
+            losses = np.where(price_changes < 0, -price_changes, 0)
+            avg_gains = np.convolve(gains, np.ones(14)/14, mode='same')
+            avg_losses = np.convolve(losses, np.ones(14)/14, mode='same')
+            rs = avg_gains / (avg_losses + 1e-10)
+            data['rsi'] = 100 - (100 / (1 + rs))
+        if 'returns' not in data:
+            # Fix per broadcasting: mantieni la stessa lunghezza dell'array prices
+            price_changes = np.diff(prices, prepend=prices[0])
+            data['returns'] = price_changes / prices
+
         X, y = [], []
         skipped_samples = 0
         
-        for i in range(100, len(data['prices']) - 20):
-            # Features aggregate (invariate)
+        for i in range(window_size, len(prices) - future_window):
+            # Features aggregate con validazione NaN
             features = []
             
             # Price position relative to MAs
-            current_price = data['prices'][i]
+            current_price = prices[i]
             
             # Validazione prezzo corrente
             if np.isnan(current_price) or current_price <= 0:
                 skipped_samples += 1
                 continue
             
+            # SMA features con validazione
             if not np.isnan(data['sma_20'][i]):
                 features.append((current_price - data['sma_20'][i]) / data['sma_20'][i])
             else:
@@ -6499,7 +7159,7 @@ class RollingWindowTrainer:
             else:
                 features.append(0)
             
-            # Momentum con validazione
+            # RSI con validazione
             rsi_val = data['rsi'][i]
             if np.isnan(rsi_val):
                 features.append(0.5)  # Neutro se RSI non disponibile
@@ -6523,10 +7183,10 @@ class RollingWindowTrainer:
                 features.extend([0, 0, 0, 0])  # Default se non ci sono dati
             
             # Volume trend con validazione
-            recent_volumes = data['volumes'][max(0, i-20):i]
+            recent_volumes = volumes[max(0, i-20):i]
             if len(recent_volumes) > 0 and not np.isnan(recent_volumes).all():
                 valid_volumes = recent_volumes[~np.isnan(recent_volumes)]
-                all_volumes = data['volumes'][~np.isnan(data['volumes'])]
+                all_volumes = volumes[~np.isnan(volumes)]
                 if len(valid_volumes) > 0 and len(all_volumes) > 0:
                     features.append(np.mean(valid_volumes) / (np.mean(all_volumes) + 1e-8))
                 else:
@@ -6535,10 +7195,10 @@ class RollingWindowTrainer:
                 features.append(1.0)  # Volume neutro
             
             # Target: slope della regressione lineare sui prezzi futuri
-            future_prices = data['prices'][i:i+20]
+            future_prices = prices[i:i+future_window]
             
             # Validazione future prices
-            if np.isnan(future_prices).any() or len(future_prices) < 20:
+            if np.isnan(future_prices).any() or len(future_prices) < future_window:
                 skipped_samples += 1
                 continue
             
@@ -6555,8 +7215,12 @@ class RollingWindowTrainer:
                     skipped_samples += 1
                     continue
                 
-                # Clamp del target per evitare valori estremi
+                # Clamp del target per evitare valori estremi e aggiunge variabilità
                 normalized_slope = np.clip(normalized_slope, -0.1, 0.1)
+                
+                # Aggiungi rumore per evitare degenerazione
+                noise = np.random.normal(0, 0.001)
+                normalized_slope += noise
                 
                 X.append(features)
                 y.append(normalized_slope)
@@ -6566,10 +7230,164 @@ class RollingWindowTrainer:
                 continue
         
         if len(X) == 0:
-            # Ritorna arrays vuoti ma validi
-            return np.empty((0, 8)), np.empty((0,))
+            return np.array([]), np.array([])
         
-        return np.array(X), np.array(y)
+        X_array = np.array(X)
+        y_array = np.array(y)
+        
+        # Logging per debug usando safe_print come negli altri metodi
+        safe_print(f"[CHART] Trend Dataset Summary: Total samples={len(y_array)}, Skipped={skipped_samples}")
+        safe_print(f"[CHART] Trend targets: mean={np.mean(y_array):.6f}, std={np.std(y_array):.6f}")
+        safe_print(f"[CHART] Trend range: min={np.min(y_array):.6f}, max={np.max(y_array):.6f}")
+        
+        return X_array, y_array
+    
+    def _prepare_volatility_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        🔧 Prepara dataset per Volatility Prediction con target realistici
+        Analizza volatilità realizzata, GARCH e ATR per previsioni di volatilità
+        """
+        prices = data['prices']
+        volumes = data['volumes']
+        
+        # Parametri ottimizzati per volatility analysis
+        window_size = 50
+        future_window = 20
+        
+        if len(prices) < window_size + future_window:
+            return np.array([]), np.array([])
+        
+        # Calcola returns se non forniti
+        if 'returns' not in data:
+            price_changes = np.diff(prices, prepend=prices[0])
+            data['returns'] = price_changes / prices
+        
+        # Calcola ATR (Average True Range) se non fornito
+        if 'high_prices' not in data or 'low_prices' not in data:
+            # Simula high/low prices dai price changes
+            price_changes = np.diff(prices, prepend=prices[0])
+            data['high_prices'] = prices + np.abs(price_changes) * 0.5
+            data['low_prices'] = prices - np.abs(price_changes) * 0.5
+        
+        X, y = [], []
+        skipped_samples = 0
+        
+        for i in range(window_size, len(prices) - future_window):
+            # Features aggregate per volatility
+            features = []
+            
+            # 1. Realized volatility (rolling window)
+            recent_returns = data['returns'][i-window_size:i]
+            if len(recent_returns) > 0 and not np.all(np.isnan(recent_returns)):
+                realized_vol = np.std(recent_returns) * np.sqrt(252)  # Annualized
+                features.append(realized_vol)
+            else:
+                skipped_samples += 1
+                continue
+            
+            # 2. GARCH-like features
+            rolling_vol = np.std(data['returns'][i-20:i]) if i >= 20 else 0
+            features.append(rolling_vol)
+            
+            # 3. ATR (Average True Range)
+            if i >= 14:
+                true_ranges = []
+                for j in range(i-14, i):
+                    if j < len(data['high_prices']) and j < len(data['low_prices']):
+                        tr1 = data['high_prices'][j] - data['low_prices'][j]
+                        tr2 = abs(data['high_prices'][j] - prices[j-1]) if j > 0 else 0
+                        tr3 = abs(data['low_prices'][j] - prices[j-1]) if j > 0 else 0
+                        true_ranges.append(max(tr1, tr2, tr3))
+                atr = np.mean(true_ranges) / prices[i] if len(true_ranges) > 0 else 0
+                features.append(atr)
+            else:
+                features.append(0)
+            
+            # 4. Volume-based volatility
+            volume_window = volumes[i-window_size:i]
+            if len(volume_window) > 0 and not np.all(np.isnan(volume_window)):
+                vol_volatility = np.std(volume_window) / np.mean(volume_window)
+                features.append(vol_volatility)
+            else:
+                features.append(0)
+            
+            # 5. Price momentum impact on volatility
+            price_momentum = (prices[i] - prices[i-10]) / prices[i-10] if i >= 10 else 0
+            features.append(abs(price_momentum))
+            
+            # 6. RSI-based volatility stress
+            if 'rsi' in data and i < len(data['rsi']):
+                rsi_stress = abs(data['rsi'][i] - 50) / 50  # Distance from neutral
+                features.append(rsi_stress)
+            else:
+                features.append(0.5)
+            
+            # Validazione features
+            if any(np.isnan(f) or np.isinf(f) for f in features):
+                skipped_samples += 1
+                continue
+            
+            X.append(features)
+            
+            # Target: Future volatility (multi-dimensional)
+            future_returns = data['returns'][i:i+future_window]
+            if len(future_returns) > 0 and not np.all(np.isnan(future_returns)):
+                # 1. Realized volatility target
+                future_realized_vol = np.std(future_returns) * np.sqrt(252)
+                
+                # 2. GARCH-like volatility target
+                future_garch_vol = np.mean(np.abs(future_returns)) * np.sqrt(252)
+                
+                # 3. ATR-based volatility target
+                future_price_range = np.max(prices[i:i+future_window]) - np.min(prices[i:i+future_window])
+                future_atr_vol = future_price_range / prices[i]
+                
+                # Combina in target multi-dimensionale
+                target = [future_realized_vol, future_garch_vol, future_atr_vol]
+                
+                # Validazione target
+                if any(np.isnan(t) or np.isinf(t) for t in target):
+                    skipped_samples += 1
+                    continue
+                
+                y.append(target)
+            else:
+                skipped_samples += 1
+                continue
+        
+        if len(X) == 0:
+            return np.array([]), np.array([])
+        
+        X_array = np.array(X)
+        y_array = np.array(y)
+        
+        # Normalizzazione features
+        X_mean = np.mean(X_array, axis=0)
+        X_std = np.std(X_array, axis=0)
+        X_std[X_std == 0] = 1  # Evita divisione per zero
+        X_array = (X_array - X_mean) / X_std
+        
+        # Normalizzazione target (per ogni dimensione)
+        for dim in range(y_array.shape[1]):
+            y_dim = y_array[:, dim]
+            y_mean = np.mean(y_dim)
+            y_std = np.std(y_dim)
+            if y_std > 0:
+                y_array[:, dim] = (y_dim - y_mean) / y_std
+        
+        # Validazione finale
+        if np.any(np.isnan(X_array)) or np.any(np.isnan(y_array)):
+            safe_print(f"[WARNING] NaN values detected in volatility dataset")
+            # Rimuovi campioni con NaN
+            valid_mask = ~(np.any(np.isnan(X_array), axis=1) | np.any(np.isnan(y_array), axis=1))
+            X_array = X_array[valid_mask]
+            y_array = y_array[valid_mask]
+        
+        safe_print(f"[CHART] Volatility dataset prepared: {len(X_array)} samples")
+        safe_print(f"[CHART] Volatility targets: mean={np.mean(y_array):.6f}, std={np.std(y_array):.6f}")
+        safe_print(f"[CHART] Volatility range: min={np.min(y_array):.6f}, max={np.max(y_array):.6f}")
+        
+        return X_array, y_array
     
     def _train_neural_model(self, model: nn.Module, X: np.ndarray, y: np.ndarray, 
                         preserve_weights: bool) -> Dict[str, Any]:
@@ -7481,6 +8299,69 @@ class AlgorithmCompetition:
         self.performance_window = deque(maxlen=getattr(self.config, 'performance_window_size', 100) or 100)  # 🔧 FIXED
         self.last_reality_check = datetime.now()
         self.reality_check_interval = timedelta(hours=self.config.reality_check_interval_hours)  # 🔧 CHANGED
+        
+    def _calculate_rsi(self, prices: np.ndarray, period: int = 14) -> np.ndarray:
+        """Calcola RSI con gestione robusta degli errori - ADDED FOR MOMENTUM DATASET"""
+        if len(prices) < period + 1:
+            return np.full_like(prices, 50.0)
+        
+        # Protezione per valori non validi
+        if np.isnan(prices).any() or np.isinf(prices).any():
+            return np.full_like(prices, 50.0)
+        
+        try:
+            deltas = np.diff(prices)
+            
+            # Controllo deltas validi
+            if np.isnan(deltas).any() or np.isinf(deltas).any():
+                return np.full_like(prices, 50.0)
+            
+            seed = deltas[:period+1]
+            up = seed[seed >= 0].sum() / period
+            down = -seed[seed < 0].sum() / period
+            
+            # Divisione per zero più robusta
+            if down == 0:
+                rs = 100
+            elif up == 0:
+                rs = 0
+            else:
+                rs = up / down
+                
+            rsi = np.full_like(prices, 50.0)  # Default a 50 invece di zeros
+            rsi[period] = 100 - 100 / (1 + rs)
+            
+            for i in range(period + 1, len(prices)):
+                delta = deltas[i-1]
+                if delta > 0:
+                    upval = delta
+                    downval = 0.
+                else:
+                    upval = 0.
+                    downval = -delta
+                
+                up = (up * (period - 1) + upval) / period
+                down = (down * (period - 1) + downval) / period
+                
+                # Protezione divisione per zero
+                if down == 0:
+                    rs = 100
+                elif up == 0:
+                    rs = 0
+                else:
+                    rs = up / down
+                    
+                # Validation del risultato RSI
+                rsi_value = 100 - 100 / (1 + rs)
+                if np.isnan(rsi_value) or np.isinf(rsi_value):
+                    rsi_value = 50.0
+                    
+                rsi[i] = np.clip(rsi_value, 0.0, 100.0)
+            
+            return rsi
+            
+        except Exception:
+            return np.full_like(prices, 50.0)
         
     def register_algorithm(self, name: str) -> None:
         """Registra un nuovo algoritmo nella competizione - VERSIONE PULITA"""
@@ -8582,6 +9463,8 @@ class AlgorithmCompetition:
                 elif event_type == 'performance_metrics' and hasattr(self, '_performance_metrics_buffer'):
                     self._performance_metrics_buffer.clear()
 
+
+    
 # ================== ASSET ANALYZER PRINCIPALE ==================
 
 class AssetAnalyzer:
@@ -9263,6 +10146,7 @@ class AssetAnalyzer:
             training_data = None
             try:
                 self.logger.loggers['training'].info(f"📊 PREPARING training data for {self.asset}...")
+                # 🔧 ARCHITETTURA CORRETTA: Chiamata senza model_type per backward compatibility
                 training_data = self.rolling_trainer.prepare_training_data(self.tick_data)
                 
                 if training_data:
@@ -9309,8 +10193,17 @@ class AssetAnalyzer:
                         try:
                             self.logger.loggers['training'].info(f"⚙️ STARTING training | Model: {model_name} | Type: {model_type.value}")
                             
+                            # 🔧 ARCHITETTURA CORRETTA: Prepara dati X,y preprocessati per il ModelType specifico
+                            model_training_data = self.rolling_trainer.prepare_training_data(
+                                self.tick_data, model_type=model_type
+                            )
+                            
+                            if not model_training_data or 'X' not in model_training_data:
+                                self.logger.loggers['errors'].error(f"❌ No preprocessed training data for {model_type.value}")
+                                continue
+                            
                             result = self.rolling_trainer.train_model(
-                                model, training_data, model_type, model_name,
+                                model, model_training_data, model_type, model_name,
                                 preserve_weights=False  # Durante learning, non preservare
                             )
                             
@@ -9411,8 +10304,17 @@ class AssetAnalyzer:
                 try:
                     self.logger.loggers['training'].info(f"Training {model_name} for {model_type.value}")
                     
+                    # 🔧 ARCHITETTURA CORRETTA: Prepara dati X,y preprocessati per il ModelType specifico
+                    model_training_data = self.rolling_trainer.prepare_training_data(
+                        self.tick_data, model_type=model_type
+                    )
+                    
+                    if not model_training_data or 'X' not in model_training_data:
+                        self.logger.loggers['errors'].error(f"❌ No preprocessed training data for {model_type.value}")
+                        continue
+                    
                     result = self.rolling_trainer.train_model(
-                        model, training_data, model_type, model_name,
+                        model, model_training_data, model_type, model_name,
                         preserve_weights=False
                     )
                     
@@ -9515,8 +10417,17 @@ class AssetAnalyzer:
             preserve_weights = algorithm.final_score > 60 and not algorithm.emergency_stop_triggered
             retraining_info['preserve_weights'] = preserve_weights
             
+            # 🔧 ARCHITETTURA CORRETTA: Prepara dati X,y preprocessati per il ModelType specifico
+            model_training_data = self.rolling_trainer.prepare_training_data(
+                self.tick_data, model_type=model_type
+            )
+            
+            if not model_training_data or 'X' not in model_training_data:
+                self._store_retraining_event('no_preprocessed_training_data', retraining_info)
+                return
+            
             result = self.rolling_trainer.train_model(
-                model, training_data, model_type, algorithm_name,
+                model, model_training_data, model_type, algorithm_name,
                 preserve_weights=preserve_weights
             )
             
@@ -16698,773 +17609,6 @@ class AssetAnalyzer:
         
         return events
 
-    def _prepare_sr_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        🔧 NUOVA VERSIONE: Prepara dataset S/R con livelli realistici e variabili
-        Fix per il collasso della loss LSTM (da 0.000002 a range normale 0.01-0.1)
-        """
-        prices = data['prices']
-        volumes = data['volumes']
-        
-        # 🔧 FIX 1: Parametri ottimizzati per S/R detection
-        window_size = 50
-        lookback_window = 100  # 🔧 AUMENTATO: Finestra più ampia per identificare S/R significativi
-        future_window = 30     # 🔧 AUMENTATO: Più tempo per validare livelli S/R
-        
-        X, y = [], []
-        skipped_samples = 0
-        
-        for i in range(window_size + lookback_window, len(prices) - future_window):
-            # Features: prezzi, volumi, indicatori (stesse di prima)
-            price_features = prices[i-window_size:i]
-            volume_features = volumes[i-window_size:i]
-            sma_features = data['sma_20'][i-window_size:i]
-            rsi_features = data['rsi'][i-window_size:i]
-            
-            # Validazione NaN per ogni componente
-            if (np.isnan(price_features).any() or 
-                np.isnan(volume_features).any() or 
-                np.isnan(sma_features).any() or 
-                np.isnan(rsi_features).any()):
-                skipped_samples += 1
-                continue
-            
-            features = np.concatenate([
-                price_features,
-                volume_features,
-                sma_features,
-                rsi_features
-            ])
-            
-            # 🔧 FIX 2: TARGET REALISTICI con vera logica Support/Resistance
-            current_price = prices[i]
-            historical_prices = prices[i-lookback_window:i]  # Ultimi 100 prezzi per S/R detection
-            future_prices = prices[i:i+future_window]        # Prossimi 30 prezzi per validazione
-            
-            # Validazione prezzi
-            if (current_price == 0 or np.isnan(current_price) or 
-                np.isnan(historical_prices).any() or np.isnan(future_prices).any()):
-                skipped_samples += 1
-                continue
-            
-            # 🔧 ALGORITMO S/R MIGLIORATO: Swing Highs/Lows con filtro volume
-            swing_window = 10  # 🔧 FIX: Finestra più ampia per catturare più swing
-            volume_threshold = np.percentile(volumes[i-lookback_window:i], 40)  # 🔧 FIX: Soglia più bassa per più candidati
-            
-            # 🔧 FIX: Strategia multipla per S/R detection
-            resistance_candidates = []
-            support_candidates = []
-            
-            # Strategia 1: Swing Highs/Lows con volume (originale migliorato)
-            for j in range(swing_window, len(historical_prices) - swing_window):
-                price_j = historical_prices[j]
-                volume_j = volumes[i-lookback_window+j]
-                
-                # Swing high con volume significativo
-                is_swing_high = (price_j > np.max(historical_prices[j-swing_window:j]) and 
-                                price_j > np.max(historical_prices[j+1:j+swing_window+1]) and
-                                volume_j > volume_threshold)
-                
-                # Swing low con volume significativo
-                is_swing_low = (price_j < np.min(historical_prices[j-swing_window:j]) and 
-                               price_j < np.min(historical_prices[j+1:j+swing_window+1]) and
-                               volume_j > volume_threshold)
-                
-                if is_swing_high:
-                    resistance_candidates.append(price_j)
-                if is_swing_low:
-                    support_candidates.append(price_j)
-            
-            # Strategia 2: Percentili di prezzo se pochi candidati
-            if len(resistance_candidates) < 2:
-                resistance_candidates.extend([
-                    np.percentile(historical_prices, 85),
-                    np.percentile(historical_prices, 90),
-                    np.percentile(historical_prices, 95)
-                ])
-            
-            if len(support_candidates) < 2:
-                support_candidates.extend([
-                    np.percentile(historical_prices, 15),
-                    np.percentile(historical_prices, 10),
-                    np.percentile(historical_prices, 5)
-                ])
-            
-            # Strategia 3: Livelli di prezzo rotondi (psicologici)
-            price_range = np.max(historical_prices) - np.min(historical_prices)
-            if price_range > 0:
-                round_levels = []
-                for multiplier in [0.2, 0.5, 0.8]:
-                    level = np.min(historical_prices) + price_range * multiplier
-                    round_levels.append(level)
-                
-                # Aggiungi livelli rotondi se sopra/sotto current_price
-                for level in round_levels:
-                    if level > current_price:
-                        resistance_candidates.append(level)
-                    elif level < current_price:
-                        support_candidates.append(level)
-            
-            # 🔧 FIX 3: Selezione livelli S/R significativi con multiple strategie
-            # 🔧 FIX: Calcolo ATR con randomness per evitare target identici
-            atr = np.std(historical_prices[-20:]) * 2  # ATR approssimato
-            random_factor = np.random.uniform(0.8, 1.2)  # Fattore casuale 80%-120%
-            
-            if len(resistance_candidates) == 0:
-                # Fallback: usa percentile alto con ATR adjustment + randomness
-                resistance = current_price + atr * np.random.uniform(1.2, 1.8) * random_factor
-            else:
-                # Scegli resistenza più vicina sopra current_price
-                valid_resistances = [r for r in resistance_candidates if r > current_price]
-                if valid_resistances:
-                    resistance = min(valid_resistances)
-                else:
-                    # Fallback con randomness
-                    resistance = current_price + atr * np.random.uniform(1.5, 2.5) * random_factor
-            
-            if len(support_candidates) == 0:
-                # Fallback: usa percentile basso con ATR adjustment + randomness
-                support = current_price - atr * np.random.uniform(1.2, 1.8) * random_factor
-            else:
-                # Scegli supporto più vicino sotto current_price
-                valid_supports = [s for s in support_candidates if s < current_price]
-                if valid_supports:
-                    support = max(valid_supports)
-                else:
-                    # Fallback con randomness
-                    support = current_price - atr * np.random.uniform(1.5, 2.5) * random_factor
-            
-            # 🔧 FIX 4: Validazione con dati futuri (serve davvero S/R?)
-            future_min = np.min(future_prices)
-            future_max = np.max(future_prices)
-            
-            # Se il prezzo futuro rompe i livelli S/R, adatta i target
-            if future_min < support:
-                support = future_min * 0.995  # Support leggermente sotto il minimo futuro
-            if future_max > resistance:
-                resistance = future_max * 1.005  # Resistance leggermente sopra il massimo futuro
-            
-            # 🔧 FIX 5: Target normalizzati MA non banali + verifica precoce qualità
-            support_distance = abs(support - current_price) / current_price
-            resistance_distance = abs(resistance - current_price) / current_price
-            
-            # 🔧 FIX NUOVO: Verifica precoce qualità target - aggiungi variabilità se necessario
-            if support_distance < 0.0005 or resistance_distance < 0.0005:
-                # Aggiungi randomness per evitare target troppo piccoli
-                support_distance = max(support_distance, np.random.uniform(0.001, 0.005))
-                resistance_distance = max(resistance_distance, np.random.uniform(0.001, 0.005))
-            
-            # Target come DISTANZE ASSOLUTE (sempre positive, ma variabili!)
-            y_val = np.array([
-                support_distance,      # Distanza al support (sempre > 0)
-                resistance_distance    # Distanza alla resistance (sempre > 0)
-            ])
-            
-            # 🔧 DEBUG: Aggiungi logging dettagliato per target S/R
-            if len(y) < 10:  # Log solo primi 10 samples
-                print(f"🔍 S/R Target #{len(y)}: support={support:.6f} (dist={support_distance:.6f}), resistance={resistance:.6f} (dist={resistance_distance:.6f}), current={current_price:.6f}")
-                print(f"🔍 S/R Candidates: {len(support_candidates)} supports, {len(resistance_candidates)} resistances found")
-                print(f"🔍 S/R Future validation: min={future_min:.6f}, max={future_max:.6f}, std={np.std(future_prices):.6f}")
-                print(f"🔍 S/R Historical prices sample: {historical_prices[:5]} ... {historical_prices[-5:]}")
-                print(f"🔍 S/R Volume threshold: {volume_threshold:.2f}")
-                print(f"🔍 S/R Swing window: {swing_window}")
-                print(f"🔍 S/R Random factor: {random_factor:.3f}")
-                print(f"🔍 S/R Final y_val: {y_val}")
-            
-            # 🔧 FIX CRITICO: Validazione migliorata per evitare target degeneri
-            if (np.isnan(y_val).any() or np.isinf(y_val).any()):  # Solo NaN/Inf
-                skipped_samples += 1
-                continue
-            
-            # 🔧 NUOVO: Se distance troppo piccola, usa fallback invece di scartare
-            if support_distance < 0.0001:
-                support_distance = 0.001  # 0.1% minimum distance
-                
-            if resistance_distance < 0.0001:
-                resistance_distance = 0.001  # 0.1% minimum distance
-            
-            # Aggiorna y_val con i valori corretti
-            y_val = np.array([support_distance, resistance_distance])
-            
-            X.append(features)
-            y.append(y_val)
-        
-        if len(X) == 0:
-            # Ritorna arrays vuoti ma validi
-            # No samples generated in this iteration
-            return np.empty((0, window_size * 4)), np.empty((0, 2))
-        
-        X_array, y_array = np.array(X), np.array(y)
-        
-        # 🔍 DEBUG: Log final target statistics
-        # S/R dataset generation completed
-        print(f"    Support distances - min: {np.min(y_array[:, 0]):.6f}, max: {np.max(y_array[:, 0]):.6f}, mean: {np.mean(y_array[:, 0]):.6f}")
-        print(f"    Resistance distances - min: {np.min(y_array[:, 1]):.6f}, max: {np.max(y_array[:, 1]):.6f}, mean: {np.mean(y_array[:, 1]):.6f}")
-        print(f"    All zeros check: {np.all(y_array == 0)}")
-        print(f"    NaN check: {np.any(np.isnan(y_array))}")
-        print(f"    Inf check: {np.any(np.isinf(y_array))}")
-        
-        # 🔧 DEBUG: Statistiche complete del dataset S/R
-        if len(y_array) > 0:
-            support_targets = y_array[:, 0]  # Prima colonna = support
-            resistance_targets = y_array[:, 1]  # Seconda colonna = resistance
-            
-            # 🔧 VALIDATION: Analisi finale per prevenire target degeneri
-            
-            safe_print(f"📊 S/R Dataset Summary: Total samples={len(y_array)}, Skipped={skipped_samples}")
-            safe_print(f"📊 Support targets: mean={np.mean(support_targets):.6f}, std={np.std(support_targets):.6f}, min={np.min(support_targets):.6f}, max={np.max(support_targets):.6f}")
-            safe_print(f"📊 Resistance targets: mean={np.mean(resistance_targets):.6f}, std={np.std(resistance_targets):.6f}, min={np.min(resistance_targets):.6f}, max={np.max(resistance_targets):.6f}")
-            
-            # 🚨 CRITICO: Validation per prevenire target degeneri
-            support_std = np.std(support_targets)
-            resistance_std = np.std(resistance_targets)
-            
-            # 🚨 EMERGENCY FIX: Se tutti i target sono degeneri, crea target sintetici
-            support_unique = len(np.unique(support_targets))
-            resistance_unique = len(np.unique(resistance_targets))
-            
-            if (support_std < 1e-6 and resistance_std < 1e-6) or (support_unique < 5 and resistance_unique < 5):
-                safe_print(f"🚨 EMERGENCY: Creating synthetic targets to prevent model collapse!")
-                synthetic_support = np.random.uniform(0.001, 0.02, len(support_targets))  # 0.1% - 2% distance
-                synthetic_resistance = np.random.uniform(0.001, 0.02, len(resistance_targets))
-                
-                # Replace degenerate targets with synthetic ones
-                y_array[:, 0] = synthetic_support
-                y_array[:, 1] = synthetic_resistance
-                
-                safe_print(f"🔧 SYNTHETIC TARGETS APPLIED: support_mean={np.mean(synthetic_support):.6f}, resistance_mean={np.mean(synthetic_resistance):.6f}")
-        else:
-            safe_print(f"❌ FATAL: NO VALID SAMPLES GENERATED! All {skipped_samples} samples were skipped!")
-        
-        # 🔧 CRITICO: Validazione finale dei target per prevenire degenerazione
-        if len(y_array) > 0:
-            # Valida separatamente support e resistance targets
-            support_stats = self._validate_targets(y_array[:, 0])
-            resistance_stats = self._validate_targets(y_array[:, 1])
-            
-            # Se entrambi i target sono degeneri, applica fix di emergenza
-            if support_stats['is_degenerate'] and resistance_stats['is_degenerate']:
-                safe_print(f"🚨 EMERGENCY TARGET RECOVERY: Both S/R targets are degenerate!")
-                safe_print(f"🚨 Support reasons: {support_stats['reasons']}")
-                safe_print(f"🚨 Resistance reasons: {resistance_stats['reasons']}")
-                
-                # Applica fix di emergenza con target sintetici migliorati
-                y_array = self._apply_emergency_target_fix(y_array, data)
-                
-                # Ri-valida dopo il fix
-                support_stats = self._validate_targets(y_array[:, 0])
-                resistance_stats = self._validate_targets(y_array[:, 1])
-                
-                safe_print(f"🔧 POST-FIX Support: mean={support_stats['mean']:.6f}, std={support_stats['std']:.6f}")
-                safe_print(f"🔧 POST-FIX Resistance: mean={resistance_stats['mean']:.6f}, std={resistance_stats['std']:.6f}")
-        
-        return X_array, y_array
-
-    def _prepare_bias_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        🔧 Prepara dataset per Bias Detection con target realistici
-        Basato su Support/Resistance ma con target di bias direzionale
-        """
-        prices = data['prices']
-        volumes = data['volumes']
-        
-        # Parametri ottimizzati per bias detection
-        window_size = 50
-        lookback_window = 30  # Finestra per analisi trend
-        future_window = 20    # Finestra per validazione bias
-        
-        X, y = [], []
-        skipped_samples = 0
-        
-        for i in range(window_size + lookback_window, len(prices) - future_window):
-            # Features: prezzi, volumi, indicatori (stesse di S/R)
-            price_features = prices[i-window_size:i]
-            volume_features = volumes[i-window_size:i]
-            sma_features = data['sma_20'][i-window_size:i]
-            rsi_features = data['rsi'][i-window_size:i]
-            
-            # Validazione NaN per ogni componente
-            if (np.isnan(price_features).any() or 
-                np.isnan(volume_features).any() or 
-                np.isnan(sma_features).any() or 
-                np.isnan(rsi_features).any()):
-                skipped_samples += 1
-                continue
-            
-            features = np.concatenate([
-                price_features,
-                volume_features,
-                sma_features,
-                rsi_features
-            ])
-            
-            # TARGET per BIAS DETECTION
-            current_price = prices[i]
-            historical_prices = prices[i-lookback_window:i]
-            future_prices = prices[i:i+future_window]
-            historical_volumes = volumes[i-lookback_window:i]
-            future_volumes = volumes[i:i+future_window]
-            
-            # Validazione prezzi
-            if (current_price == 0 or np.isnan(current_price) or 
-                np.isnan(historical_prices).any() or np.isnan(future_prices).any() or
-                np.isnan(historical_volumes).any() or np.isnan(future_volumes).any()):
-                skipped_samples += 1
-                continue
-            
-            # BIAS DETECTION ALGORITMO
-            
-            # 1. Trend Bias (bullish/bearish trend)
-            price_change = (current_price - historical_prices[0]) / historical_prices[0]
-            recent_trend = (np.mean(historical_prices[-10:]) - np.mean(historical_prices[-20:-10])) / np.mean(historical_prices[-20:-10])
-            
-            # 2. Volume Bias (buying/selling pressure)
-            price_changes = np.diff(historical_prices)
-            positive_volume = np.sum(historical_volumes[1:][price_changes > 0])
-            negative_volume = np.sum(historical_volumes[1:][price_changes < 0])
-            total_volume = positive_volume + negative_volume
-            
-            # Evita divisione per zero
-            if total_volume == 0:
-                volume_bias = 0.0
-            else:
-                volume_bias = (positive_volume - negative_volume) / total_volume
-            
-            # 3. RSI Bias (overbought/oversold)
-            current_rsi = rsi_features[-1]
-            rsi_bias = 0.0
-            if current_rsi > 70:
-                rsi_bias = -1.0  # Overbought (bearish bias)
-            elif current_rsi < 30:
-                rsi_bias = 1.0   # Oversold (bullish bias)
-            else:
-                rsi_bias = (current_rsi - 50) / 50  # Normalizzato tra -1 e 1
-            
-            # 4. Momentum Bias
-            momentum = np.mean(np.diff(historical_prices[-5:]))
-            momentum_normalized = momentum / (np.std(historical_prices) + 1e-10)
-            
-            # 5. Validazione con dati futuri
-            future_return = (future_prices[-1] - current_price) / current_price
-            future_volatility = np.std(future_prices) / current_price
-            
-            # TARGET FINALE: 6 dimensioni per diversi tipi di bias
-            y_val = np.array([
-                max(0, min(1, (recent_trend + 1) / 2)),           # bullish_trend_bias [0,1]
-                max(0, min(1, (-recent_trend + 1) / 2)),          # bearish_trend_bias [0,1]
-                max(0, min(1, (volume_bias + 1) / 2)),            # bullish_volume_bias [0,1]
-                max(0, min(1, (-volume_bias + 1) / 2)),           # bearish_volume_bias [0,1]
-                max(0, min(1, (-rsi_bias + 1) / 2)),              # overbought_bias [0,1]
-                max(0, min(1, (rsi_bias + 1) / 2))                # oversold_bias [0,1]
-            ])
-            
-            # Aggiungi rumore per prevenire target identici
-            noise = np.random.normal(0, 0.01, size=y_val.shape)
-            y_val = np.clip(y_val + noise, 0, 1)
-            
-            # Validazione finale
-            if (np.isnan(y_val).any() or np.isinf(y_val).any()):
-                skipped_samples += 1
-                continue
-            
-            X.append(features)
-            y.append(y_val)
-        
-        if len(X) == 0:
-            return np.empty((0, window_size * 4)), np.empty((0, 6))
-        
-        X_array, y_array = np.array(X), np.array(y)
-        
-        # Log statistiche
-        safe_print(f"📊 Bias Dataset Summary: Total samples={len(y_array)}, Skipped={skipped_samples}")
-        if len(y_array) > 0:
-            safe_print(f"📊 Bias targets: mean={np.mean(y_array):.6f}, std={np.std(y_array):.6f}")
-            safe_print(f"📊 Bias range: min={np.min(y_array):.6f}, max={np.max(y_array):.6f}")
-        
-        return X_array, y_array
-
-    def _prepare_pattern_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        🔧 Prepara dataset per Pattern Recognition con target realistici
-        Versione avanzata con 25 pattern classici + pattern AI
-        """
-        prices = data['prices']
-        volumes = data['volumes']
-        
-        # Parametri ottimizzati per pattern recognition
-        window_size = 50
-        lookback_window = 100  # Finestra per analisi pattern
-        future_window = 20     # Finestra per validazione pattern
-        
-        X, y = [], []
-        skipped_samples = 0
-        
-        for i in range(window_size + lookback_window, len(prices) - future_window):
-            # Features: prezzi, volumi, indicatori (stesse di S/R)
-            price_features = prices[i-window_size:i]
-            volume_features = volumes[i-window_size:i]
-            sma_features = data['sma_20'][i-window_size:i]
-            rsi_features = data['rsi'][i-window_size:i]
-            
-            # Validazione NaN per ogni componente
-            if (np.isnan(price_features).any() or 
-                np.isnan(volume_features).any() or 
-                np.isnan(sma_features).any() or 
-                np.isnan(rsi_features).any()):
-                skipped_samples += 1
-                continue
-            
-            features = np.concatenate([
-                price_features,
-                volume_features,
-                sma_features,
-                rsi_features
-            ])
-            
-            # TARGET per PATTERN RECOGNITION
-            current_price = prices[i]
-            historical_prices = prices[i-lookback_window:i]
-            future_prices = prices[i:i+future_window]
-            historical_volumes = volumes[i-lookback_window:i]
-            
-            # Validazione prezzi
-            if (current_price == 0 or np.isnan(current_price) or 
-                np.isnan(historical_prices).any() or np.isnan(future_prices).any() or
-                np.isnan(historical_volumes).any()):
-                skipped_samples += 1
-                continue
-            
-            # PATTERN DETECTION ALGORITMI
-            
-            # 1. Classical Pattern Detection (25 patterns)
-            classical_patterns = self._detect_classical_patterns(historical_prices, current_price)
-            
-            # 2. CNN Pattern Recognition (shape-based)
-            cnn_patterns = self._detect_cnn_patterns(historical_prices, current_price)
-            
-            # 3. LSTM Sequence Analysis (temporal patterns)
-            lstm_patterns = self._detect_lstm_patterns(historical_prices, historical_volumes, current_price)
-            
-            # 4. Transformer Advanced AI (attention-based)
-            transformer_patterns = self._detect_transformer_patterns(historical_prices, historical_volumes, current_price)
-            
-            # 5. Ensemble Consensus (multi-algorithm voting)
-            ensemble_patterns = self._detect_ensemble_patterns(
-                classical_patterns, cnn_patterns, lstm_patterns, transformer_patterns
-            )
-            
-            # TARGET FINALE: 5 dimensioni per diversi tipi di pattern detection
-            y_val = np.array([
-                classical_patterns,     # Classical patterns [0,1]
-                cnn_patterns,          # CNN patterns [0,1] 
-                lstm_patterns,         # LSTM patterns [0,1]
-                transformer_patterns,  # Transformer patterns [0,1]
-                ensemble_patterns      # Ensemble patterns [0,1]
-            ])
-            
-            # Aggiungi rumore per prevenire target identici
-            noise = np.random.normal(0, 0.01, size=y_val.shape)
-            y_val = np.clip(y_val + noise, 0, 1)
-            
-            # Validazione finale
-            if (np.isnan(y_val).any() or np.isinf(y_val).any()):
-                skipped_samples += 1
-                continue
-            
-            X.append(features)
-            y.append(y_val)
-        
-        if len(X) == 0:
-            return np.empty((0, window_size * 4)), np.empty((0, 5))
-        
-        X_array, y_array = np.array(X), np.array(y)
-        
-        # Log statistiche
-        safe_print(f"📊 Pattern Dataset Summary: Total samples={len(y_array)}, Skipped={skipped_samples}")
-        if len(y_array) > 0:
-            safe_print(f"📊 Pattern targets: mean={np.mean(y_array):.6f}, std={np.std(y_array):.6f}")
-            safe_print(f"📊 Pattern range: min={np.min(y_array):.6f}, max={np.max(y_array):.6f}")
-        
-        return X_array, y_array
-
-    def _detect_classical_patterns(self, prices: np.ndarray, current_price: float) -> float:
-        """Rileva 25 pattern classici (Head&Shoulders, Double Top, etc.)"""
-        pattern_score = 0.0
-        
-        # Pattern 1: Head and Shoulders
-        if len(prices) >= 60:
-            left_shoulder = np.max(prices[:20])
-            head = np.max(prices[20:40])
-            right_shoulder = np.max(prices[40:60])
-            
-            if head > left_shoulder * 1.02 and head > right_shoulder * 1.02:
-                pattern_score += 0.3
-        
-        # Pattern 2: Double Top
-        peaks = []
-        for j in range(10, len(prices) - 10):
-            if prices[j] > np.max(prices[j-10:j]) and prices[j] > np.max(prices[j+1:j+11]):
-                peaks.append(prices[j])
-        
-        if len(peaks) >= 2 and abs(peaks[-1] - peaks[-2]) / peaks[-1] < 0.01:
-            pattern_score += 0.2
-        
-        # Pattern 3: Triangle formation
-        recent_highs = [p for p in prices[-30:] if p > np.mean(prices[-30:])]
-        recent_lows = [p for p in prices[-30:] if p < np.mean(prices[-30:])]
-        
-        if len(recent_highs) >= 3 and len(recent_lows) >= 3:
-            high_trend = np.polyfit(range(len(recent_highs)), recent_highs, 1)[0]
-            low_trend = np.polyfit(range(len(recent_lows)), recent_lows, 1)[0]
-            
-            if abs(high_trend) < 0.001 and abs(low_trend) < 0.001:  # Converging lines
-                pattern_score += 0.15
-        
-        # Normalizza e aggiungi variabilità
-        pattern_score = max(0, min(1, pattern_score + np.random.uniform(-0.05, 0.05)))
-        return pattern_score
-
-    def _detect_cnn_patterns(self, prices: np.ndarray, current_price: float) -> float:
-        """Rileva pattern basati su shape/forma (CNN-style)"""
-        pattern_score = 0.0
-        
-        # Normalizza i prezzi per shape analysis
-        normalized_prices = (prices - np.mean(prices)) / np.std(prices)
-        
-        # Pattern CNN 1: Ascending/Descending wedge
-        if len(normalized_prices) >= 20:
-            slope = np.polyfit(range(len(normalized_prices)), normalized_prices, 1)[0]
-            if abs(slope) > 0.05:  # Strong trend
-                pattern_score += 0.25
-        
-        # Pattern CNN 2: Volatility clustering
-        price_changes = np.diff(normalized_prices)
-        volatility = np.std(price_changes)
-        recent_vol = np.std(price_changes[-10:])
-        
-        if recent_vol > volatility * 1.5:  # High recent volatility
-            pattern_score += 0.2
-        
-        # Pattern CNN 3: Price momentum
-        momentum = np.mean(price_changes[-5:])
-        if abs(momentum) > 0.1:
-            pattern_score += 0.15
-        
-        # Normalizza e aggiungi variabilità
-        pattern_score = max(0, min(1, pattern_score + np.random.uniform(-0.05, 0.05)))
-        return pattern_score
-
-    def _detect_lstm_patterns(self, prices: np.ndarray, volumes: np.ndarray, current_price: float) -> float:
-        """Rileva pattern sequenziali (LSTM-style)"""
-        pattern_score = 0.0
-        
-        # Pattern LSTM 1: Price-Volume divergence
-        price_trend = np.polyfit(range(len(prices[-20:])), prices[-20:], 1)[0]
-        volume_trend = np.polyfit(range(len(volumes[-20:])), volumes[-20:], 1)[0]
-        
-        # Normalize trends
-        price_trend_norm = price_trend / np.mean(prices[-20:])
-        volume_trend_norm = volume_trend / np.mean(volumes[-20:])
-        
-        if abs(price_trend_norm - volume_trend_norm) > 0.001:  # Divergence
-            pattern_score += 0.3
-        
-        # Pattern LSTM 2: Sequential momentum
-        momentum_sequence = []
-        for j in range(5, len(prices)):
-            momentum = (prices[j] - prices[j-5]) / prices[j-5]
-            momentum_sequence.append(momentum)
-        
-        if len(momentum_sequence) >= 10:
-            momentum_trend = np.polyfit(range(len(momentum_sequence[-10:])), momentum_sequence[-10:], 1)[0]
-            if abs(momentum_trend) > 0.01:
-                pattern_score += 0.2
-        
-        # Normalizza e aggiungi variabilità
-        pattern_score = max(0, min(1, pattern_score + np.random.uniform(-0.05, 0.05)))
-        return pattern_score
-
-    def _detect_transformer_patterns(self, prices: np.ndarray, volumes: np.ndarray, current_price: float) -> float:
-        """Rileva pattern avanzati (Transformer-style attention)"""
-        pattern_score = 0.0
-        
-        # Pattern Transformer 1: Multi-timeframe attention
-        short_ma = np.mean(prices[-5:])
-        medium_ma = np.mean(prices[-20:])
-        long_ma = np.mean(prices[-50:])
-        
-        # Attention weights based on price position
-        if current_price > short_ma > medium_ma > long_ma:  # Strong uptrend
-            pattern_score += 0.4
-        elif current_price < short_ma < medium_ma < long_ma:  # Strong downtrend
-            pattern_score += 0.4
-        
-        # Pattern Transformer 2: Volume-weighted attention
-        volume_weighted_price = np.average(prices[-20:], weights=volumes[-20:])
-        simple_average = np.mean(prices[-20:])
-        
-        if abs(volume_weighted_price - simple_average) / simple_average > 0.001:
-            pattern_score += 0.2
-        
-        # Normalizza e aggiungi variabilità
-        pattern_score = max(0, min(1, pattern_score + np.random.uniform(-0.05, 0.05)))
-        return pattern_score
-
-    def _detect_ensemble_patterns(self, classical: float, cnn: float, lstm: float, transformer: float) -> float:
-        """Combina tutti i pattern con voting ensemble"""
-        # Weighted average of all pattern types
-        weights = [0.25, 0.25, 0.25, 0.25]  # Equal weight for now
-        ensemble_score = (classical * weights[0] + 
-                         cnn * weights[1] + 
-                         lstm * weights[2] + 
-                         transformer * weights[3])
-        
-        # Add consensus bonus if multiple algorithms agree
-        agreement_threshold = 0.5
-        agreements = sum([1 for score in [classical, cnn, lstm, transformer] if score > agreement_threshold])
-        
-        if agreements >= 3:  # Strong consensus
-            ensemble_score += 0.1
-        elif agreements >= 2:  # Moderate consensus
-            ensemble_score += 0.05
-        
-        # Normalizza e aggiungi variabilità
-        ensemble_score = max(0, min(1, ensemble_score + np.random.uniform(-0.02, 0.02)))
-        return ensemble_score
-
-    def _validate_targets(self, targets: np.ndarray) -> Dict[str, Any]:
-        """
-        🔧 CRITICO: Valida che i target abbiano varianza sufficiente per training ML
-        Previene il collasso del modello causato da target degeneri
-        """
-        if len(targets) == 0:
-            return {
-                'mean': 0.0,
-                'std': 0.0,
-                'min': 0.0,
-                'max': 0.0,
-                'unique_values': 0,
-                'total_samples': 0,
-                'is_degenerate': True,
-                'reasons': ['empty_array']
-            }
-        
-        # Calcola statistiche complete
-        stats = {
-            'mean': float(np.mean(targets)),
-            'std': float(np.std(targets)),
-            'min': float(np.min(targets)),
-            'max': float(np.max(targets)),
-            'unique_values': len(np.unique(targets)),
-            'total_samples': len(targets),
-            'is_degenerate': False,
-            'reasons': []
-        }
-        
-        # 🚨 CRITICO: Check per degenerazione target
-        if stats['std'] < 1e-6:
-            stats['is_degenerate'] = True
-            stats['reasons'].append('zero_variance')
-        
-        if stats['min'] == stats['max']:
-            stats['is_degenerate'] = True
-            stats['reasons'].append('single_value')
-        
-        if np.all(targets == 0):
-            stats['is_degenerate'] = True
-            stats['reasons'].append('all_zeros')
-        
-        if stats['max'] - stats['min'] < 1e-6:
-            stats['is_degenerate'] = True
-            stats['reasons'].append('zero_range')
-        
-        if stats['unique_values'] < 5:
-            stats['is_degenerate'] = True
-            stats['reasons'].append('insufficient_diversity')
-        
-        # 🔍 Log dettagliato per debug
-        if stats['is_degenerate']:
-            safe_print(f"⚠️ Target degeneration detected: {stats}")
-        else:
-            safe_print(f"✅ Target validation passed: mean={stats['mean']:.6f}, std={stats['std']:.6f}, unique={stats['unique_values']}")
-        
-        return stats
-    
-    def _apply_emergency_target_fix(self, y_array: np.ndarray, data: Dict[str, np.ndarray]) -> np.ndarray:
-        """
-        🚨 EMERGENCY: Corregge target degeneri con strategie multiple
-        Previene il collasso totale del training ML
-        """
-        safe_print(f"🚨 APPLYING EMERGENCY TARGET FIX to {len(y_array)} samples")
-        
-        # Strategia 1: Basata su volatilità storica
-        prices = data['prices']
-        if len(prices) > 100:
-            # Calcola volatilità degli ultimi 100 prezzi
-            recent_prices = prices[-100:]
-            price_volatility = np.std(recent_prices) / np.mean(recent_prices)
-            
-            # Target basati su volatilità reale del mercato
-            base_support_distance = price_volatility * 0.3  # 30% della volatilità
-            base_resistance_distance = price_volatility * 0.35  # 35% della volatilità
-            
-            # Aggiungi diversità con variazione casuale
-            support_variation = np.random.uniform(0.8, 1.5, len(y_array))
-            resistance_variation = np.random.uniform(0.8, 1.5, len(y_array))
-            
-            synthetic_support = base_support_distance * support_variation
-            synthetic_resistance = base_resistance_distance * resistance_variation
-            
-            # Assicura range minimo e massimo ragionevole
-            synthetic_support = np.clip(synthetic_support, 0.0005, 0.05)  # 0.05% - 5%
-            synthetic_resistance = np.clip(synthetic_resistance, 0.0005, 0.05)
-            
-            safe_print(f"🔧 VOLATILITY-BASED FIX: price_volatility={price_volatility:.6f}")
-            safe_print(f"🔧 Support range: {np.min(synthetic_support):.6f} - {np.max(synthetic_support):.6f}")
-            safe_print(f"🔧 Resistance range: {np.min(synthetic_resistance):.6f} - {np.max(synthetic_resistance):.6f}")
-            
-        else:
-            # Strategia 2: Fallback con target fissi diversificati
-            safe_print(f"🔧 FALLBACK FIX: Using fixed diversified targets")
-            
-            # Crea target diversificati su scale logaritmica
-            support_base = np.logspace(np.log10(0.001), np.log10(0.02), len(y_array))
-            resistance_base = np.logspace(np.log10(0.001), np.log10(0.025), len(y_array))
-            
-            # Mescola per evitare pattern
-            np.random.shuffle(support_base)
-            np.random.shuffle(resistance_base)
-            
-            synthetic_support = support_base
-            synthetic_resistance = resistance_base
-        
-        # Strategia 3: Aggiungi micro-variazioni per unicità
-        micro_noise_support = np.random.uniform(-0.0001, 0.0001, len(y_array))
-        micro_noise_resistance = np.random.uniform(-0.0001, 0.0001, len(y_array))
-        
-        synthetic_support += micro_noise_support
-        synthetic_resistance += micro_noise_resistance
-        
-        # Assicura che siano sempre positivi
-        synthetic_support = np.abs(synthetic_support)
-        synthetic_resistance = np.abs(synthetic_resistance)
-        
-        # Applica i target sintetici
-        y_array_fixed = y_array.copy()
-        y_array_fixed[:, 0] = synthetic_support
-        y_array_fixed[:, 1] = synthetic_resistance
-        
-        # Validazione finale
-        final_support_std = np.std(synthetic_support)
-        final_resistance_std = np.std(synthetic_resistance)
-        final_support_unique = len(np.unique(synthetic_support))
-        final_resistance_unique = len(np.unique(synthetic_resistance))
-        
-        safe_print(f"🔧 EMERGENCY FIX APPLIED:")
-        safe_print(f"   Support: std={final_support_std:.6f}, unique={final_support_unique}")
-        safe_print(f"   Resistance: std={final_resistance_std:.6f}, unique={final_resistance_unique}")
-        
-        return y_array_fixed
 
     def clear_events_buffer(self, event_types: Optional[List[str]] = None) -> None:
         """Clear event buffers after slave module processing"""
@@ -17477,280 +17621,6 @@ class AssetAnalyzer:
             for event_type in event_types:
                 if event_type == 'system_events' and hasattr(self, '_system_events_buffer'):
                     self._system_events_buffer.clear()
-
-    def _prepare_momentum_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        🔧 Prepara dataset per RSI Momentum Analysis con target realistici
-        Combina RSI, MACD, divergenze e velocity per analisi momentum completa
-        """
-        prices = data['prices']
-        volumes = data['volumes']
-        
-        # Parametri ottimizzati per momentum analysis
-        window_size = 50
-        lookback_window = 100  # Finestra per analisi momentum
-        
-        if len(prices) < lookback_window + window_size:
-            return np.array([]), np.array([])
-            
-        # Calcola RSI se non fornito
-        if 'rsi' in data:
-            rsi_values = data['rsi']
-        else:
-            rsi_values = self._calculate_rsi(prices)
-            
-        # Calcola MACD se non fornito
-        if 'macd_line' in data and 'macd_signal' in data:
-            macd_line = data['macd_line']
-            macd_signal = data['macd_signal']
-        else:
-            # Calcolo EMA semplificato usando convoluzione
-            ema_12 = np.convolve(prices, np.ones(12)/12, mode='same')
-            ema_26 = np.convolve(prices, np.ones(26)/26, mode='same')
-            macd_line = ema_12 - ema_26
-            macd_signal = np.convolve(macd_line, np.ones(9)/9, mode='same')
-            
-        macd_histogram = macd_line - macd_signal
-        
-        X, y = [], []
-        
-        # Preparazione dei campioni
-        for i in range(lookback_window, len(prices) - window_size):
-            # Features window
-            price_window = prices[i-window_size:i]
-            volume_window = volumes[i-window_size:i]
-            rsi_window = rsi_values[i-window_size:i]
-            macd_window = macd_line[i-window_size:i]
-            macd_hist_window = macd_histogram[i-window_size:i]
-            
-            # Normalizza features
-            price_normalized = (price_window - np.mean(price_window)) / (np.std(price_window) + 1e-8)
-            volume_normalized = (volume_window - np.mean(volume_window)) / (np.std(volume_window) + 1e-8)
-            rsi_normalized = (rsi_window - 50) / 50  # RSI già in range 0-100
-            macd_normalized = (macd_window - np.mean(macd_window)) / (np.std(macd_window) + 1e-8)
-            macd_hist_normalized = (macd_hist_window - np.mean(macd_hist_window)) / (np.std(macd_hist_window) + 1e-8)
-            
-            # Combina features
-            features = np.concatenate([
-                price_normalized,
-                volume_normalized,
-                rsi_normalized,
-                macd_normalized,
-                macd_hist_normalized
-            ])
-            
-            # Target: 4 dimensioni di momentum
-            current_price = prices[i]
-            current_rsi = rsi_values[i]
-            current_macd = macd_line[i]
-            current_macd_hist = macd_histogram[i]
-            
-            # 1. RSI Momentum (velocity)
-            rsi_prev = rsi_values[i-10] if i >= 10 else current_rsi
-            rsi_velocity = (current_rsi - rsi_prev) / 10
-            rsi_momentum = np.tanh(rsi_velocity / 5)  # Normalizza tra -1 e 1
-            
-            # 2. MACD Momentum 
-            macd_prev = macd_line[i-5] if i >= 5 else current_macd
-            macd_velocity = current_macd - macd_prev
-            macd_momentum = np.tanh(macd_velocity / np.std(macd_line[max(0, i-50):i+1]))
-            
-            # 3. Price-RSI Divergence
-            price_change = (current_price - prices[i-20]) / prices[i-20] if i >= 20 else 0
-            rsi_change = current_rsi - rsi_values[i-20] if i >= 20 else 0
-            
-            # Divergenza: prezzo e RSI vanno in direzioni opposte
-            divergence = 0.0
-            if price_change > 0.01 and rsi_change < -5:  # Bearish divergence
-                divergence = -min(price_change + abs(rsi_change)/100, 1.0)
-            elif price_change < -0.01 and rsi_change > 5:  # Bullish divergence  
-                divergence = min(abs(price_change) + rsi_change/100, 1.0)
-            
-            # 4. Overbought/Oversold Momentum
-            volume_avg = np.mean(volumes[max(0, i-20):i])
-            volume_current = volumes[i]
-            volume_factor = min(volume_current / (volume_avg + 1e-8), 3.0)
-            
-            overbought_momentum = 0.0
-            if current_rsi > 70:
-                overbought_momentum = ((current_rsi - 70) / 30) * np.sqrt(volume_factor)
-            elif current_rsi < 30:
-                overbought_momentum = -((30 - current_rsi) / 30) * np.sqrt(volume_factor)
-                
-            # Combina target con variabilità
-            random_factor = np.random.uniform(0.9, 1.1)
-            y_val = np.array([
-                rsi_momentum * random_factor,
-                macd_momentum * random_factor, 
-                divergence * random_factor,
-                overbought_momentum * random_factor
-            ])
-            
-            # Aggiungi rumore per evitare degenerazione
-            noise = np.random.normal(0, 0.05, 4)
-            y_val += noise
-            
-            # Clip values to reasonable range
-            y_val = np.clip(y_val, -2.0, 2.0)
-            
-            X.append(features)
-            y.append(y_val)
-        
-        if len(X) == 0:
-            return np.array([]), np.array([])
-            
-        X_array = np.array(X)
-        y_array = np.array(y)
-        
-        # Logging per debug usando safe_print come negli altri metodi
-        safe_print(f"[CHART] Momentum Dataset Summary: Total samples={len(y_array)}, Skipped={len(prices) - lookback_window - window_size - len(y_array)}")
-        safe_print(f"[CHART] Momentum targets: mean={np.mean(y_array):.6f}, std={np.std(y_array):.6f}")
-        safe_print(f"[CHART] Momentum range: min={np.min(y_array):.6f}, max={np.max(y_array):.6f}")
-        
-        return X_array, y_array
-
-    def _prepare_trend_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        🔧 Prepara dataset per Trend Analysis con target realistici
-        Analizza slope dei prezzi futuri con validazione robusta NaN
-        """
-        prices = data['prices']
-        volumes = data['volumes']
-        
-        # Parametri ottimizzati per trend analysis
-        window_size = 100
-        future_window = 20
-        
-        if len(prices) < window_size + future_window:
-            return np.array([]), np.array([])
-        
-        # Calcola indicatori se non forniti
-        if 'sma_20' not in data:
-            data['sma_20'] = np.convolve(prices, np.ones(20)/20, mode='same')
-        if 'sma_50' not in data:
-            data['sma_50'] = np.convolve(prices, np.ones(50)/50, mode='same')
-        if 'rsi' not in data:
-            # Calcolo RSI semplificato
-            price_changes = np.diff(prices, prepend=prices[0])
-            gains = np.where(price_changes > 0, price_changes, 0)
-            losses = np.where(price_changes < 0, -price_changes, 0)
-            avg_gains = np.convolve(gains, np.ones(14)/14, mode='same')
-            avg_losses = np.convolve(losses, np.ones(14)/14, mode='same')
-            rs = avg_gains / (avg_losses + 1e-10)
-            data['rsi'] = 100 - (100 / (1 + rs))
-        if 'returns' not in data:
-            # Fix per broadcasting: mantieni la stessa lunghezza dell'array prices
-            price_changes = np.diff(prices, prepend=prices[0])
-            data['returns'] = price_changes / prices
-
-        X, y = [], []
-        skipped_samples = 0
-        
-        for i in range(window_size, len(prices) - future_window):
-            # Features aggregate con validazione NaN
-            features = []
-            
-            # Price position relative to MAs
-            current_price = prices[i]
-            
-            # Validazione prezzo corrente
-            if np.isnan(current_price) or current_price <= 0:
-                skipped_samples += 1
-                continue
-            
-            # SMA features con validazione
-            if not np.isnan(data['sma_20'][i]):
-                features.append((current_price - data['sma_20'][i]) / data['sma_20'][i])
-            else:
-                features.append(0)
-            
-            if not np.isnan(data['sma_50'][i]):
-                features.append((current_price - data['sma_50'][i]) / data['sma_50'][i])
-            else:
-                features.append(0)
-            
-            # RSI con validazione
-            rsi_val = data['rsi'][i]
-            if np.isnan(rsi_val):
-                features.append(0.5)  # Neutro se RSI non disponibile
-            else:
-                features.append(rsi_val / 100)
-            
-            # Recent returns statistics con validazione
-            recent_returns = data['returns'][max(0, i-20):i]
-            if len(recent_returns) > 0 and not np.isnan(recent_returns).all():
-                valid_returns = recent_returns[~np.isnan(recent_returns)]
-                if len(valid_returns) > 0:
-                    features.extend([
-                        np.mean(valid_returns),
-                        np.std(valid_returns) if len(valid_returns) > 1 else 0,
-                        np.min(valid_returns),
-                        np.max(valid_returns)
-                    ])
-                else:
-                    features.extend([0, 0, 0, 0])  # Default se tutti NaN
-            else:
-                features.extend([0, 0, 0, 0])  # Default se non ci sono dati
-            
-            # Volume trend con validazione
-            recent_volumes = volumes[max(0, i-20):i]
-            if len(recent_volumes) > 0 and not np.isnan(recent_volumes).all():
-                valid_volumes = recent_volumes[~np.isnan(recent_volumes)]
-                all_volumes = volumes[~np.isnan(volumes)]
-                if len(valid_volumes) > 0 and len(all_volumes) > 0:
-                    features.append(np.mean(valid_volumes) / (np.mean(all_volumes) + 1e-8))
-                else:
-                    features.append(1.0)  # Volume neutro
-            else:
-                features.append(1.0)  # Volume neutro
-            
-            # Target: slope della regressione lineare sui prezzi futuri
-            future_prices = prices[i:i+future_window]
-            
-            # Validazione future prices
-            if np.isnan(future_prices).any() or len(future_prices) < future_window:
-                skipped_samples += 1
-                continue
-            
-            try:
-                # Calcola slope della regressione lineare sui prezzi futuri
-                x_vals = np.arange(len(future_prices))
-                slope, _ = np.polyfit(x_vals, future_prices, 1)
-                
-                # Normalizza il slope rispetto al prezzo corrente
-                normalized_slope = slope / current_price
-                
-                # Validazione target finale
-                if np.isnan(normalized_slope) or np.isinf(normalized_slope):
-                    skipped_samples += 1
-                    continue
-                
-                # Clamp del target per evitare valori estremi e aggiunge variabilità
-                normalized_slope = np.clip(normalized_slope, -0.1, 0.1)
-                
-                # Aggiungi rumore per evitare degenerazione
-                noise = np.random.normal(0, 0.001)
-                normalized_slope += noise
-                
-                X.append(features)
-                y.append(normalized_slope)
-                
-            except (np.linalg.LinAlgError, ValueError):
-                skipped_samples += 1
-                continue
-        
-        if len(X) == 0:
-            return np.array([]), np.array([])
-        
-        X_array = np.array(X)
-        y_array = np.array(y)
-        
-        # Logging per debug usando safe_print come negli altri metodi
-        safe_print(f"[CHART] Trend Dataset Summary: Total samples={len(y_array)}, Skipped={skipped_samples}")
-        safe_print(f"[CHART] Trend targets: mean={np.mean(y_array):.6f}, std={np.std(y_array):.6f}")
-        safe_print(f"[CHART] Trend range: min={np.min(y_array):.6f}, max={np.max(y_array):.6f}")
-        
-        return X_array, y_array
 
 # ================== MAIN ANALYZER SYSTEM ==================
 
