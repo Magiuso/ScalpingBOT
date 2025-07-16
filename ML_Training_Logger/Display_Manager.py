@@ -597,10 +597,12 @@ class DisplayManager:
         return capabilities
     
     def _clear_screen(self):
-        """Pulisce lo schermo"""
-        if self.capabilities.supports_cursor_control:
-            print("\033[2J\033[H", end="")  # Clear screen and move to top
-            sys.stdout.flush()
+        """Pulisce lo schermo - DISABILITATO per mantenere log persistenti"""
+        # NOTA: Comando di clear disabilitato per evitare cancellazione log
+        # if self.capabilities.supports_cursor_control:
+        #     print("\033[2J\033[H", end="")  # Clear screen and move to top
+        #     sys.stdout.flush()
+        pass  # Non pulire lo schermo per mantenere i log visibili
     
     def _move_cursor_to(self, line: int, column: int = 1):
         """Muove cursore a posizione specifica"""

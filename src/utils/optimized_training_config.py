@@ -276,7 +276,7 @@ class OptimizedTrainingPipeline:
                 gradient_explosion_threshold=50.0,
                 enable_detailed_logging=True,
                 save_metrics_to_file=True,
-                plots_dir="./training_plots",
+                plots_dir="./test_analyzer_data",
                 metrics_file_format="json"
             )
         
@@ -292,7 +292,7 @@ class OptimizedTrainingPipeline:
                 loss_stagnation_threshold=50,
                 enable_detailed_logging=True,
                 save_metrics_to_file=True,
-                plots_dir="./training_plots",
+                plots_dir="./test_analyzer_data",
                 metrics_file_format="json"
             )
         
@@ -308,7 +308,7 @@ class OptimizedTrainingPipeline:
                 gradient_explosion_threshold=100.0,
                 enable_detailed_logging=True,
                 save_metrics_to_file=True,
-                plots_dir="./training_plots",
+                plots_dir="./test_analyzer_data",
                 metrics_file_format="json"
             )
         
@@ -323,7 +323,7 @@ class OptimizedTrainingPipeline:
                 gradient_explosion_threshold=20.0,
                 enable_detailed_logging=False,
                 save_metrics_to_file=True,
-                plots_dir="./training_plots",
+                plots_dir="./test_analyzer_data",
                 metrics_file_format="json"
             )
 

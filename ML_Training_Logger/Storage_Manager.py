@@ -221,6 +221,10 @@ class JSONWriter:
             # Write event
             bytes_written = self.file_handle.write(json_str)
             
+            # FLUSH immediato per garantire scrittura
+            self.file_handle.flush()
+            os.fsync(self.file_handle.fileno())
+            
             return bytes_written
     
     def write_events_batch(self, events: List[MLEvent]) -> int:
@@ -328,6 +332,10 @@ class CSVWriter:
             initial_pos = self.file_handle.tell()
             self.csv_writer.writerow(csv_row)
             final_pos = self.file_handle.tell()
+            
+            # FLUSH immediato per garantire scrittura
+            self.file_handle.flush()
+            os.fsync(self.file_handle.fileno())
             
             return final_pos - initial_pos
     

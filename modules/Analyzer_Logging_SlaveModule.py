@@ -11,6 +11,7 @@ import threading
 import time
 import json
 import csv
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Set
@@ -67,7 +68,7 @@ class LoggingConfig:
     max_queue_size: int = 10000       # Max eventi in coda
     
     # Configurazione file
-    log_directory: str = "./analyzer_logs_slave"
+    log_directory: str = "./test_analyzer_data"
     log_rotation_hours: int = 24       # Rotazione file ogni 24 ore
     max_log_files: int = 30           # Mantieni 30 file massimo
     
@@ -482,6 +483,9 @@ class AnalyzerLoggingSlave:
             with open(json_file, 'a', encoding='utf-8') as f:
                 json.dump(event, f, default=str)
                 f.write('\n')
+                # FLUSH immediato per garantire scrittura
+                f.flush()
+                os.fsync(f.fileno())
         
         # Use thread pool for file I/O
         loop = asyncio.get_event_loop()

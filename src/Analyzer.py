@@ -325,7 +325,7 @@ class AnalyzerConfig:
     ml_logger_terminal_mode: str = "dashboard"  # dashboard, scroll, minimal
     ml_logger_file_output: bool = True  # Abilita output su file
     ml_logger_formats: List[str] = field(default_factory=lambda: ["json", "csv"])  # Formati output
-    ml_logger_base_directory: str = "./ml_training_logs"  # Directory base log
+    ml_logger_base_directory: str = "./test_analyzer_data"  # Directory base log
     ml_logger_rate_limit_ticks: int = 100  # Rate limit per tick processing
     ml_logger_flush_interval: float = 5.0  # Intervallo flush su disco (secondi)
     
@@ -931,7 +931,7 @@ class AsyncFileWriter:
         
         fieldnames = list(first_data.keys())
         
-        # Scrittura batch con context manager
+        # Scrittura batch con context manager e flush
         with open(file_path, 'a', newline='', encoding='utf-8', buffering=8192) as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             
@@ -953,6 +953,10 @@ class AsyncFileWriter:
                             sanitized_data[key] = value
                     
                     writer.writerow(sanitized_data)
+            
+            # FLUSH esplicito per garantire scrittura su disco
+            f.flush()
+            os.fsync(f.fileno())
     
     def _write_json_batch(self, file_path: str, tasks: List[Dict[str, Any]]) -> None:
         """Scrittura ottimizzata per JSON batch (append mode)"""
@@ -962,6 +966,9 @@ class AsyncFileWriter:
             with open(file_path, 'a', encoding='utf-8') as f:
                 json.dump(task['data'], f, default=str)
                 f.write('\n')
+                # FLUSH esplicito per ogni JSON
+                f.flush()
+                os.fsync(f.fileno())
     
     def _write_single_task(self, file_path: str, task: Dict[str, Any], file_exists: bool) -> None:
         """Fallback per scrittura singola"""
@@ -1131,7 +1138,7 @@ import logging
 class AnalyzerLogger:
     """Sistema di logging avanzato per l'Analyzer - VERSIONE CORRETTA MEMORY-SAFE"""
     
-    def __init__(self, base_path: str = "./analyzer_logs") -> None:
+    def __init__(self, base_path: str = "./test_analyzer_data") -> None:
         self.base_path = Path(base_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
         
@@ -1627,7 +1634,7 @@ class AnalyzerLogger:
 class AsyncAnalyzerLogger(AnalyzerLogger):
     """Versione asincrona di AnalyzerLogger - VERSIONE CORRETTA"""
     
-    def __init__(self, base_path: str = "./analyzer_logs"):
+    def __init__(self, base_path: str = "./test_analyzer_data"):
         super().__init__(base_path)
 
         self.loggers: Dict[str, Any] = {}
@@ -1746,6 +1753,9 @@ class AsyncAnalyzerLogger(AnalyzerLogger):
             with open(file_path, 'a', encoding='utf-8') as f:
                 json.dump(data, f, default=str)
                 f.write('\n')
+                # FLUSH per garantire scrittura immediata
+                f.flush()
+                os.fsync(f.fileno())
             
             sync_time = time.time() - start_time
             self.sync_write_times.append(sync_time)
@@ -5851,7 +5861,7 @@ class OptimizedLSTMTrainer:
             import os
             
             # Create emergency dump directory
-            emergency_dir = "emergency_dumps"
+            emergency_dir = "./test_analyzer_data/emergency_dumps"
             os.makedirs(emergency_dir, exist_ok=True)
             
             # Comprehensive state dump
@@ -8700,7 +8710,7 @@ class AlgorithmCompetition:
 class AssetAnalyzer:
     """Analyzer per un singolo asset con tutti i modelli competitivi e sistemi avanzati"""
        
-    def __init__(self, asset: str, data_path: str = "./analyzer_data", config: Optional[AnalyzerConfig] = None):
+    def __init__(self, asset: str, data_path: str = "./test_analyzer_data", config: Optional[AnalyzerConfig] = None):
         self.asset = asset
         self.data_path = f"{data_path}/{asset}"
         os.makedirs(self.data_path, exist_ok=True)
@@ -11701,17 +11711,36 @@ class AssetAnalyzer:
                 rsi_9 = self._calculate_rsi(prices, 9)
                 rsi_21 = self._calculate_rsi(prices, 21)
                 
-                current_rsi = rsi_14[-1]
+                # 🔧 ADDED: Validation dei risultati RSI
+                if (np.isnan(rsi_14).any() or np.isnan(rsi_9).any() or np.isnan(rsi_21).any() or
+                    np.isinf(rsi_14).any() or np.isinf(rsi_9).any() or np.isinf(rsi_21).any()):
+                    raise ValueError("RSI calculation returned invalid values")
+                
+                current_rsi = float(rsi_14[-1])
+                
+                # 🔧 ADDED: Validation current_rsi
+                if np.isnan(current_rsi) or np.isinf(current_rsi):
+                    current_rsi = 50.0
+                current_rsi = np.clip(current_rsi, 0.0, 100.0)
                 
                 # RSI momentum (rate of change)
                 if len(rsi_14) >= 5:
-                    rsi_momentum = rsi_14[-1] - rsi_14[-5]
+                    rsi_momentum = float(rsi_14[-1] - rsi_14[-5])
+                    # 🔧 ADDED: Validation rsi_momentum
+                    if np.isnan(rsi_momentum) or np.isinf(rsi_momentum):
+                        rsi_momentum = 0.0
                 else:
-                    rsi_momentum = 0
+                    rsi_momentum = 0.0
                 
                 # Divergence detection
                 price_trend = (prices[-1] - prices[-10]) / prices[-10] if len(prices) >= 10 else 0
                 rsi_trend = (rsi_14[-1] - rsi_14[-10]) / 100 if len(rsi_14) >= 10 else 0
+                
+                # 🔧 ADDED: Validation trends
+                if np.isnan(price_trend) or np.isinf(price_trend):
+                    price_trend = 0.0
+                if np.isnan(rsi_trend) or np.isinf(rsi_trend):
+                    rsi_trend = 0.0
                 
                 divergence = None
                 if price_trend > 0 and rsi_trend < 0:
@@ -11745,19 +11774,51 @@ class AssetAnalyzer:
             if abs(rsi_momentum) > 10:
                 confidence += 0.1
             
-            return {
-                "momentum_indicators": {
-                    "rsi_14": float(current_rsi),
-                    "rsi_9": float(rsi_9[-1]),
-                    "rsi_21": float(rsi_21[-1]),
-                    "rsi_momentum": float(rsi_momentum)
-                },
-                "momentum_state": momentum_state,
-                "signal": signal,
-                "divergence": divergence,
-                "confidence": float(min(0.9, confidence)),
-                "method": "RSI_Momentum_Analysis"
-            }
+            # 🔧 ADDED: Final validation per tutti i valori di output
+            try:
+                rsi_9_val = float(rsi_9[-1])
+                rsi_21_val = float(rsi_21[-1])
+                
+                # Sanitize values
+                if np.isnan(rsi_9_val) or np.isinf(rsi_9_val):
+                    rsi_9_val = 50.0
+                if np.isnan(rsi_21_val) or np.isinf(rsi_21_val):
+                    rsi_21_val = 50.0
+                    
+                rsi_9_val = np.clip(rsi_9_val, 0.0, 100.0)
+                rsi_21_val = np.clip(rsi_21_val, 0.0, 100.0)
+                
+                # Validate confidence
+                confidence = float(min(0.9, max(0.1, confidence)))
+                
+                return {
+                    "momentum_indicators": {
+                        "rsi_14": float(current_rsi),
+                        "rsi_9": float(rsi_9_val),
+                        "rsi_21": float(rsi_21_val),
+                        "rsi_momentum": float(rsi_momentum)
+                    },
+                    "momentum_state": momentum_state,
+                    "signal": signal,
+                    "divergence": divergence,
+                    "confidence": float(confidence),
+                    "method": "RSI_Momentum_Analysis"
+                }
+            except Exception as e:
+                # Ultimate fallback - return safe default values
+                return {
+                    "momentum_indicators": {
+                        "rsi_14": 50.0,
+                        "rsi_9": 50.0,
+                        "rsi_21": 50.0,
+                        "rsi_momentum": 0.0
+                    },
+                    "momentum_state": "neutral",
+                    "signal": "wait",
+                    "divergence": None,
+                    "confidence": 0.5,
+                    "method": "RSI_Momentum_Analysis"
+                }
         
         elif algorithm_name == "MACD_Analysis":
             prices = np.array(market_data['price_history'])
@@ -11910,34 +11971,70 @@ class AssetAnalyzer:
     # ================== HELPER FUNCTIONS ==================
 
     def _calculate_rsi(self, prices: np.ndarray, period: int = 14) -> np.ndarray:
-        """Calcola RSI"""
+        """Calcola RSI con gestione robusta degli errori"""
         if len(prices) < period + 1:
             return np.full_like(prices, 50.0)
         
-        deltas = np.diff(prices)
-        seed = deltas[:period+1]
-        up = seed[seed >= 0].sum() / period
-        down = -seed[seed < 0].sum() / period
-        rs = up / down if down != 0 else 100
-        rsi = np.zeros_like(prices)
-        rsi[:period] = 50.0
-        rsi[period] = 100 - 100 / (1 + rs)
+        # 🔧 ADDED: Protezione per valori non validi
+        if np.isnan(prices).any() or np.isinf(prices).any():
+            print(f"[WARNING] Invalid prices detected in RSI_Momentum calculation, using fallback")
+            return np.full_like(prices, 50.0)
         
-        for i in range(period + 1, len(prices)):
-            delta = deltas[i-1]
-            if delta > 0:
-                upval = delta
-                downval = 0.
-            else:
-                upval = 0.
-                downval = -delta
+        try:
+            deltas = np.diff(prices)
             
-            up = (up * (period - 1) + upval) / period
-            down = (down * (period - 1) + downval) / period
-            rs = up / down if down != 0 else 100
-            rsi[i] = 100 - 100 / (1 + rs)
-        
-        return rsi
+            # 🔧 ADDED: Controllo deltas validi
+            if np.isnan(deltas).any() or np.isinf(deltas).any():
+                print(f"[WARNING] Invalid deltas in RSI_Momentum calculation, using fallback")
+                return np.full_like(prices, 50.0)
+            
+            seed = deltas[:period+1]
+            up = seed[seed >= 0].sum() / period
+            down = -seed[seed < 0].sum() / period
+            
+            # 🔧 IMPROVED: Divisione per zero più robusta
+            if down == 0:
+                rs = 100
+            elif up == 0:
+                rs = 0
+            else:
+                rs = up / down
+                
+            rsi = np.full_like(prices, 50.0)  # Default a 50 invece di zeros
+            rsi[period] = 100 - 100 / (1 + rs)
+            
+            for i in range(period + 1, len(prices)):
+                delta = deltas[i-1]
+                if delta > 0:
+                    upval = delta
+                    downval = 0.
+                else:
+                    upval = 0.
+                    downval = -delta
+                
+                up = (up * (period - 1) + upval) / period
+                down = (down * (period - 1) + downval) / period
+                
+                # 🔧 IMPROVED: Protezione divisione per zero
+                if down == 0:
+                    rs = 100
+                elif up == 0:
+                    rs = 0
+                else:
+                    rs = up / down
+                    
+                # 🔧 ADDED: Validation del risultato RSI
+                rsi_value = 100 - 100 / (1 + rs)
+                if np.isnan(rsi_value) or np.isinf(rsi_value):
+                    rsi_value = 50.0
+                    
+                rsi[i] = np.clip(rsi_value, 0.0, 100.0)
+            
+            return rsi
+            
+        except Exception as e:
+            print(f"[WARNING] RSI_Momentum calculation failed: {e}, using fallback")
+            return np.full_like(prices, 50.0)
     
     def _prepare_lstm_features(self, prices: np.ndarray, volumes: np.ndarray, market_data: Optional[Dict[str, Any]] = None) -> np.ndarray:
         """Prepara features per modelli LSTM ULTRA-OTTIMIZZATO - ZERO COPIE NON NECESSARIE"""
@@ -16694,7 +16791,7 @@ class AdvancedMarketAnalyzer:
     VERSIONE COMPLETA E MODIFICATA per compatibilità con UnifiedAnalyzerSystem
     """
     
-    def __init__(self, data_path: str = "./analyzer_data"):
+    def __init__(self, data_path: str = "./test_analyzer_data"):
         self.data_path = data_path
         os.makedirs(data_path, exist_ok=True)
         
@@ -16847,7 +16944,7 @@ class AdvancedMarketAnalyzer:
                 async_processing=True,
                 batch_size=50,
                 max_queue_size=10000,
-                log_directory=f"./analyzer_logs/main_system"
+                log_directory=f"./test_analyzer_data"
             )
             
             # Create and start slave

@@ -89,7 +89,7 @@ class MonitorConfig:
     enable_plots: bool = True
     plot_update_interval: float = 30.0         # Secondi tra aggiornamenti plot
     save_plots: bool = True
-    plots_dir: str = "./training_plots"
+    plots_dir: str = "./test_analyzer_data"
     
     # Reporting
     enable_detailed_logging: bool = True
