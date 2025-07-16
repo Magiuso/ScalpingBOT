@@ -160,7 +160,7 @@ def test_actual_analyzer():
     
     try:
         # Import con percorso completo per risolvere i problemi dell'IDE
-        from src.Analyzer import AdvancedMarketAnalyzer as Analyzer
+        from src.Analyzer import AssetAnalyzer as Analyzer
         from src.Unified_Analyzer_System import UnifiedConfig, SystemMode, PerformanceProfile
         import os
         import glob
@@ -175,7 +175,7 @@ def test_actual_analyzer():
         config.max_tick_buffer_size = 1000
         
         # Initialize analyzer
-        analyzer = Analyzer("./test_analyzer_data")
+        analyzer = Analyzer("USTEC", "./test_analyzer_data")
         
         # Carica dati reali dal file di backtesting
         data_file = "./test_analyzer_data/backtest_USTEC_20250516_20250715.jsonl"
