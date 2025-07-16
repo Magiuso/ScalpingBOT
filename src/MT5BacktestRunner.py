@@ -340,6 +340,8 @@ class MT5DataExporter:
                 # Write in batches of 100 for speed
                 if len(self._write_batch) >= 500 or i == len(ticks) - 1:
                     file_handle.write('\n'.join(self._write_batch) + '\n')
+                    file_handle.flush()
+                    os.fsync(file_handle.fileno())
                     self._write_batch.clear()
 
                 ticks_processed += 1
@@ -443,13 +445,18 @@ class MT5DataExporter:
                         
                         # Write updated header
                         output_file_handle.write(json.dumps(header) + '\n')
+                        output_file_handle.flush()
+                        os.fsync(output_file_handle.fileno())
                     
                     # 🚀 STREAMING COPY: Copy rest of file line by line
                     for line in input_file:
                         output_file_handle.write(line)
+                    
+                    # Final flush after copying
+                    output_file_handle.flush()
+                    os.fsync(output_file_handle.fileno())
             
             # Replace original file
-            import os
             os.replace(temp_file, output_file)
             
             self.logger.info(f"📝 Header updated: {total_ticks:,} total ticks")
@@ -458,7 +465,6 @@ class MT5DataExporter:
             self.logger.warning(f"⚠️ Could not update header: {e}")
             # Clean up temp file if it exists
             try:
-                import os
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
             except:
@@ -533,6 +539,8 @@ class MT5DataExporter:
                 "legacy_method": True
             }
             f.write(json.dumps(header) + '\n')
+            f.flush()
+            os.fsync(f.fileno())
             
             # Process in small batches to avoid memory issues
             batch_size = 1000
@@ -557,6 +565,10 @@ class MT5DataExporter:
                         "market_state": "backtest"
                     }
                     f.write(json.dumps(tick_data) + '\n')
+                
+                # Flush every batch to ensure data is written
+                f.flush()
+                os.fsync(f.fileno())
                 
                 # Cleanup batch
                 del batch
