@@ -1113,6 +1113,22 @@ class MT5BacktestRunner:
                     )
                     
                     processed_ticks += 1
+                    
+                    # Validation checkpoint
+                    if i % 1000 == 0 and i > 0:
+                        # Verifica che l'analyzer abbia ricevuto i dati
+                        analyzer_tick_count = len(self.unified_system.analyzer.tick_data)
+                        if analyzer_tick_count != processed_ticks:
+                            self.logger.warning(f"⚠️ DATA SYNC ISSUE: Processed {processed_ticks} ticks but analyzer has {analyzer_tick_count}")
+                        
+                        # Verifica range prezzi nell'analyzer
+                        if analyzer_tick_count > 0:
+                            recent_prices = [t['price'] for t in self.unified_system.analyzer.tick_data[-10:]]
+                            price_range = max(recent_prices) - min(recent_prices)
+                            if price_range == 0:
+                                self.logger.error(f"❌ PRICE RANGE ZERO: Last 10 prices all identical: {recent_prices[0]}")
+                            elif i <= 10000:  # Log only for first 10k ticks
+                                self.logger.info(f"✅ Price validation OK: range={price_range:.2f}, sample={recent_prices[:3]}")
 
                     # Ogni 10K ticks, log memory
                     if i % 10000 == 0:

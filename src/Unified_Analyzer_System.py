@@ -927,6 +927,10 @@ class UnifiedAnalyzerSystem:
         if not self.is_running:
             raise RuntimeError("System not running. Call start() first.")
         
+        # 🔧 FIX: Ricalcola price se è 0.0 ma bid/ask sono validi
+        if price == 0.0 and bid is not None and ask is not None and bid > 0 and ask > 0:
+            price = (bid + ask) / 2.0
+        
         try:
             # Process tick through AdvancedMarketAnalyzer
             result = self.analyzer.process_tick(

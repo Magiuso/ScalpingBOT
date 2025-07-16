@@ -1147,6 +1147,9 @@ class AnalyzerLogger:
         self.csv_writers: Dict[str, Any] = {}
         self.csv_files: Dict[str, Any] = {}
         
+        # Initialize parent_analyzer to None - will be set by parent analyzer
+        self.parent_analyzer: Optional['AdvancedMarketAnalyzer'] = None
+        
         # Event buffers for future slave module integration - MEMORY SAFE con deque
         self._prediction_events_buffer: deque = deque(maxlen=500)
         self._champion_events_buffer: deque = deque(maxlen=200)
@@ -1237,6 +1240,20 @@ class AnalyzerLogger:
         
         # Buffer gestito automaticamente da deque con maxlen=200
         self._champion_events_buffer.append(champion_event)
+        
+        # 🔧 SOLUZIONE: Integrazione con ML Training Logger
+        # Nota: self è già l'AnalyzerLogger, quindi self.parent_analyzer è l'AdvancedMarketAnalyzer
+        if hasattr(self, 'parent_analyzer') and self.parent_analyzer and hasattr(self.parent_analyzer, '_emit_ml_event'):
+            self.parent_analyzer._emit_ml_event('champion_change', {
+                'asset': asset,
+                'model_type': model_type.value,
+                'old_champion': old_champion,
+                'new_champion': new_champion,
+                'old_score': old_score,
+                'new_score': new_score,
+                'improvement_percentage': improvement,
+                'reason': reason
+            })
     
     def log_error_analysis(self, asset: str, model_type: 'ModelType', algorithm: str,
                          error_analysis: Dict[str, Any], market_condition: Dict[str, Any]) -> None:
@@ -1297,6 +1314,19 @@ class AnalyzerLogger:
         
         # Buffer gestito automaticamente da deque con maxlen=200
         self._training_events_buffer.append(training_event)
+        
+        # 🔧 SOLUZIONE: Integrazione con ML Training Logger
+        # Nota: self è già l'AnalyzerLogger, quindi self.parent_analyzer è l'AdvancedMarketAnalyzer
+        if hasattr(self, 'parent_analyzer') and self.parent_analyzer and hasattr(self.parent_analyzer, '_emit_ml_event'):
+            self.parent_analyzer._emit_ml_event('training_completed', {
+                'asset': asset,
+                'model_type': model_type.value,
+                'algorithm': algorithm,
+                'training_type': training_type,
+                'metrics': metrics,
+                'final_loss': metrics.get('final_loss', 0),
+                'improvement': metrics.get('improvement', 0)
+            })
     
     def log_mt5_communication(self, direction: str, message_type: str, 
                             asset: str, data: Dict[str, Any]) -> None:
@@ -6197,6 +6227,9 @@ class RollingWindowTrainer:
         volumes = np.array([float(tick.get('volume', 1)) for tick in filtered_data])
         timestamps = [tick.get('timestamp') for tick in filtered_data]
         
+        # 🔍 DEBUG: Log training data preparation
+        # Price data validation passed
+        
         # Sostituisci volumi zero con un valore minimo
         volumes = np.where(volumes == 0, 1.0, volumes)
         
@@ -6564,9 +6597,13 @@ class RollingWindowTrainer:
             
             # 🔧 DEBUG: Aggiungi logging dettagliato per target S/R
             if len(y) < 10:  # Log solo primi 10 samples
-                safe_print(f"🔍 S/R Target #{len(y)}: support={support:.6f} (dist={support_distance:.6f}), resistance={resistance:.6f} (dist={resistance_distance:.6f}), current={current_price:.6f}")
-                safe_print(f"🔍 S/R Candidates: {len(support_candidates)} supports, {len(resistance_candidates)} resistances found")
-                safe_print(f"🔍 S/R Future validation: min={future_min:.6f}, max={future_max:.6f}, std={np.std(future_prices):.6f}")
+                print(f"🔍 S/R Target #{len(y)}: support={support:.6f} (dist={support_distance:.6f}), resistance={resistance:.6f} (dist={resistance_distance:.6f}), current={current_price:.6f}")
+                print(f"🔍 S/R Candidates: {len(support_candidates)} supports, {len(resistance_candidates)} resistances found")
+                print(f"🔍 S/R Future validation: min={future_min:.6f}, max={future_max:.6f}, std={np.std(future_prices):.6f}")
+                print(f"🔍 S/R Historical prices sample: {historical_prices[:5]} ... {historical_prices[-5:]}")
+                print(f"🔍 S/R Volume threshold: {volume_threshold:.2f}")
+                print(f"🔍 S/R Swing window: {swing_window}")
+                print(f"🔍 S/R Final y_val: {y_val}")
             
             # 🔧 FIX CRITICO: Validazione migliorata per evitare target degeneri
             if (np.isnan(y_val).any() or np.isinf(y_val).any()):  # Solo NaN/Inf
@@ -6588,9 +6625,18 @@ class RollingWindowTrainer:
         
         if len(X) == 0:
             # Ritorna arrays vuoti ma validi
+            # No samples generated in this iteration
             return np.empty((0, window_size * 4)), np.empty((0, 2))
         
         X_array, y_array = np.array(X), np.array(y)
+        
+        # 🔍 DEBUG: Log final target statistics
+        # S/R dataset generation completed
+        print(f"    Support distances - min: {np.min(y_array[:, 0]):.6f}, max: {np.max(y_array[:, 0]):.6f}, mean: {np.mean(y_array[:, 0]):.6f}")
+        print(f"    Resistance distances - min: {np.min(y_array[:, 1]):.6f}, max: {np.max(y_array[:, 1]):.6f}, mean: {np.mean(y_array[:, 1]):.6f}")
+        print(f"    All zeros check: {np.all(y_array == 0)}")
+        print(f"    NaN check: {np.any(np.isnan(y_array))}")
+        print(f"    Inf check: {np.any(np.isinf(y_array))}")
         
         # 🔧 DEBUG: Statistiche complete del dataset S/R
         if len(y_array) > 0:
@@ -9703,12 +9749,23 @@ class AssetAnalyzer:
             if reanalysis_result['status'] == 'completed':
                 retraining_info['reanalysis_lessons'] = len(reanalysis_result['lessons_learned'])
         
+        # 🔍 DEBUG: Controllo sincronizzazione prima del training
+        # Starting retraining process
+        
         # Prepara dati con rolling window
         training_data = self.rolling_trainer.prepare_training_data(self.tick_data)
         
         if not training_data:
+            # No training data available
             self._store_retraining_event('no_training_data', retraining_info)
             return
+        
+        # 🔍 DEBUG: Verifica dati di training
+        if 'prices' in training_data:
+            prices = training_data['prices']
+            # Training data ready for processing
+        else:
+            # No prices in training data\n            return
         
         # Ottieni il modello
         if algorithm_name not in self.ml_models:
@@ -9810,7 +9867,8 @@ class AssetAnalyzer:
     
     def _prepare_market_data(self) -> Dict[str, Any]:
         """Prepara i dati di mercato per l'analisi con feature avanzate - VERSIONE PULITA"""
-        if len(self.tick_data) < 50:
+        # 🔧 SOLUZIONE: Ridotta soglia minima da 50 a 20 e aumentata finestra a 5000
+        if len(self.tick_data) < 20:
             return {}
         
         # Performance tracking (minimal, in-memory only)
@@ -9819,10 +9877,17 @@ class AssetAnalyzer:
         # OTTIMIZZAZIONE CRITICA: Accesso diretto senza copia lista completa
         with self.data_lock:
             total_ticks = len(self.tick_data)
-            start_idx = max(0, total_ticks - 100)
+            # 🔧 SOLUZIONE: Finestra aumentata da 100 a 5000 ticks per calcoli ML accurati
+            start_idx = max(0, total_ticks - 5000)
             # Reference diretta + slice range invece di list() copy
             recent_ticks_range = range(start_idx, total_ticks)
             n_ticks = len(recent_ticks_range)
+            
+            # 🔍 DEBUG: Log market data preparation (ogni 50k ticks per ridurre spam)
+            if total_ticks % 50000 == 0 and total_ticks > 0:
+                first_tick = self.tick_data[0]
+                last_tick = self.tick_data[-1]
+                # Market data processing completed
         
         # PRE-ALLOCA arrays con dtype esplicito (NO COPIE)
         prices = np.empty(n_ticks, dtype=np.float32)
@@ -9833,8 +9898,15 @@ class AssetAnalyzer:
         with self.data_lock:  # Secondo lock minimale per accesso sicuro
             for i, tick_idx in enumerate(recent_ticks_range):
                 tick = self.tick_data[tick_idx]
-                prices[i] = tick['price']
-                volumes[i] = tick['volume']
+                # 🔧 SOLUZIONE: Supporta sia formato 'price' che 'bid/ask'
+                if 'price' in tick:
+                    prices[i] = tick['price']
+                elif 'bid' in tick and 'ask' in tick:
+                    # Usa il mid price tra bid e ask
+                    prices[i] = (tick['bid'] + tick['ask']) / 2.0
+                else:
+                    prices[i] = 0.0  # Fallback
+                volumes[i] = tick.get('volume', 0)
                 timestamps.append(tick['timestamp'])
         
         # CALCOLA STATISTICHE UNA VOLTA SOLA (operazioni vettoriali)
@@ -9847,9 +9919,9 @@ class AssetAnalyzer:
         price_history = prices
         volume_history = volumes
         
-        # Price changes con accesso diretto (NO SLICE COPIES)
-        price_change_1m = (current_price - prices[-20]) / prices[-20] if n_ticks > 20 and prices[-20] != 0 else 0.0
-        price_change_5m = (current_price - prices[0]) / prices[0] if n_ticks == 100 and prices[0] != 0 else 0.0
+        # 🔧 SOLUZIONE: Price changes con finestra dinamica e fallback più intelligente
+        price_change_1m = (current_price - prices[-20]) / prices[-20] if n_ticks > 20 and prices[-20] != 0 else (current_price - prices[0]) / prices[0] if n_ticks > 1 and prices[0] != 0 else 0.0
+        price_change_5m = (current_price - prices[-100]) / prices[-100] if n_ticks > 100 and prices[-100] != 0 else (current_price - prices[0]) / prices[0] if n_ticks > 1 and prices[0] != 0 else 0.0
         
         # Volume analysis (avg_volume già calcolato)
         volume_ratio = volumes[-1] / max(avg_volume, 1e-10)
@@ -9890,7 +9962,8 @@ class AssetAnalyzer:
                 bid = last_tick['bid']
                 ask = last_tick['ask']
                 spread = ask - bid
-                spread_percentage = spread / max(current_price, 1e-10)
+                # 🔧 SOLUZIONE: Calcolo spread_percentage corretto in percentuale
+                spread_percentage = (spread / max(current_price, 1e-10)) * 100
                 mid_price = (bid + ask) * 0.5  # Moltiplicazione più veloce di divisione
             else:
                 spread_percentage = 0.0
@@ -16966,6 +17039,8 @@ class AdvancedMarketAnalyzer:
             # Tentativo di import della classe AnalyzerLogger
             from src.Analyzer import AnalyzerLogger
             self.logger = AnalyzerLogger(f"{data_path}/global_logs")
+            # 🔧 SOLUZIONE: Collegamento parent_analyzer per ML Training Logger
+            self.logger.parent_analyzer = self
             self._logger_available = True
         except ImportError:
             print(f"⚠️ AnalyzerLogger not available - using fallback logging")
