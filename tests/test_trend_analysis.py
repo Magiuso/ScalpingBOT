@@ -127,16 +127,20 @@ def test_actual_analyzer():
         print(f'   Volume range: {np.min(volumes):.2f} - {np.max(volumes):.2f}')
         print(f'   RSI range: {np.min(rsi):.1f} - {np.max(rsi):.1f}')
         
-        # Test the actual method through AdvancedMarketAnalyzer
+        # Test the actual method through RollingWindowTrainer
         print('\n🔧 Testing actual _prepare_trend_dataset...')
-        # Access the method directly from the main analyzer instance
-        prepare_method = getattr(analyzer, '_prepare_trend_dataset', None)
-        if prepare_method:
-            print(f'✅ Method _prepare_trend_dataset found in analyzer instance')
-            X, y = prepare_method(test_data)
+        # Access the method through the analyzer's rolling_trainer
+        if hasattr(analyzer, 'rolling_trainer'):
+            prepare_method = getattr(analyzer.rolling_trainer, '_prepare_trend_dataset', None)
+            if prepare_method:
+                print(f'✅ Method _prepare_trend_dataset found in rolling_trainer')
+                X, y = prepare_method(test_data)
+            else:
+                print('❌ Method _prepare_trend_dataset not found in rolling_trainer')
+                print(f'Available methods: {[m for m in dir(analyzer.rolling_trainer) if m.startswith("_prepare")]}')
+                return False
         else:
-            print('❌ Method _prepare_trend_dataset not found')
-            print(f'Available methods: {[m for m in dir(analyzer) if m.startswith("_prepare")]}')
+            print('❌ rolling_trainer not found in analyzer')
             return False
         
         print(f'✅ Method executed successfully')
