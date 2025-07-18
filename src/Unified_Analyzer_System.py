@@ -780,7 +780,7 @@ class UnifiedAnalyzerSystem:
         self.config = config or UnifiedConfig()
         
         # Core components
-        self.analyzer = AdvancedMarketAnalyzer(self.config.base_directory)  # ← NUOVA RIGA
+        self.analyzer = AdvancedMarketAnalyzer(self.config.base_directory)
         self.logging_slave = LoggingSlave(self.config)
 
         # Add asset to analyzer
@@ -931,6 +931,7 @@ class UnifiedAnalyzerSystem:
         if price == 0.0 and bid is not None and ask is not None and bid > 0 and ask > 0:
             price = (bid + ask) / 2.0
         
+        # ULTRA-FAST: No debug logging for maximum speed
         try:
             # Process tick through AdvancedMarketAnalyzer
             result = self.analyzer.process_tick(
@@ -964,6 +965,74 @@ class UnifiedAnalyzerSystem:
                 print(f"❌ Error processing tick: {e}")
             
             raise
+    
+    async def process_batch(self, batch_ticks: list) -> tuple:
+        """
+        🚀 ULTRA-FAST BATCH PROCESSING - Process multiple ticks at once
+        
+        Returns (processed_count, analysis_count)
+        """
+        if not self.is_running:
+            raise RuntimeError("System not running. Call start() first.")
+        
+        processed_count = 0
+        analysis_count = 0
+        
+        # Prepare batch data for analyzer
+        batch_data = []
+        for tick in batch_ticks:
+            # Pre-process tick data
+            price = tick.price
+            if price == 0.0 and tick.bid and tick.ask and tick.bid > 0 and tick.ask > 0:
+                price = (tick.bid + tick.ask) / 2.0
+            
+            batch_data.append({
+                'timestamp': tick.timestamp,
+                'price': price,
+                'volume': tick.volume,
+                'bid': tick.bid or price,
+                'ask': tick.ask or price
+            })
+        
+        try:
+            # Process entire batch through analyzer at once
+            results = self.analyzer.process_batch(self.config.asset_symbol, batch_data)
+            
+            # Count results
+            processed_count = len(batch_ticks)
+            analysis_count = len([r for r in results if r and r.get('status') in ['success', 'analyzed']])
+            
+            # Update stats
+            self.system_stats['total_ticks_processed'] += processed_count
+            
+            return processed_count, analysis_count
+            
+        except Exception as e:
+            self.system_stats['errors_count'] += len(batch_ticks)
+            # In case of error, fallback to individual processing
+            return await self._fallback_individual_processing(batch_ticks)
+    
+    async def _fallback_individual_processing(self, batch_ticks: list) -> tuple:
+        """Fallback to individual processing if batch fails"""
+        processed_count = 0
+        analysis_count = 0
+        
+        for tick in batch_ticks:
+            try:
+                result = await self.process_tick(
+                    timestamp=tick.timestamp,
+                    price=tick.price,
+                    volume=tick.volume,
+                    bid=tick.bid,
+                    ask=tick.ask
+                )
+                if result:
+                    analysis_count += 1
+                processed_count += 1
+            except Exception:
+                processed_count += 1
+                
+        return processed_count, analysis_count
     
     async def _event_processing_loop(self):
         """Background loop ottimizzato per processing eventi"""

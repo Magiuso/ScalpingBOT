@@ -9919,11 +9919,39 @@ class AssetAnalyzer:
                             }
                             self.logger._error_events_buffer.append(error_event)
     
+    def _detect_backtesting_mode(self) -> bool:
+        """Detect if we're in backtesting mode by examining timestamp of first 50 ticks"""
+        
+        # Need at least 50 ticks to make a determination
+        if len(self.tick_data) < 50:
+            return False
+            
+        # Check first 50 ticks
+        current_time = datetime.now()
+        old_ticks_count = 0
+        
+        for i, tick in enumerate(list(self.tick_data)[:50]):
+            tick_time = tick.get('timestamp', current_time)
+            
+            # If timestamp is more than 1 day old, consider it backtesting
+            if (current_time - tick_time).days > 1:
+                old_ticks_count += 1
+        
+        # If more than 80% of first 50 ticks are old, we're in backtesting
+        is_backtesting = old_ticks_count > 40
+        
+        # Log the detection result once
+        if len(self.tick_data) == 50:
+            print(f"🔍 BACKTESTING DETECTION: {old_ticks_count}/50 old ticks -> is_backtesting={is_backtesting}")
+        
+        return is_backtesting
+    
     def process_tick(self, timestamp: datetime, price: float, volume: float, 
                     bid: Optional[float] = None, ask: Optional[float] = None, additional_data: Optional[Dict] = None) -> Dict[str, Any]:
         """Processa un nuovo tick con gestione completa - VERSIONE PULITA"""
         
         processing_start = datetime.now()
+        
         
         # Thread-safe data storage
         with self.data_lock:
@@ -9964,19 +9992,14 @@ class AssetAnalyzer:
             time_progress = min(0.3, days_learning / self.config.min_learning_days)
             ml_progress += time_progress
             
-            # Debug logging for learning phase
-            if len(self.tick_data) % 10000 == 0:  # Log every 10k ticks
-                mode = "BACKTEST" if timestamp < self.learning_start_time else "LIVE"
-                smart_print(f"🔍 Learning Debug [{mode}]: days={days_learning:.2f}/{self.config.min_learning_days}, "
-                          f"ticks={len(self.tick_data)}, progress={ml_progress:.1%}")
             
-            # Champion-based progress (up to 40%)
+            # Champion-based progress (up to 20% - reduced from 40%)
             if hasattr(self, 'competitions'):
                 champions_ready = sum(1 for comp in self.competitions.values() 
                                     if hasattr(comp, 'champion') and comp.champion)
                 total_competitions = len(self.competitions)
                 if total_competitions > 0:
-                    champion_progress = min(0.4, (champions_ready / total_competitions) * 0.4)
+                    champion_progress = min(0.2, (champions_ready / total_competitions) * 0.2)
                     ml_progress += champion_progress
             
             # Prediction-based progress (up to 30%)
@@ -9992,14 +10015,23 @@ class AssetAnalyzer:
                 prediction_progress = min(0.3, (total_predictions / min_predictions_target) * 0.3)
                 ml_progress += prediction_progress
             
+            # Data collection progress (up to 50% - most important)
+            tick_progress = min(0.5, (len(self.tick_data) / self.config.learning_ticks_threshold) * 0.5)
+            ml_progress += tick_progress
+            
             self.learning_progress = min(1.0, ml_progress)
             
             # Check if we should exit learning phase
             sufficient_ticks = len(self.tick_data) >= self.config.learning_ticks_threshold
             sufficient_days = days_learning >= self.config.min_learning_days
             
+            # Check if we're in backtesting mode by examining tick timestamps
+            is_backtesting = self._detect_backtesting_mode()
+            
+            
             # Force exit from learning if we have enough data (ticks OR days)
-            if sufficient_ticks and days_learning >= 1:  # At least 1 day and enough ticks
+            # BUT skip this in backtesting mode to allow processing all data
+            if sufficient_ticks and days_learning >= 1 and not is_backtesting:  # At least 1 day and enough ticks
                 smart_print(f"✅ Forcing learning phase exit: {len(self.tick_data)} ticks, {days_learning:.1f} days")
                 self.learning_phase = False
                 self._perform_final_training()
@@ -10007,9 +10039,10 @@ class AssetAnalyzer:
                 # Still learning, just collect data
                 remaining_days = self.config.min_learning_days - days_learning
                 
-                # Ogni N tick durante learning, fai un mini-training
+                # Ogni N tick durante learning, fai un mini-training asincrono
                 if len(self.tick_data) % self.config.learning_mini_training_interval == 0:
-                    self._perform_learning_phase_training()
+                    # Non bloccare il processing dei tick con training sincrono
+                    asyncio.create_task(self._perform_learning_phase_training_async())
                 
                 return {
                     "status": "learning",
@@ -10019,9 +10052,17 @@ class AssetAnalyzer:
                     "config_min_days": self.config.min_learning_days
                 }
             else:
-                self.learning_phase = False
-                # Perform final comprehensive training
-                self._perform_final_training()
+                # In backtesting mode, don't exit learning phase until explicitly told
+                if not is_backtesting:
+                    self.learning_phase = False
+                    # Perform final comprehensive training
+                    self._perform_final_training()
+                else:
+                    # In backtesting, continue learning but log progress
+                    smart_print(f"📊 Backtesting learning progress: {len(self.tick_data)} ticks, {days_learning:.1f} days")
+                    # Perform mini-training to keep models updated (async)
+                    if len(self.tick_data) % self.config.learning_mini_training_interval == 0:
+                        asyncio.create_task(self._perform_learning_phase_training_async())
         
         # Validate pending predictions with thread safety
         with self.competitions_lock:
@@ -10097,8 +10138,9 @@ class AssetAnalyzer:
     def _perform_learning_phase_training(self):
         """Esegue mini-training durante la fase di learning con logging strutturato"""
         
-        # 🎯 TRAINING inizia a 80K ticks per evitare collisione con buffer capacity
-        TRAINING_THRESHOLD = 80000
+        # 🎯 TRAINING inizia a 500K ticks per dataset più consistenti per LSTM
+        TRAINING_THRESHOLD = 500000
+        
         if len(self.tick_data) < TRAINING_THRESHOLD:
             return
 
@@ -10106,7 +10148,9 @@ class AssetAnalyzer:
         if not hasattr(self, '_training_started_at_threshold'):
             self._training_started_at_threshold = set()
 
-        current_threshold_key = f"{len(self.tick_data)//TRAINING_THRESHOLD}_{TRAINING_THRESHOLD}"
+        # Calculate current training milestone (80K, 160K, 240K, etc.)
+        current_milestone = (len(self.tick_data) // TRAINING_THRESHOLD) * TRAINING_THRESHOLD
+        current_threshold_key = f"milestone_{current_milestone}"
         if current_threshold_key in self._training_started_at_threshold:
             # Training già eseguito per questa soglia, skip silenziosamente
             return
@@ -10115,7 +10159,7 @@ class AssetAnalyzer:
         self._training_started_at_threshold.add(current_threshold_key)
 
         # 🔍 DEBUG INFO
-        print(f"[TRAINING] Starting FIRST training session for threshold {TRAINING_THRESHOLD} with {len(self.tick_data)} ticks")
+        print(f"[TRAINING] Starting training session for milestone {current_milestone} with {len(self.tick_data)} ticks")
         
         # CONTROLLI DI SICUREZZA PRELIMINARI
         if not hasattr(self, 'rolling_trainer') or self.rolling_trainer is None:
@@ -10277,6 +10321,19 @@ class AssetAnalyzer:
             import traceback
             self.logger.loggers['errors'].error(f"❌ TRAINING TRACEBACK: {traceback.format_exc()}")
             return
+    
+    async def _perform_learning_phase_training_async(self):
+        """Versione asincrona del mini-training per non bloccare tick processing"""
+        try:
+            # Esegui il training in un thread separato per non bloccare l'event loop
+            import concurrent.futures
+            
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                await loop.run_in_executor(executor, self._perform_learning_phase_training)
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.loggers['errors'].error(f"❌ Async training error: {e}")
                         
     def _perform_final_training(self):
         """Esegue training completo alla fine della fase di learning"""
@@ -18027,6 +18084,95 @@ class AdvancedMarketAnalyzer:
                 'error_type': type(e).__name__
             }
     
+    def process_batch(self, asset: str, batch_data: list) -> list:
+        """
+        🚀 ULTRA-FAST BATCH PROCESSING - Process multiple ticks at once
+        
+        Args:
+            asset: Asset symbol
+            batch_data: List of tick data dictionaries
+            
+        Returns:
+            List of processing results
+        """
+        
+        processing_start = time.time()
+        
+        try:
+            # Ensure asset exists
+            if asset not in self.asset_analyzers:
+                self.add_asset(asset)
+            
+            # Get asset analyzer
+            analyzer = self.asset_analyzers[asset]
+            
+            # ULTRA-FAST: Process all ticks in batch
+            results = []
+            
+            # Batch prepare tick data for asset analyzer
+            for tick_data in batch_data:
+                try:
+                    # Direct call to asset analyzer for maximum speed
+                    result = analyzer.process_tick(
+                        timestamp=tick_data['timestamp'],
+                        price=tick_data['price'],
+                        volume=tick_data['volume'],
+                        bid=tick_data.get('bid'),
+                        ask=tick_data.get('ask')
+                    )
+                    results.append(result)
+                    
+                    # Update compatibility attributes (batch style)
+                    self.tick_data.append({
+                        'timestamp': tick_data['timestamp'],
+                        'price': tick_data['price'],
+                        'volume': tick_data['volume'],
+                        'asset': asset
+                    })
+                    
+                except Exception as e:
+                    # Silent fail for individual ticks within batch
+                    results.append({
+                        'status': 'error',
+                        'asset': asset,
+                        'error': str(e)
+                    })
+            
+            # Batch cleanup - manage tick_data size efficiently
+            if len(self.tick_data) > 10000:
+                self.tick_data = self.tick_data[-10000:]
+            
+            # Single performance update for entire batch
+            processing_time_ms = (time.time() - processing_start) * 1000
+            self._performance_stats['ticks_processed'] += len(batch_data)
+            self._performance_stats['last_tick_time'] = datetime.now()
+            
+            # Single batch event instead of individual events
+            self._store_event('batch_processed', {
+                'asset': asset,
+                'batch_size': len(batch_data),
+                'successful_ticks': len([r for r in results if r.get('status') != 'error']),
+                'processing_time_ms': processing_time_ms,
+                'timestamp': datetime.now()
+            })
+            
+            # Update global stats once
+            self._update_global_stats()
+            
+            return results
+            
+        except Exception as e:
+            # Batch error handling
+            error_result = {
+                'status': 'batch_error',
+                'asset': asset,
+                'error': str(e),
+                'batch_size': len(batch_data)
+            }
+            
+            # Return error result for each tick in batch
+            return [error_result.copy() for _ in batch_data]
+    
     def _update_performance_stats(self, processing_time_ms: float) -> None:
         """✅ NUOVO: Aggiorna statistiche di performance"""
         
@@ -18729,6 +18875,31 @@ class AdvancedMarketAnalyzer:
                 report['asset_performances'][asset] = {'error': str(e)}
         
         return report
+    
+    def force_complete_learning_phase(self, asset: str) -> Dict[str, Any]:
+        """Forza il completamento della learning phase per un asset (usato nel backtesting)"""
+        if asset not in self.asset_analyzers:
+            return {'status': 'error', 'message': f'Asset {asset} not found'}
+        
+        analyzer = self.asset_analyzers[asset]
+        
+        if not analyzer.learning_phase:
+            return {'status': 'info', 'message': f'Asset {asset} already completed learning phase'}
+        
+        # Forza la terminazione della learning phase
+        analyzer.learning_phase = False
+        
+        # Triggera il final training
+        try:
+            analyzer._perform_final_training()
+            return {
+                'status': 'success', 
+                'message': f'Learning phase completed for {asset}',
+                'ticks_processed': len(analyzer.tick_data),
+                'models_trained': len(analyzer.competitions)
+            }
+        except Exception as e:
+            return {'status': 'error', 'message': f'Error during final training: {str(e)}'}
     
     def _calculate_model_rankings(self) -> Dict[str, List[Dict]]:
         """Calcola ranking dei modelli across tutti gli asset"""

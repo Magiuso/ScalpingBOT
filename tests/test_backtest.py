@@ -571,10 +571,10 @@ class MLLearningTestSuite:
             self.analyzer = AdvancedMarketAnalyzer(self.test_data_path)
             
             if self.analyzer is None:
-                safe_print("❌ Failed to initialize AdvancedMarketAnalyzer")
+                safe_print("❌ AdvancedMarketAnalyzer initialization failed")
                 return False
             
-            safe_print("✅ AdvancedMarketAnalyzer initialized successfully")
+            safe_print("✅ AdvancedMarketAnalyzer initialized")
             
             # Test ML logger integration for dashboard display
             if hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
@@ -590,7 +590,7 @@ class MLLearningTestSuite:
             if asset_analyzer is None:
                 safe_print(f"❌ Failed to add asset {self.symbol}")
                 return False
-            
+                
             safe_print(f"✅ Asset {self.symbol} added successfully")
             
             # Initialize Unified System for enhanced logging
@@ -1031,6 +1031,11 @@ class MLLearningTestSuite:
             analysis_count = 0
             
             for i, tick in enumerate(ticks):
+                # CHECK FOR STOP REQUEST DURING TICK PROCESSING
+                if self.stop_requested:
+                    safe_print(f"🛑 Stop requested during tick processing, processed {processed_count:,} ticks")
+                    break
+                    
                 try:
                     # Process tick through unified system
                     result = None
@@ -1143,6 +1148,10 @@ class MLLearningTestSuite:
         
         try:
             import psutil
+            import json  # Move JSON import to top
+            import threading
+            import time as time_module
+            import gc  # Move gc import to top for better performance
             
             process = psutil.Process()
             
@@ -1165,8 +1174,6 @@ class MLLearningTestSuite:
                     safe_print("📋 No header found, processing from beginning")
                 
                 # Setup monitoraggio memoria in tempo reale
-                import threading
-                import time as time_module
                 
                 # Variabili condivise per il monitoraggio
                 self.monitoring_active = True
@@ -1181,7 +1188,6 @@ class MLLearningTestSuite:
                             # Usa la stessa logica del controllo threshold
                             process_memory = process.memory_percent()
                             try:
-                                import psutil
                                 system_memory = psutil.virtual_memory().percent
                                 # Usa il valore più alto per sicurezza (stessa logica del controllo)
                                 effective_memory_current = max(system_memory, process_memory)
@@ -1192,7 +1198,7 @@ class MLLearningTestSuite:
                             nonlocal effective_memory
                             effective_memory = effective_memory_current
                             
-                            # Aggiornamento su singola riga con \r
+                            # Aggiornamento su singola riga con \r (ogni secondo)
                             print(f"\r💾 Memory: {effective_memory:.1f}% | Batch ticks: {current_batch_size:,} | Total: {total_ticks_loaded:,}", end='', flush=True)
                             time_module.sleep(1.0)
                         except:
@@ -1205,61 +1211,86 @@ class MLLearningTestSuite:
                 
                 # Main processing loop           
                 while True:
+                    # CHECK FOR STOP REQUEST AT BEGINNING OF MAIN LOOP
+                    if self.stop_requested:
+                        safe_print("🛑 Stop requested, exiting main processing loop")
+                        break
                     
                     # FASE 1: Carica batch fino all'80% memoria
-                    print(f"\n\n📦 Batch {batch_number}: Loading until {MEMORY_THRESHOLD}% memory...")
+                    if batch_number == 1:  # Print only for first batch
+                        print(f"\n\n📦 Starting batch loading process...")
                     initial_memory = process.memory_percent()
-                    print(f"[START] Memory: {initial_memory:.1f}%")
                     
                     current_batch = []
                     current_batch_size = 0  # Reset contatore batch
                     
-                    line_count = 0  # DEBUG: conta le righe lette
+                    # OPTIMIZED: Read lines in chunks instead of one-by-one
+                    CHUNK_SIZE = 50000  # Read 50K lines at once for maximum I/O performance
+                    lines_buffer = []
                     
                     while True:
-                        line = f.readline()
-                        line_count += 1
-                        
-                        if not line:  # Fine file
-                            safe_print("📄 Reached end of file")
+                        # CHECK FOR STOP REQUEST BEFORE READING CHUNK
+                        if self.stop_requested:
+                            safe_print("🛑 Stop requested, breaking file reading loop")
                             break
                         
-                        try:
-                            tick_data = json.loads(line.strip())
-                            if tick_data.get('type') == 'tick':
-                                # Converti in formato compatibile
-                                current_batch.append(self._convert_tick_format(tick_data))
-                                current_batch_size += 1
-                                total_ticks_loaded += 1
-
-                                # Controllo stop ogni 1000 tick
-                                if current_batch_size % 100 == 0:
-                                    if self.stop_requested:
-                                        safe_print("🛑 Stop requested, breaking batch loading")
-                                        break
+                        # ULTRA-FAST: Read a chunk of lines if buffer is empty
+                        if not lines_buffer:
+                            # Use readlines() with size hint for maximum speed
+                            chunk_lines = f.readlines(CHUNK_SIZE * 100)  # Read more bytes at once
+                            
+                            if not chunk_lines:  # Truly at end of file
+                                safe_print("📄 Reached end of file")
+                                break
+                            
+                            lines_buffer = chunk_lines
+                        
+                        # Process lines from buffer
+                        lines_to_process = min(5000, len(lines_buffer))  # Process max 5000 lines at once
+                        current_lines = lines_buffer[:lines_to_process]
+                        lines_buffer = lines_buffer[lines_to_process:]
+                        
+                        # ULTRA-OPTIMIZED: Batch JSON parsing with list comprehension
+                        batch_ticks = []
+                        for line in current_lines:
+                            line = line.strip()
+                            if line and '"type": "tick"' in line:  # Quick pre-filter
+                                try:
+                                    tick_data = json.loads(line)
+                                    batch_ticks.append(self._convert_tick_format(tick_data))
+                                except json.JSONDecodeError:
+                                    continue
+                        
+                        # Add to current batch
+                        current_batch.extend(batch_ticks)
+                        current_batch_size += len(batch_ticks)
+                        total_ticks_loaded += len(batch_ticks)
+                        
+                        # OPTIMIZED: Check memory only every 10 batch cycles for speed
+                        batch_cycle_count = total_ticks_loaded // 5000  # Track cycles
+                        
+                        if self.stop_requested:
+                            safe_print("🛑 Stop requested, breaking batch loading")
+                            break
+                        
+                        # Check memory only every 10 cycles (every ~50K ticks) for performance
+                        if batch_cycle_count % 10 == 0 and len(batch_ticks) > 0:
+                            try:
+                                system_memory = psutil.virtual_memory().percent
+                                process_memory = process.memory_percent()
+                                current_memory = max(system_memory, process_memory)
                                 
-                                # Controllo memoria più frequente - ogni 100 tick invece di 1000
-                                if current_batch_size % 100 == 0:
-                                    # Usa memoria di sistema invece di processo per coerenza
-                                    try:
-                                        import psutil
-                                        system_memory = psutil.virtual_memory().percent
-                                        process_memory = process.memory_percent()
-                                        
-                                        # Usa il valore più alto tra i due per sicurezza
-                                        current_memory = max(system_memory, process_memory)
-                                        
-                                        # Exit forzato all'80%
-                                        if current_memory >= MEMORY_THRESHOLD:
-                                            print(f"\n🛑 MEMORY THRESHOLD REACHED! Stopping at {current_memory:.1f}%")
-                                            print(f"📊 System: {system_memory:.1f}%, Process: {process_memory:.1f}%")
-                                            print(f"📊 Loaded {current_batch_size:,} ticks in this batch")
-                                            break
-                                    except Exception as mem_error:
-                                        safe_print(f"⚠️ Memory check error: {mem_error}")
-                                        
-                        except json.JSONDecodeError:
-                            continue
+                                # Exit forzato all'80%
+                                if current_memory >= MEMORY_THRESHOLD:
+                                    print(f"\n🛑 MEMORY THRESHOLD REACHED! Stopping at {current_memory:.1f}%")
+                                    print(f"📊 System: {system_memory:.1f}%, Process: {process_memory:.1f}%")
+                                    print(f"📊 Loaded {current_batch_size:,} ticks in this batch")
+                                    break
+                            except Exception:
+                                current_memory = process.memory_percent()
+                                if current_memory >= MEMORY_THRESHOLD:
+                                    print(f"\n🛑 FALLBACK MEMORY CHECK! Stopping at {current_memory:.1f}%")
+                                    break
                     
                     # Ferma il monitoraggio prima del processing
                     self.monitoring_active = False
@@ -1288,7 +1319,7 @@ class MLLearningTestSuite:
                     # FASE 3: Libera memoria
                     safe_print("🧹 Clearing batch from memory...")
                     current_batch.clear()
-                    import gc
+                    lines_buffer.clear() if 'lines_buffer' in locals() else None  # Clear file buffer too
                     gc.collect()
                     
                     after_cleanup = process.memory_percent()
@@ -1328,6 +1359,7 @@ class MLLearningTestSuite:
         class TickObject:
             def __init__(self, data):
                 self.timestamp = datetime.strptime(data['timestamp'], '%Y.%m.%d %H:%M:%S')
+                
                 self.price = data.get('last', (data['bid'] + data['ask']) / 2)
                 self.volume = data.get('volume', 1)
                 self.bid = data.get('bid')
@@ -1336,45 +1368,67 @@ class MLLearningTestSuite:
         return TickObject(tick_data)
 
     async def _process_batch_memory_safe(self, batch_ticks: list) -> tuple:
-        """Processa un batch in modo memory-safe"""
+        """Processa un batch in modo ultra-veloce con BATCH PROCESSING"""
         
-        processed_count = 0
-        analysis_count = 0
+        if not self.unified_system or not batch_ticks:
+            return 0, 0
         
-        for i, tick in enumerate(batch_ticks):
-            try:
-                if self.unified_system and hasattr(self.unified_system, 'process_tick'):
-                    result = await self.unified_system.process_tick(
-                        timestamp=tick.timestamp,
-                        price=tick.price,
-                        volume=tick.volume,
-                        bid=tick.bid,
-                        ask=tick.ask
-                    )
-                    
-                    if result and result.get('status') in ['success', 'mock']:
-                        analysis_count += 1
+        # ULTRA-FAST: Use batch processing instead of individual tick processing
+        try:
+            # Check if unified_system has batch processing capability
+            if hasattr(self.unified_system, 'process_batch'):
+                # Process entire batch at once - MAXIMUM SPEED
+                processed_count, analysis_count = await self.unified_system.process_batch(batch_ticks)
                 
-                processed_count += 1
-
-                # ✅ PROCESS ML TRAINING EVENTS ogni 1000 tick - SIMPLIFIED VERSION
-                if processed_count % 1000 == 0 and self.analyzer and hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
+                # Minimal ML event - only once per entire batch
+                if analysis_count > 0 and self.analyzer and hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
                     try:
-                        # Emit periodic processing event through integrated ML logger
                         self.analyzer._emit_ml_event('diagnostic', {
-                            'event_type': 'periodic_progress',
+                            'event_type': 'batch_completed',
                             'ticks_processed': processed_count,
+                            'analyses_completed': analysis_count,
                             'symbol': self.symbol,
                             'timestamp': datetime.now().isoformat()
                         })
-                    except Exception as ml_error:
-                        if processed_count % 5000 == 0:
-                            safe_print(f"   ❌ ML processing error: {ml_error}")
+                    except Exception:
+                        pass
                 
-                # Skip tick processing progress - already shown in ML dashboard
+                return processed_count, analysis_count
+            else:
+                # Fallback to individual processing if batch not available
+                return await self._fallback_individual_processing(batch_ticks)
+                
+        except Exception as e:
+            # If batch processing fails, fallback to individual
+            safe_print(f"⚠️ Batch processing failed, using fallback: {e}")
+            return await self._fallback_individual_processing(batch_ticks)
+    
+    async def _fallback_individual_processing(self, batch_ticks: list) -> tuple:
+        """Fallback individual processing method"""
+        processed_count = 0
+        analysis_count = 0
+        
+        for tick in batch_ticks:
+            # Stop check only every 5000 ticks
+            if processed_count % 5000 == 0 and self.stop_requested:
+                break
+                
+            try:
+                result = await self.unified_system.process_tick(
+                    timestamp=tick.timestamp,
+                    price=tick.price,
+                    volume=tick.volume,
+                    bid=tick.bid,
+                    ask=tick.ask
+                )
+                
+                if result:
+                    analysis_count += 1
                     
-            except Exception as tick_error:
-                continue
+            except Exception:
+                pass
+            
+            processed_count += 1
         
         return processed_count, analysis_count
 
@@ -1489,6 +1543,11 @@ class MLLearningTestSuite:
             memory_exceeded = False
             
             for i, tick in enumerate(batch_ticks):
+                # CHECK FOR STOP REQUEST DURING BATCH PROCESSING
+                if self.stop_requested:
+                    safe_print(f"🛑 Stop requested during batch processing, processed {processed_count:,} ticks")
+                    break
+                    
                 try:
                     # 👈 DEBUG SUBITO - PRIMA DEL PROCESSING
                     if i % 5000 == 0:
@@ -1624,6 +1683,11 @@ class MLLearningTestSuite:
         analysis_count = 0
         
         for i, tick in enumerate(all_ticks):
+            # CHECK FOR STOP REQUEST DURING TICK PROCESSING
+            if self.stop_requested:
+                safe_print(f"🛑 Stop requested during tick processing, processed {processed_count:,} ticks")
+                break
+                
             try:
                 # Process tick con timeout anti-blocco
                 if self.unified_system and hasattr(self.unified_system, 'process_tick'):
