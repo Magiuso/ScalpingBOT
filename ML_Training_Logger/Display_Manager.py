@@ -269,14 +269,18 @@ class TreeProgressRenderer:
         return lines
     
     def _render_models_section(self, metrics: DisplayMetrics) -> List[str]:
-        """Renderizza sezione modelli"""
+        """Renderizza sezione modelli - VERSIONE MIGLIORATA"""
         lines = []
+        
+        # Ensure all 6 model types are represented
+        expected_models = ["support_resistance", "pattern_recognition", "bias_detection", 
+                          "trend_analysis", "volatility_prediction", "momentum_analysis"]
         
         if self.config.color_enabled:
             models_title = (f"{TreeSymbols.BRANCH} {TreeSymbols.TRAINING} "
-                           f"{ColorCode.BOLD.value}Models ({len(metrics.models)}):{ColorCode.RESET.value}")
+                           f"{ColorCode.BOLD.value}Models ({len(metrics.models)}/6):{ColorCode.RESET.value}")
         else:
-            models_title = f"{TreeSymbols.BRANCH} {TreeSymbols.TRAINING} Models ({len(metrics.models)}):"
+            models_title = f"{TreeSymbols.BRANCH} {TreeSymbols.TRAINING} Models ({len(metrics.models)}/6):"
         
         lines.append(models_title)
         
@@ -304,17 +308,33 @@ class TreeProgressRenderer:
                 status_icon = TreeSymbols.WARNING
                 status_color = ColorCode.BRIGHT_RED.value if self.config.color_enabled else ""
             
-            # Model progress bar (mini)
-            mini_progress = ProgressBar(width=15)
-            model_progress_bar = mini_progress.render(model_data.progress / 100.0, show_percentage=False)
+            # Extract model type from full name (e.g., "USTEC_support_resistance" -> "support_resistance")
+            model_type = model_name.split('_', 1)[1] if '_' in model_name else model_name
             
-            if self.config.color_enabled:
-                model_line = (f"{prefix} {status_icon} "
-                             f"{status_color}{model_name}{ColorCode.RESET.value}: {model_progress_bar} "
-                             f"Acc: {model_data.accuracy:.1f}% | Pred: {model_data.predictions}")
+            # More compact and functional display
+            if model_data.is_champion:
+                champion_indicator = "🏆"
             else:
-                model_line = (f"{prefix} {status_icon} {model_name}: {model_progress_bar} "
-                             f"Acc: {model_data.accuracy:.1f}% | Pred: {model_data.predictions}")
+                champion_indicator = "  "
+                
+            # Show status more clearly
+            if model_data.status == "Training":
+                status_indicator = "🔄"
+            elif model_data.status == "Complete":
+                status_indicator = "✅"
+            elif model_data.status == "Collecting Data":
+                status_indicator = "📊"
+            else:
+                status_indicator = "⚠️"
+            
+            # Compact display with essential info
+            if self.config.color_enabled:
+                model_line = (f"{prefix} {champion_indicator} {status_indicator} "
+                             f"{status_color}{model_type:<20}{ColorCode.RESET.value} "
+                             f"Acc: {model_data.accuracy:4.1f}% | Pred: {model_data.predictions:4d}")
+            else:
+                model_line = (f"{prefix} {champion_indicator} {status_indicator} "
+                             f"{model_type:<20} Acc: {model_data.accuracy:4.1f}% | Pred: {model_data.predictions:4d}")
             
             lines.append(model_line)
         
@@ -667,10 +687,10 @@ class DisplayManager:
                 self._move_cursor_to(i + 1, 1)
                 print(f"\033[K{line}")  # Clear line and print
             
-            # Update separators if needed
-            separator_line = self.table_lines_count - 2
-            self._move_cursor_to(separator_line, 1)
-            print(f"\033[K{'=' * 60}")
+            # Update separators if needed - DISABLED to fix BIAS model display
+            # separator_line = self.table_lines_count - 2
+            # self._move_cursor_to(separator_line, 1)
+            # print(f"\033[K{'=' * 60}")
             
             # Restore cursor position to continue with logs
             self._restore_cursor_position()
