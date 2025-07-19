@@ -763,7 +763,7 @@ class DisplayManager:
             if self.capabilities.supports_cursor_control and self.initial_display_shown:
                 # Update fixed table frequently for real-time display
                 if (now - self.last_full_display >= self.full_display_interval or 
-                    self.update_count % 100 == 0):  # More frequent updates for fixed display
+                    self.update_count % 1 == 0):  # Real-time updates for tick counter
                     self._update_fixed_table()
                     self.last_full_display = now
             else:
