@@ -6181,11 +6181,18 @@ class TensorShapeManager:
 class RollingWindowTrainer:
     """Sistema per training con finestra mobile preservando i migliori modelli"""
     
-    def __init__(self, window_size_days: int = 180, retrain_frequency_days: int = 7):
+    def __init__(self, window_size_days: int = 180, retrain_frequency_days: int = 7,
+                 asset: Optional[str] = None, model_type: Optional['ModelType'] = None, 
+                 logger: Optional['AnalyzerLogger'] = None):
         self.window_size_days = window_size_days
         self.retrain_frequency_days = retrain_frequency_days
         self.last_training_dates: Dict[str, datetime] = {}
         self.training_history: Dict[str, List[Dict]] = defaultdict(list)
+        
+        # Attributi aggiuntivi per compatibilità
+        self.asset = asset
+        self.model_type = model_type
+        self.logger = logger
         
     def should_retrain(self, asset: str, model_type: ModelType, algorithm_name: str,
                       force: bool = False) -> bool:
@@ -7806,6 +7813,23 @@ class RollingWindowTrainer:
         }
         
         self._training_events_buffer.append(event_entry)
+        
+        # 🔧 FIX: Emit ML Training Logger event for training completion
+        if (event_type == 'training_completed' and 
+            hasattr(self, 'logger') and self.logger is not None and
+            hasattr(self, 'asset') and self.asset is not None and
+            hasattr(self, 'model_type') and self.model_type is not None):
+            try:
+                self.logger.log_training_event(
+                    asset=self.asset,
+                    model_type=self.model_type,
+                    algorithm=event_data.get('algorithm', 'unknown'),
+                    training_type=event_data.get('training_type', 'general'),
+                    metrics=event_data
+                )
+            except Exception as e:
+                # Silent fallback to prevent disrupting training
+                pass
         
         # Keep buffer size manageable with priority preservation
         if len(self._training_events_buffer) > 100:
@@ -9490,7 +9514,7 @@ class AssetAnalyzer:
         self.reality_checker = RealityChecker()
         self.emergency_stop = EmergencyStopSystem(self.logger)
         self.mt5_interface = MT5Interface(self.logger)
-        self.rolling_trainer = RollingWindowTrainer()
+        self.rolling_trainer = RollingWindowTrainer(asset=asset, logger=self.logger)
         
         # Inizializza competizioni per ogni modello
         self.competitions: Dict[ModelType, AlgorithmCompetition] = {}
@@ -17805,6 +17829,9 @@ class AdvancedMarketAnalyzer:
                         # Assume directory name is asset name
                         asset = item
                         analyzer = AssetAnalyzer(asset, self.data_path)
+                        analyzer.parent = self  # ✅ Assegna parent reference
+                        # 🔧 FIX: Collegamento parent_analyzer per ML Training Logger anche negli asset
+                        analyzer.logger.parent_analyzer = self
                         self.asset_analyzers[asset] = analyzer
                         
                         self._safe_log('system', 'info', f"Loaded analyzer for {asset}")
@@ -17928,6 +17955,8 @@ class AdvancedMarketAnalyzer:
             try:
                 self.asset_analyzers[asset] = AssetAnalyzer(asset, self.data_path)
                 self.asset_analyzers[asset].parent = self  # ✅ Assegna parent reference
+                # 🔧 FIX: Collegamento parent_analyzer per ML Training Logger anche negli asset
+                self.asset_analyzers[asset].logger.parent_analyzer = self
                 
                 # ✅ NUOVO: Store event per UnifiedAnalyzerSystem
                 self._store_event('asset_added', {
@@ -17998,7 +18027,11 @@ class AdvancedMarketAnalyzer:
             else:
                 self._display_update_counter = 1
             
-            if self._display_update_counter % 50 == 0:
+            # Update display more frequently for real-time tick counter
+            # Every 10 ticks for responsive updates, or every tick if less than 100 total
+            update_frequency = 10 if self._performance_stats['ticks_processed'] > 100 else 1
+            
+            if self._display_update_counter % update_frequency == 0:
                 self._update_ml_display_metrics(asset)
                 
                 # Skip spam logging - tick count already shown in dashboard
@@ -18108,9 +18141,10 @@ class AdvancedMarketAnalyzer:
             
             # ULTRA-FAST: Process all ticks in batch
             results = []
+            batch_size = len(batch_data)
             
-            # Batch prepare tick data for asset analyzer
-            for tick_data in batch_data:
+            # Batch prepare tick data for asset analyzer - Use ML Training Logger for progress
+            for i, tick_data in enumerate(batch_data):
                 try:
                     # Direct call to asset analyzer for maximum speed
                     result = analyzer.process_tick(
@@ -18129,6 +18163,37 @@ class AdvancedMarketAnalyzer:
                         'volume': tick_data['volume'],
                         'asset': asset
                     })
+                    
+                    # REAL-TIME UPDATES: Update dashboard every 1000 tick during batch processing
+                    if (i + 1) % 1000 == 0:  # Every 1000 ticks
+                        try:
+                            # Force real-time display update
+                            self._update_ml_display_metrics(asset)
+                            
+                            # Also update global stats for real-time feedback
+                            if hasattr(self, '_update_global_stats'):
+                                self._update_global_stats()
+                                
+                            # DIRECT DISPLAY MANAGER UPDATE: Force the dashboard to show current tick count
+                            if hasattr(self, 'ml_display_manager') and self.ml_display_manager:
+                                elapsed_time = (time.time() - processing_start)
+                                current_rate = (i + 1) / max(elapsed_time, 0.001)  # Current batch rate
+                                total_processed = self._performance_stats.get('ticks_processed', 0) + (i + 1)
+                                
+                                # Force update display manager directly
+                                self.ml_display_manager.update_metrics(
+                                    ticks_processed=total_processed,
+                                    processing_rate=current_rate,
+                                    current_symbol=asset
+                                )
+                                
+                                # Dashboard updates only - no terminal feedback needed
+                                pass
+                            else:
+                                # No display manager available - skip terminal feedback
+                                pass
+                        except:
+                            pass  # Don't break batch processing for display updates
                     
                 except Exception as e:
                     # Silent fail for individual ticks within batch
@@ -18155,6 +18220,11 @@ class AdvancedMarketAnalyzer:
                 'processing_time_ms': processing_time_ms,
                 'timestamp': datetime.now()
             })
+            
+            # FINAL UPDATE: Ensure final tick count is accurate in dashboard
+            self._update_ml_display_metrics(asset)
+            if hasattr(self, '_update_global_stats'):
+                self._update_global_stats()
             
             # Update global stats once
             self._update_global_stats()

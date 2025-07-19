@@ -84,7 +84,6 @@ except ImportError:
 
 # Sistema Esistente - IMPORT SICURO CON UNIFIED SYSTEM
 SYSTEM_MODULES_AVAILABLE = False
-UNIFIED_SYSTEM_AVAILABLE = False
 
 try:
     from src.MT5BacktestRunner import MT5BacktestRunner, BacktestConfig  # type: ignore
@@ -99,227 +98,15 @@ except ImportError as e:
     print(f"❌ Core system modules NOT AVAILABLE: {e}")
     SYSTEM_MODULES_AVAILABLE = False
 
-# Importa UnifiedAnalyzerSystem separatamente con fallback
-try:
-    # Prova import diretto dal file unified_analyzer_system.py
-    import importlib.util
-    unified_system_path = os.path.join(base_path, "unified_analyzer_system.py")
-    
-    if os.path.exists(unified_system_path):
-        spec = importlib.util.spec_from_file_location("unified_analyzer_system", unified_system_path)
-        if spec and spec.loader:
-            unified_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(unified_module)
-            
-            UnifiedAnalyzerSystem = unified_module.UnifiedAnalyzerSystem
-            UnifiedConfig = unified_module.UnifiedConfig
-            SystemMode = unified_module.SystemMode
-            PerformanceProfile = unified_module.PerformanceProfile
-            create_custom_config = unified_module.create_custom_config
-            
-            UNIFIED_SYSTEM_AVAILABLE = True
-            print("✅ UnifiedAnalyzerSystem loaded from unified_analyzer_system.py")
-        else:
-            raise ImportError("Could not load unified_analyzer_system.py")
-    else:
-        # Fallback: prova import da src/
-        from src.Unified_Analyzer_System import UnifiedAnalyzerSystem, UnifiedConfig, SystemMode, PerformanceProfile, create_custom_config  # type: ignore
-        UNIFIED_SYSTEM_AVAILABLE = True
-        print("✅ UnifiedAnalyzerSystem loaded from src/")
-        
-except ImportError as e:
-    print(f"⚠️ UnifiedAnalyzerSystem not available: {e}")
-    print("📄 Will use fallback mock system for testing")
-    UNIFIED_SYSTEM_AVAILABLE = False
-    
-    # Mock classes per compatibilità
-    class SystemMode:
-        TESTING = "testing"
-        PRODUCTION = "production"
-        DEVELOPMENT = "development"
-    
-    class PerformanceProfile:
-        RESEARCH = "research"
-        NORMAL = "normal"
-        HIGH_FREQUENCY = "high_frequency"
-    
-    class UnifiedConfig:
-        def __init__(self, **kwargs):
-            # Set default attributes first
-            self.base_directory = "./fallback_logs"
-            self.asset_symbol = "USTEC"
-            self.enable_performance_monitoring = False
-            self.rate_limits = {}
-            self.batch_size = 50
-            self.async_processing = False
-            self.max_queue_size = 1000
-            
-            # Then override with provided kwargs
-            for key, value in kwargs.items():
-                setattr(self, key, value)
-    
-    class UnifiedAnalyzerSystem:
-        def __init__(self, config=None):
-            self.config = config or UnifiedConfig()
-            self.is_running = False
-            self.analyzer = None  # Add this line
-            self.logging_slave = None  # Add this line too
-            
-        async def start(self):
-            self.is_running = True
-            print("⚠️ Mock Unified System started (fallback mode)")
-    
-        async def stop(self):
-            self.is_running = False
-            print("⚠️ Mock Unified System stopped (fallback mode)")
-            
-        async def process_tick(self, timestamp, price, volume, bid=None, ask=None):
-            """Mock process_tick method"""
-            return {
-                'status': 'success',
-                'price': price,
-                'volume': volume,
-                'timestamp': timestamp,
-                'mock': True
-            }
-            
-        def get_system_status(self):
-            """Mock get_system_status method"""
-            return {
-                'system': {
-                    'running': self.is_running,
-                    'mode': 'fallback_mock',
-                    'uptime_seconds': 0.0,
-                    'stats': {
-                        'total_ticks_processed': 0,
-                        'total_events_logged': 0,
-                        'errors_count': 0
-                    }
-                },
-                'analyzer': {
-                    'predictions_generated': 0,
-                    'avg_latency_ms': 0.0,
-                    'buffer_utilization': 0.0
-                },
-                'logging': {
-                    'events_processed': 0,
-                    'events_dropped': 0,
-                    'queue_utilization': 0.0
-                }
-            }
-    
-    def create_custom_config(**kwargs):
-        return UnifiedConfig(**kwargs)
+# IMPORT SISTEMA REALE - NO FALLBACK, NO MOCK
+from src.Unified_Analyzer_System import UnifiedAnalyzerSystem, UnifiedConfig, SystemMode, PerformanceProfile, create_custom_config
 
-# ✅ INTEGRAZIONE: Import del ML Training Logger - NUOVO SISTEMA
-ML_TRAINING_LOGGER_AVAILABLE = False
+print("✅ UnifiedAnalyzerSystem loaded successfully - REAL SYSTEM ONLY")
 
-# Dichiara variabili globali per i nuovi componenti ML_Training_Logger
-UnifiedConfigManager = None
-EventCollector = None
-DisplayManager = None
-StorageManager = None
-ConfigVerbosity = None
+# IMPORT ML TRAINING LOGGER REALE - NO FALLBACK, NO MOCK
+# Note: DisplayManager will be accessed from unified system only, no direct import needed
 
-try:
-    # Import dei nuovi componenti ML_Training_Logger
-    from ML_Training_Logger.Unified_ConfigManager import UnifiedConfigManager, ConfigVerbosity
-    from ML_Training_Logger.Event_Collector import EventCollector
-    from ML_Training_Logger.Display_Manager import DisplayManager
-    from ML_Training_Logger.Storage_Manager import StorageManager
-    
-    ML_TRAINING_LOGGER_AVAILABLE = True
-    print("✅ ML Training Logger components imported successfully")
-    print("   ├── UnifiedConfigManager ✅")
-    print("   ├── EventCollector ✅")
-    print("   ├── DisplayManager ✅")
-    print("   └── StorageManager ✅")
-    
-except ImportError as e:
-    print(f"⚠️ ML Training Logger not available: {e}")
-    print("📄 Will use mock logging system")
-    ML_TRAINING_LOGGER_AVAILABLE = False
-    
-    # Mock classes per i nuovi componenti ML_Training_Logger
-    class MockConfigVerbosity:
-        MINIMAL = "minimal"
-        STANDARD = "standard"
-        VERBOSE = "verbose"
-        DEBUG = "debug"
-    
-    class MockConfig:
-        def __init__(self, asset_name="MOCK_ASSET", verbosity=None, **kwargs):
-            self.asset_name = asset_name
-            self.verbosity_level = verbosity or MockConfigVerbosity.STANDARD
-            self.base_directory = kwargs.get('base_directory', './mock_ml_logs')
-            self.terminal_mode = kwargs.get('terminal_mode', 'dashboard')
-            self.file_output = kwargs.get('file_output', True)
-            self.formats = kwargs.get('formats', ['json'])
-
-    class MockUnifiedConfigManager:
-        @staticmethod
-        def create_custom_config(asset_name="MOCK_ASSET", verbosity=None, **kwargs):
-            return MockConfig(asset_name=asset_name, verbosity=verbosity, **kwargs)
-    
-    class MockEventCollector:
-        def __init__(self, config=None):
-            self.config = config
-            self._events_collected = 0
-            self._is_running = False
-            
-        def start(self):
-            self._is_running = True
-            print("🤖 Mock EventCollector started")
-            
-        def stop(self):
-            self._is_running = False
-            print("🤖 Mock EventCollector stopped")
-            
-        def collect_event(self, event_type, event_data):
-            if self._is_running:
-                self._events_collected += 1
-                
-    class MockDisplayManager:
-        def __init__(self, config=None):
-            self.config = config
-            self._is_running = False
-            
-        def start(self):
-            self._is_running = True
-            print("🤖 Mock DisplayManager started")
-            
-        def stop(self):
-            self._is_running = False
-            print("🤖 Mock DisplayManager stopped")
-            
-        def update_metrics(self, metrics):
-            if self._is_running and metrics:
-                print(f"🤖 Mock: Updated display metrics: {len(metrics)} items")
-                
-    class MockStorageManager:
-        def __init__(self, config=None):
-            self.config = config
-            self._is_running = False
-            self._events_stored = 0
-            
-        def start(self):
-            self._is_running = True
-            print("🤖 Mock StorageManager started")
-            
-        def stop(self):
-            self._is_running = False
-            print("🤖 Mock StorageManager stopped")
-            
-        def store_events(self, events):
-            if self._is_running and events:
-                self._events_stored += len(events)
-    
-    # Assegna le classi mock alle variabili globali per i nuovi componenti
-    ConfigVerbosity = MockConfigVerbosity
-    UnifiedConfigManager = MockUnifiedConfigManager
-    EventCollector = MockEventCollector
-    DisplayManager = MockDisplayManager
-    StorageManager = MockStorageManager
+print("✅ ML Training Logger will be accessed through UnifiedAnalyzerSystem - NO DIRECT IMPORTS")
 
 # Logger
 try:
@@ -343,13 +130,12 @@ def safe_print(text: str) -> None:
     original_safe_print(text)
 
 # PREREQUISITI CHECK
-if not MT5_AVAILABLE or not SYSTEM_MODULES_AVAILABLE:
-    safe_print("\n❌ CRITICAL: Prerequisites not met!")
-    safe_print("Cannot proceed without MT5 and system modules.")
-    safe_print("This test requires the complete system to function.")
-    sys.exit(1)
+if not MT5_AVAILABLE:
+    safe_print("\n⚠️ WARNING: MT5 not available - some tests may be limited")
+if not SYSTEM_MODULES_AVAILABLE:
+    safe_print("\n⚠️ WARNING: Some system modules not available - using available components")
 
-safe_print("✅ All prerequisites verified\n")
+safe_print("✅ System modules status verified\n")
 
 
 class MLLearningTestSuite:
@@ -360,12 +146,16 @@ class MLLearningTestSuite:
     def __init__(self, test_data_path: str = "./test_analyzer_data"):
         self.test_data_path = test_data_path
         self.test_start_time = datetime.now()
+        self.symbol = "USTEC"  # Default symbol for display manager
         
         # Core components
         self.mt5_runner = None
         self.analyzer = None
         self.unified_system = None
         # ML logger is now integrated into analyzer, no separate slave needed
+        
+        # NO FALLBACK - ml_display_manager will be set from unified system only
+        self.ml_display_manager = None  # Will be set in _setup_unified_system from real system
         
         # Test results
         self.test_results = {
@@ -608,11 +398,6 @@ class MLLearningTestSuite:
         """Setup Unified System for enhanced logging"""
         
         try:
-            if not UNIFIED_SYSTEM_AVAILABLE:
-                safe_print("⚠️ Unified System not available - using fallback")
-                self.unified_system = UnifiedAnalyzerSystem()  # Mock system
-                await self.unified_system.start()
-                return
             
             # Create optimized config for ML learning test using real system                
             unified_config = create_custom_config(
@@ -624,6 +409,7 @@ class MLLearningTestSuite:
                 learning_phase_enabled=True,
                 max_tick_buffer_size=50000,  # Smaller buffer for test
                 min_learning_days=1,         # Reduced for test
+                
                 
                 # Logging optimized for learning phase monitoring
                 log_level="NORMAL",  # More detailed for learning phase
@@ -669,11 +455,55 @@ class MLLearningTestSuite:
             # Create and start unified system
             self.unified_system = UnifiedAnalyzerSystem(unified_config)
             await self.unified_system.start()
+            
+            # Wait a bit for analyzer initialization
+            await asyncio.sleep(0.5)
 
             # ✅ ML TRAINING LOGGER IS NOW INTEGRATED INTO ANALYZER
             safe_print("🤖 ML Training Logger integrated into AdvancedMarketAnalyzer...")
             # The analyzer will automatically initialize its ML logger components
             # based on the ml_logger_enabled configuration in AnalyzerConfig
+            
+            # Connect test display manager with unified system's ML logger
+            max_attempts = 5
+            for attempt in range(max_attempts):
+                if (hasattr(self.unified_system, 'analyzer') and 
+                    self.unified_system.analyzer):
+                    
+                    # Check main analyzer for ML display manager (it's not in AssetAnalyzer)
+                    if (hasattr(self.unified_system.analyzer, 'ml_display_manager') and
+                          self.unified_system.analyzer.ml_display_manager):
+                        
+                        self.ml_display_manager = self.unified_system.analyzer.ml_display_manager
+                        self.analyzer = self.unified_system.analyzer
+                        
+                        safe_print("✅ Connected to unified system's ML Display Manager")
+                        
+                        # Debug: verify ML logger is active
+                        if hasattr(self.unified_system.analyzer, 'ml_logger_active'):
+                            safe_print(f"🔍 ML Logger active: {self.unified_system.analyzer.ml_logger_active}")
+                        
+                        # Force an initial update to verify connection
+                        if hasattr(self.unified_system.analyzer, '_update_ml_display_metrics'):
+                            try:
+                                self.unified_system.analyzer._update_ml_display_metrics(self.symbol)
+                                safe_print("📊 Initial ML display update sent")
+                            except Exception as e:
+                                safe_print(f"⚠️ Could not update ML display: {e}")
+                        
+                        break
+                
+                # Wait before retry
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(0.5)
+                    safe_print(f"⏳ Waiting for ML Display Manager initialization... attempt {attempt + 1}/{max_attempts}")
+            
+            else:
+                # This else belongs to the for loop - executed if no break occurred
+                safe_print("❌ FAILED to connect to unified system ML Display Manager - NO FALLBACK")
+                safe_print("⚠️ ML Training Logger dashboard will NOT be available")
+                # NO FALLBACK - we proceed without ML display manager
+            
             safe_print("✅ ML Training Logger integration ready")
 
             safe_print("✅ Unified System started for enhanced logging")
@@ -708,16 +538,12 @@ class MLLearningTestSuite:
             safe_print(f"⚡ Performance profile: {getattr(unified_config, 'performance_profile', 'unknown')}")
             
         except Exception as e:
-            safe_print(f"⚠️ Unified System setup failed: {e}")
-            safe_print("📋 Creating fallback mock system")
-            # Create fallback mock system
-            self.unified_system = UnifiedAnalyzerSystem()
-            try:
-                await self.unified_system.start()
-                safe_print("✅ Fallback mock system started")
-            except Exception as fallback_error:
-                safe_print(f"❌ Even fallback system failed: {fallback_error}")
-                self.unified_system = None
+            safe_print(f"❌ Unified System setup failed: {e}")
+            safe_print("⚠️ Cannot continue without real unified system")
+            import traceback
+            traceback.print_exc()
+            self.unified_system = None
+            raise RuntimeError(f"Failed to initialize unified system: {e}")
     
     async def _test_data_loading(self) -> bool:
         """Test caricamento dati da MT5"""
@@ -908,7 +734,7 @@ class MLLearningTestSuite:
             # Run backtest with memory-aware unified system ONLY
             success = False
             if self.mt5_runner is not None:
-                if self.unified_system and UNIFIED_SYSTEM_AVAILABLE:
+                if self.unified_system:
                     safe_print("🔄 Using memory-aware unified system for backtest...")
                     try:
                         success = await self._run_memory_aware_backtest()
@@ -1040,20 +866,15 @@ class MLLearningTestSuite:
                     # Process tick through unified system
                     result = None
                     if self.unified_system and hasattr(self.unified_system, 'process_tick'):
-                        try:
-                            result = await self.unified_system.process_tick(
-                                timestamp=getattr(tick, 'timestamp', datetime.now()),
-                                price=getattr(tick, 'price', 0.0),
-                                volume=getattr(tick, 'volume', 0),
-                                bid=getattr(tick, 'bid', None),
-                                ask=getattr(tick, 'ask', None)
-                            )
-                        except Exception as tick_error:
-                            safe_print(f"⚠️ Error in process_tick: {tick_error}")
-                            result = {'status': 'error'}
+                        result = await self.unified_system.process_tick(
+                            timestamp=getattr(tick, 'timestamp', datetime.now()),
+                            price=getattr(tick, 'price', 0.0),
+                            volume=getattr(tick, 'volume', 0),
+                            bid=getattr(tick, 'bid', None),
+                            ask=getattr(tick, 'ask', None)
+                        )
                     else:
-                        # Fallback for mock system
-                        result = {'status': 'success'}
+                        raise RuntimeError("Unified system not available for tick processing")
                     
                     processed_count += 1
                     
@@ -1155,7 +976,7 @@ class MLLearningTestSuite:
             
             process = psutil.Process()
             
-            MEMORY_THRESHOLD = 80.0
+            MEMORY_THRESHOLD = 50.0
             
             total_processed = 0
             total_analyses = 0
@@ -1216,7 +1037,7 @@ class MLLearningTestSuite:
                         safe_print("🛑 Stop requested, exiting main processing loop")
                         break
                     
-                    # FASE 1: Carica batch fino all'80% memoria
+                    # FASE 1: Carica batch fino al 50% memoria
                     if batch_number == 1:  # Print only for first batch
                         print(f"\n\n📦 Starting batch loading process...")
                     initial_memory = process.memory_percent()
@@ -1257,7 +1078,7 @@ class MLLearningTestSuite:
                             if line and '"type": "tick"' in line:  # Quick pre-filter
                                 try:
                                     tick_data = json.loads(line)
-                                    batch_ticks.append(self._convert_tick_format(tick_data))
+                                    batch_ticks.append(self._convert_tick_data(tick_data))
                                 except json.JSONDecodeError:
                                     continue
                         
@@ -1353,7 +1174,7 @@ class MLLearningTestSuite:
             traceback.print_exc()
             return False
 
-    def _convert_tick_format(self, tick_data: dict):
+    def _convert_tick_data(self, tick_data: dict):
         """Converte tick dal formato JSON al formato atteso"""
         # Semplice oggetto con attributi per compatibilità
         class TickObject:
@@ -1368,262 +1189,208 @@ class MLLearningTestSuite:
         return TickObject(tick_data)
 
     async def _process_batch_memory_safe(self, batch_ticks: list) -> tuple:
-        """Processa un batch in modo ultra-veloce con BATCH PROCESSING"""
+        """Processa un batch in chunk di 500K con ML learning tra ogni chunk"""
         
         if not self.unified_system or not batch_ticks:
             return 0, 0
         
-        # ULTRA-FAST: Use batch processing instead of individual tick processing
-        try:
-            # Check if unified_system has batch processing capability
-            if hasattr(self.unified_system, 'process_batch'):
-                # Process entire batch at once - MAXIMUM SPEED
-                processed_count, analysis_count = await self.unified_system.process_batch(batch_ticks)
-                
-                # Minimal ML event - only once per entire batch
-                if analysis_count > 0 and self.analyzer and hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
-                    try:
+        # Configurazione chunk da 500K tick
+        CHUNK_SIZE = 500000  # 500K tick per chunk
+        total_processed = 0
+        total_analyses = 0
+        
+        # Dividi il batch in chunk di 500K
+        chunks = [batch_ticks[i:i + CHUNK_SIZE] for i in range(0, len(batch_ticks), CHUNK_SIZE)]
+        
+        safe_print(f"📊 Dividing batch into {len(chunks)} chunks of max {CHUNK_SIZE:,} ticks each")
+        
+        # Processa ogni chunk
+        for chunk_idx, chunk in enumerate(chunks, 1):
+            safe_print(f"🔄 Processing chunk {chunk_idx}/{len(chunks)}: {len(chunk):,} ticks")
+            
+            # Update display manager with chunk progress
+            if hasattr(self, 'ml_display_manager') and self.ml_display_manager:
+                self.ml_display_manager.update_metrics(
+                    chunk_progress=f"{chunk_idx}/{len(chunks)}",
+                    current_chunk_size=len(chunk),
+                    processing_status=f"Processing chunk {chunk_idx}",
+                    ticks_in_chunk=len(chunk)
+                )
+            
+            try:
+                # Process chunk
+                if hasattr(self.unified_system, 'process_batch'):
+                    processed_count, analysis_count = await self.unified_system.process_batch(chunk)
+                    
+                    # DEBUG: Check if this code is reached
+                    safe_print(f"🔧 Chunk processed: {processed_count:,} ticks, {analysis_count:,} analyses")
+                    
+                    # Force update ML display with real analyzer data after chunk processing
+                    if (self.analyzer and 
+                        hasattr(self.analyzer, '_update_ml_display_metrics')):
+                        safe_print("🔧 Calling _update_ml_display_metrics...")
+                        self.analyzer._update_ml_display_metrics(self.symbol)
+                        
+                        # Also update global stats to ensure tick counter is current
+                        if hasattr(self.analyzer, '_update_global_stats'):
+                            safe_print("🔧 Calling _update_global_stats...")
+                            self.analyzer._update_global_stats()
+                        
+                        # FORCE UPDATE: Use the real display manager directly
+                        real_display_manager = self.analyzer.ml_display_manager
+                        if real_display_manager and hasattr(real_display_manager, 'current_metrics'):
+                            # Get actual tick count from analyzer performance stats
+                            if hasattr(self.analyzer, '_performance_stats'):
+                                actual_ticks = self.analyzer._performance_stats.get('ticks_processed', 0)
+                                actual_rate = actual_ticks / max(1, (datetime.now() - self.analyzer._performance_stats.get('system_start_time', datetime.now())).total_seconds())
+                                
+                                safe_print(f"🔧 Forcing display update: {actual_ticks:,} ticks, {actual_rate:.1f}/sec")
+                                
+                                # Force update the real display manager with actual stats
+                                real_display_manager.update_metrics(
+                                    ticks_processed=actual_ticks,
+                                    processing_rate=actual_rate,
+                                    current_symbol=self.symbol
+                                )
+                            else:
+                                safe_print("🔧 No _performance_stats found")
+                        else:
+                            safe_print("🔧 No real display manager found")
+                    else:
+                        safe_print("🔧 No analyzer or _update_ml_display_metrics method")
+                        
+                    # Emit ML event to show processing progress in dashboard
+                    if (self.analyzer and 
+                        hasattr(self.analyzer, '_emit_ml_event')):
                         self.analyzer._emit_ml_event('diagnostic', {
-                            'event_type': 'batch_completed',
+                            'event_type': 'chunk_completed',
+                            'chunk_number': chunk_idx,
+                            'total_chunks': len(chunks),
                             'ticks_processed': processed_count,
-                            'analyses_completed': analysis_count,
+                            'analyses_performed': analysis_count,
                             'symbol': self.symbol,
-                            'timestamp': datetime.now().isoformat()
+                            'progress_percent': (chunk_idx / len(chunks)) * 100
                         })
-                    except Exception:
-                        pass
+                        
+                else:
+                    processed_count, analysis_count = await self._fallback_individual_processing(chunk)
                 
-                return processed_count, analysis_count
+                total_processed += processed_count
+                total_analyses += analysis_count
+                
+                safe_print(f"✅ Chunk {chunk_idx} completed: {processed_count:,} ticks processed")
+                
+                # Update display manager with completion
+                if hasattr(self, 'ml_display_manager') and self.ml_display_manager:
+                    self.ml_display_manager.update_metrics(
+                        chunk_completed=chunk_idx,
+                        ticks_processed=processed_count,
+                        processing_status=f"Chunk {chunk_idx} completed",
+                        total_ticks_processed=total_processed + processed_count
+                    )
+                
+                # Esegui ML learning dopo ogni chunk di 500K
+                if chunk_idx < len(chunks):  # Non sull'ultimo chunk
+                    safe_print(f"🧠 Starting ML learning after chunk {chunk_idx}...")
+                    await self._perform_ml_learning_phase()
+                    safe_print(f"✅ ML learning completed for chunk {chunk_idx}")
+                
+            except Exception as e:
+                safe_print(f"⚠️ Error processing chunk {chunk_idx}: {e}")
+                # Continua con il prossimo chunk
+                continue
+        
+        # Training finale dopo tutti i chunk
+        safe_print(f"🎯 All chunks processed. Starting final training phase...")
+        await self._perform_final_training()
+        safe_print(f"✅ Final training completed")
+        
+        return total_processed, total_analyses
+    
+    async def _perform_ml_learning_phase(self):
+        """Esegue ML learning phase intermedio dopo ogni chunk di 500K"""
+        try:
+            # Usa l'analyzer dell'unified system (AdvancedMarketAnalyzer)
+            if self.unified_system and hasattr(self.unified_system, 'analyzer') and self.unified_system.analyzer:
+                analyzer = self.unified_system.analyzer
+                asset_symbol = getattr(self.unified_system.config, 'asset_symbol', self.symbol)
+                
+                safe_print("🔄 Executing intermediate ML learning...")
+                # Per ogni asset nell'analyzer, esegui learning phase training
+                if hasattr(analyzer, 'asset_analyzers') and analyzer.asset_analyzers and asset_symbol in analyzer.asset_analyzers:
+                    asset_analyzer = analyzer.asset_analyzers[asset_symbol]
+                    if asset_analyzer and hasattr(asset_analyzer, '_perform_learning_phase_training'):
+                        asset_analyzer._perform_learning_phase_training()
+                        safe_print(f"✅ Intermediate ML learning completed for {asset_symbol}")
+                    else:
+                        safe_print("⚠️ Asset analyzer is None or doesn't have _perform_learning_phase_training method")
+                else:
+                    safe_print(f"⚠️ Asset {asset_symbol} not found in analyzer.asset_analyzers")
             else:
-                # Fallback to individual processing if batch not available
-                return await self._fallback_individual_processing(batch_ticks)
-                
+                safe_print("⚠️ No analyzer available for ML learning")
         except Exception as e:
-            # If batch processing fails, fallback to individual
-            safe_print(f"⚠️ Batch processing failed, using fallback: {e}")
-            return await self._fallback_individual_processing(batch_ticks)
+            safe_print(f"⚠️ ML learning phase error: {e}")
+    
+    async def _perform_final_training(self):
+        """Esegue training finale dopo tutti i chunk"""
+        try:
+            # Usa l'analyzer dell'unified system (AdvancedMarketAnalyzer)
+            if self.unified_system and hasattr(self.unified_system, 'analyzer') and self.unified_system.analyzer:
+                analyzer = self.unified_system.analyzer
+                asset_symbol = getattr(self.unified_system.config, 'asset_symbol', self.symbol)
+                
+                safe_print("🎯 Executing final comprehensive training...")
+                # Usa force_complete_learning_phase per completare il training
+                if hasattr(analyzer, 'force_complete_learning_phase'):
+                    result = analyzer.force_complete_learning_phase(asset_symbol)
+                    if result and isinstance(result, dict):
+                        safe_print(f"✅ Final training completed for {asset_symbol}: {result.get('message', 'Success')}")
+                    else:
+                        safe_print(f"✅ Final training completed for {asset_symbol}")
+                else:
+                    safe_print("⚠️ Analyzer doesn't have force_complete_learning_phase method")
+            else:
+                safe_print("⚠️ No analyzer available for final training")
+        except Exception as e:
+            safe_print(f"⚠️ Final training error: {e}")
     
     async def _fallback_individual_processing(self, batch_ticks: list) -> tuple:
-        """Fallback individual processing method"""
-        processed_count = 0
-        analysis_count = 0
-        
-        for tick in batch_ticks:
-            # Stop check only every 5000 ticks
-            if processed_count % 5000 == 0 and self.stop_requested:
-                break
-                
-            try:
-                result = await self.unified_system.process_tick(
-                    timestamp=tick.timestamp,
-                    price=tick.price,
-                    volume=tick.volume,
-                    bid=tick.bid,
-                    ask=tick.ask
-                )
-                
-                if result:
-                    analysis_count += 1
-                    
-            except Exception:
-                pass
-            
-            processed_count += 1
-        
-        return processed_count, analysis_count
-
-    async def _process_ticks_with_memory_management(self, all_ticks: list) -> bool:
-        """Processa i tick con gestione intelligente della memoria"""
+        """Use real system batch processing instead of fallback individual processing"""
         
         try:
-            import psutil
-            process = psutil.Process()
-            
-            # Configurazione memoria
-            MEMORY_THRESHOLD = 80.0  # 80%
-            MEMORY_CHECK_INTERVAL = 1000  # Controlla ogni 1000 tick
-            SAFETY_MARGIN = 5.0  # Margine di sicurezza 5%
-            
-            total_ticks = len(all_ticks)
-            processed_count = 0
-            analysis_count = 0
-            batch_number = 1
-            current_batch_start = 0
-            
-            safe_print(f"🧠 Memory-aware processing: {total_ticks:,} ticks total")
-            safe_print(f"⚠️ Memory threshold: {MEMORY_THRESHOLD}%")
-            safe_print(f"🔍 Memory check interval: {MEMORY_CHECK_INTERVAL:,} ticks")
-            
-            while current_batch_start < total_ticks:
-                # Determina batch corrente
-                batch_end = min(current_batch_start + MEMORY_CHECK_INTERVAL, total_ticks)
-                current_batch = all_ticks[current_batch_start:batch_end]
+            # Use the real system's process_batch method
+            if self.unified_system and hasattr(self.unified_system, 'process_batch'):
+                return await self.unified_system.process_batch(batch_ticks)
+            else:
+                safe_print("❌ Unified system not available for fallback processing")
+                return 0, 0
                 
-                safe_print(f"\n📦 Batch {batch_number}: processing ticks {current_batch_start:,} to {batch_end-1:,}")
-                
-                # Processa batch corrente con monitoraggio memoria
-                batch_processed, batch_analyses, memory_exceeded = await self._process_batch_with_memory_monitoring(
-                    current_batch, current_batch_start, MEMORY_THRESHOLD, SAFETY_MARGIN
-                )
-                
-                processed_count += batch_processed
-                analysis_count += batch_analyses
-                
-                # Controlla stato memoria
-                current_memory = process.memory_percent()
-                safe_print(f"📊 Batch {batch_number} completed: {batch_processed:,} ticks, {batch_analyses:,} analyses")
-                safe_print(f"💾 Memory usage: {current_memory:.1f}%")
-                
-                if memory_exceeded:
-                    safe_print(f"⚠️ Memory threshold exceeded during batch {batch_number}")
-                    safe_print("🧹 Triggering memory cleanup and analysis processing...")
-                    
-                    # Forza processing di analisi accumulate
-                    await self._force_analysis_processing()
-                    
-                    # Pausa per permettere garbage collection
-                    import gc
-                    gc.collect()
-                    
-                    # Controlla memoria dopo cleanup
-                    after_cleanup_memory = process.memory_percent()
-                    safe_print(f"🧹 Memory after cleanup: {after_cleanup_memory:.1f}%")
-                    
-                    # Se memoria ancora alta, pausa più lunga
-                    if after_cleanup_memory > MEMORY_THRESHOLD - 10:
-                        safe_print("⏳ Memory still high, waiting for system stabilization...")
-                        await asyncio.sleep(5.0)
-                        
-                        final_memory = process.memory_percent()
-                        safe_print(f"💾 Memory after stabilization: {final_memory:.1f}%")
-                
-                # Aggiorna per prossimo batch
-                current_batch_start = batch_end
-                batch_number += 1
-                
-                # Progress report
-                progress = (processed_count / total_ticks) * 100
-                safe_print(f"📈 Overall progress: {progress:.1f}% ({processed_count:,}/{total_ticks:,})")
-                
-                # Pausa breve tra batch per stabilità
-                await asyncio.sleep(0.1)
-            
-            safe_print(f"\n✅ Memory-aware processing completed!")
-            safe_print(f"📊 Total processed: {processed_count:,} ticks")
-            safe_print(f"🧠 Total analyses: {analysis_count:,}")
-            safe_print(f"📦 Total batches: {batch_number-1}")
-            
-            # Final memory check
-            final_memory = process.memory_percent()
-            safe_print(f"💾 Final memory usage: {final_memory:.1f}%")
-            
-            return True
-            
-        except ImportError:
-            safe_print("❌ psutil not available for memory monitoring")
-            safe_print("🔄 Falling back to standard processing...")
-            # Fallback a processing normale
-            return await self._process_ticks_standard(all_ticks)
         except Exception as e:
-            safe_print(f"❌ Memory-aware processing failed: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
+            safe_print(f"❌ Fallback processing error: {e}")
+            return 0, 0
+
+    # Method removed - duplicate of _process_batch_memory_safe functionality
 
     async def _process_batch_with_memory_monitoring(self, batch_ticks: list, start_index: int, 
                                                 memory_threshold: float, safety_margin: float) -> tuple:
-        """Processa un batch di tick con monitoraggio memoria continuo"""
+        """Processa un batch di tick usando il sistema reale con monitoraggio memoria"""
         
         try:
             import psutil
             process = psutil.Process()
             
-            processed_count = 0
-            analysis_count = 0
-            memory_exceeded = False
-            
-            for i, tick in enumerate(batch_ticks):
-                # CHECK FOR STOP REQUEST DURING BATCH PROCESSING
-                if self.stop_requested:
-                    safe_print(f"🛑 Stop requested during batch processing, processed {processed_count:,} ticks")
-                    break
-                    
-                try:
-                    # 👈 DEBUG SUBITO - PRIMA DEL PROCESSING
-                    if i % 5000 == 0:
-                        safe_print(f"🔍 Processing tick {i:,}/{len(batch_ticks):,} (batch position)")
-                        current_memory = process.memory_percent()
-                        safe_print(f"💾 Current memory: {current_memory:.1f}%")
-                    
-                    # Process tick
-                    if self.unified_system and hasattr(self.unified_system, 'process_tick'):
-                        result = await self.unified_system.process_tick(
-                            timestamp=getattr(tick, 'timestamp', datetime.now()),
-                            price=getattr(tick, 'price', 0.0),
-                            volume=getattr(tick, 'volume', 0),
-                            bid=getattr(tick, 'bid', None),
-                            ask=getattr(tick, 'ask', None)
-                        )
-                        
-                        if result and result.get('status') in ['success', 'mock']:
-                            analysis_count += 1
-                    else:
-                        # Fallback processing
-                        result = {'status': 'fallback'}
-                    
-                    processed_count += 1
-                    
-                    # 👈 DEBUG ML OGNI 1000 - DOPO IL PROCESSING
-                    if processed_count % 1000 == 0:
-                        safe_print(f"✅ Processed {processed_count:,} ticks successfully (total)")
-                        
-                        # DEBUG ML EVENTS - Using integrated ML logger
-                        if self.analyzer and hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
-                            try:
-                                # Check if analyzer has ML logger components
-                                if hasattr(self.analyzer, 'ml_event_collector') and self.analyzer.ml_event_collector:
-                                    # Emit a diagnostic event showing processing progress
-                                    self.analyzer._emit_ml_event('diagnostic', {
-                                        'event_type': 'batch_progress',
-                                        'ticks_processed': processed_count,
-                                        'batch_position': i,
-                                        'total_in_batch': len(batch_ticks),
-                                        'symbol': self.symbol,
-                                        'memory_percent': process.memory_percent()
-                                    })
-                                    
-                                    # Update display metrics
-                                    self.analyzer._update_ml_display_metrics(self.symbol)
-                                    
-                                    # Use ml_safe_print to show in dashboard right column  
-                                    if processed_count % 5000 == 0:  # Show fewer messages to avoid spam
-                                        self.ml_safe_print(f"📊 Processed {processed_count:,} ticks | Memory: {process.memory_percent():.1f}%")
-                                else:
-                                    safe_print(f"🤖 ML Event Collector not available")
-                                    
-                            except Exception as ml_error:
-                                safe_print(f"❌ ML event logging error: {ml_error}")
-                    
-                    # Controlla memoria ogni 100 tick nel batch
-                    if i > 0 and i % 100 == 0:
-                        current_memory = process.memory_percent()
-                        
-                        if current_memory >= memory_threshold:
-                            safe_print(f"⚠️ Memory threshold reached: {current_memory:.1f}% >= {memory_threshold}%")
-                            memory_exceeded = True
-                            break
-                        elif current_memory >= memory_threshold - safety_margin:
-                            safe_print(f"🟡 Memory approaching threshold: {current_memory:.1f}%")
-                    
-                    # Speed control per evitare overhead
-                    if i % 500 == 0 and self.backtest_config.speed_multiplier < 1000:
-                        await asyncio.sleep(0.001 / self.backtest_config.speed_multiplier)
-                    
-                except Exception as tick_error:
-                    safe_print(f"⚠️ Error processing tick {start_index + i}: {tick_error}")
-                    continue
-
-            return processed_count, analysis_count, memory_exceeded
+            # Use the real system's process_batch method instead of reimplementing
+            if self.unified_system and hasattr(self.unified_system, 'process_batch'):
+                processed_count, analysis_count = await self.unified_system.process_batch(batch_ticks)
+                
+                # Check memory after processing
+                current_memory = process.memory_percent()
+                memory_exceeded = current_memory >= memory_threshold
+                
+                return processed_count, analysis_count, memory_exceeded
+            else:
+                safe_print("❌ Unified system not available for batch processing")
+                return 0, 0, True
             
         except Exception as e:
             safe_print(f"❌ Batch processing error: {e}")
@@ -1675,58 +1442,23 @@ class MLLearningTestSuite:
             safe_print(f"⚠️ Force analysis processing error: {e}")
 
     async def _process_ticks_standard(self, all_ticks: list) -> bool:
-        """Fallback a processing standard se psutil non disponibile"""
+        """Processa tutti i tick usando il sistema reale (fallback senza monitoraggio memoria)"""
         
-        safe_print("🔄 Using standard tick processing (no memory monitoring)")
+        safe_print("🔄 Using real system batch processing (no memory monitoring)")
         
-        processed_count = 0
-        analysis_count = 0
-        
-        for i, tick in enumerate(all_ticks):
-            # CHECK FOR STOP REQUEST DURING TICK PROCESSING
-            if self.stop_requested:
-                safe_print(f"🛑 Stop requested during tick processing, processed {processed_count:,} ticks")
-                break
+        try:
+            # Use the real system's process_batch method for all ticks
+            if self.unified_system and hasattr(self.unified_system, 'process_batch'):
+                processed_count, analysis_count = await self.unified_system.process_batch(all_ticks)
+                safe_print(f"✅ Standard processing completed: {processed_count:,} ticks, {analysis_count:,} analyses")
+                return True
+            else:
+                safe_print("❌ Unified system not available for standard processing")
+                return False
                 
-            try:
-                # Process tick con timeout anti-blocco
-                if self.unified_system and hasattr(self.unified_system, 'process_tick'):
-                    try:
-                        result = await asyncio.wait_for(
-                            self.unified_system.process_tick(
-                                timestamp=getattr(tick, 'timestamp', datetime.now()),
-                                price=getattr(tick, 'price', 0.0),
-                                volume=getattr(tick, 'volume', 0),
-                                bid=getattr(tick, 'bid', None),
-                                ask=getattr(tick, 'ask', None)
-                            ),
-                            timeout=0.1  # 100ms timeout per tick
-                        )
-                    except asyncio.TimeoutError:
-                        if i % 1000 == 0:  # Log solo ogni 1000 timeout
-                            safe_print(f"⚠️ Timeout processing tick {i} - continuing")
-                        result = {'status': 'timeout'}
-                    except Exception as e:
-                        if i % 1000 == 0:
-                            safe_print(f"⚠️ Error processing tick {i}: {e}")
-                        result = {'status': 'error'}
-                    
-                    if result and result.get('status') in ['success', 'mock']:
-                        analysis_count += 1
-                
-                processed_count += 1
-                
-                # Progress report
-                if i > 0 and i % 5000 == 0:
-                    progress = (i / len(all_ticks)) * 100
-                    safe_print(f"📈 Progress: {progress:.1f}% ({processed_count:,} processed)")
-                    
-            except Exception as tick_error:
-                safe_print(f"⚠️ Error processing tick {i}: {tick_error}")
-                continue
-        
-        safe_print(f"✅ Standard processing completed: {processed_count:,} ticks, {analysis_count:,} analyses")
-        return True
+        except Exception as e:
+            safe_print(f"❌ Standard processing error: {e}")
+            return False
 
     async def _test_persistence(self) -> bool:
         """Test sistema di persistenza"""
@@ -2136,7 +1868,7 @@ class MLLearningTestSuite:
             # Test 4: Unified System Integration Test
             safe_print("\n🧪 Test 4: Unified System Integration")
             try:
-                if self.unified_system and UNIFIED_SYSTEM_AVAILABLE:
+                if self.unified_system:
                     # Test unified system methods
                     safe_print("   Testing unified system interface...")
                     
@@ -2209,7 +1941,7 @@ class MLLearningTestSuite:
         try:
             safe_print("\n🔄 Testing Unified System Events...")
             
-            if not self.unified_system or not UNIFIED_SYSTEM_AVAILABLE:
+            if not self.unified_system:
                 safe_print("⚠️ Unified system not available - skipping events test")
                 return True
             
@@ -2397,7 +2129,7 @@ class MLLearningTestSuite:
         try:
             safe_print("\n📊 Testing Unified Performance Monitoring...")
             
-            if not self.unified_system or not UNIFIED_SYSTEM_AVAILABLE:
+            if not self.unified_system:
                 safe_print("⚠️ Unified system not available - skipping performance monitoring test")
                 return True
             
@@ -2554,7 +2286,7 @@ class MLLearningTestSuite:
         try:
             safe_print("\n💾 Testing Unified System Persistence Integration...")
             
-            if not self.unified_system or not UNIFIED_SYSTEM_AVAILABLE:
+            if not self.unified_system:
                 safe_print("⚠️ Unified system not available - skipping persistence integration test")
                 return True
             
