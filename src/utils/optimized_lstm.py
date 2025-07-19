@@ -34,10 +34,10 @@ warnings.filterwarnings('ignore')
 class LSTMConfig:
     """Configurazione per OptimizedLSTM"""
     
-    # Architecture
-    input_size: int = 64
-    hidden_size: int = 128
-    num_layers: int = 2
+    # Architecture - OTTIMIZZATO per RTX 3080 (input_size mantenuto per compatibilità)
+    input_size: int = 64                # MANTENUTO per compatibilità dati esistenti
+    hidden_size: int = 512              # Era 128 -> 4x per capacità GPU
+    num_layers: int = 4                 # Era 2 -> 2x layers per apprendimento profondo
     output_size: int = 1
     
     # Regularization
@@ -500,6 +500,12 @@ class OptimizedLSTM(nn.Module):
         # Take only the last timestep for final prediction
         last_output = final_output[:, -1, :]  # [batch_size, hidden_size]
         prediction = self.output_projection(last_output)  # [batch_size, output_size]
+        
+        # DEBUG: Ensure output shape is correct
+        if len(prediction.shape) == 3:
+            # If somehow we get 3D output, take last dimension
+            prediction = prediction[:, -1, :]
+            print(f"🔍 DEBUG LSTM: Fixed 3D output to 2D: {prediction.shape}")
         
         return prediction, new_hidden_states
     

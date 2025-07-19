@@ -42,15 +42,15 @@ class TrainingConfig:
     """Configurazione per AdaptiveTrainer"""
     
     # Core training settings
-    initial_learning_rate: float = 1e-3
+    initial_learning_rate: float = 2e-3     # Era 1e-3 -> aumentato per batch grandi
     min_learning_rate: float = 1e-6
     max_learning_rate: float = 1e-1
     
-    # Batch size settings
-    initial_batch_size: int = 32
-    min_batch_size: int = 8
-    max_batch_size: int = 512
-    batch_size_increment: int = 8
+    # Batch size settings - OTTIMIZZATO per RTX 3080
+    initial_batch_size: int = 128        # Ottimizzato per RTX 3080 (10GB VRAM)
+    min_batch_size: int = 32             # Minimo per efficienza GPU
+    max_batch_size: int = 2048           # Era 512 -> 4x per GPU memory
+    batch_size_increment: int = 32       # Era 8 -> 4x per faster scaling
     
     # Early stopping
     early_stopping_patience: int = 20
@@ -415,8 +415,7 @@ class AdaptiveTrainer:
         self.model.train()
         epoch_losses = []
         
-        for _, (data, target) in enumerate(data_loader):
-            
+        for batch_idx, (data, target) in enumerate(data_loader):
             # Move to device
             data, target = data.to(self.device), target.to(self.device)
             
@@ -425,7 +424,12 @@ class AdaptiveTrainer:
             
             if self.scaler is not None:
                 with autocast('cuda'):
-                    output, _ = self.model(data)
+                    model_output = self.model(data)
+                    # Handle tuple output
+                    if isinstance(model_output, tuple):
+                        output = model_output[0]
+                    else:
+                        output = model_output
                     loss = criterion(output, target)
                 
                 # Backward pass with gradient scaling
@@ -441,7 +445,20 @@ class AdaptiveTrainer:
             
             else:
                 # Standard training
-                output, _ = self.model(data)
+                model_output = self.model(data)
+                # Handle tuple output from LSTM
+                if isinstance(model_output, tuple):
+                    output = model_output[0]
+                else:
+                    output = model_output
+                
+                # Ensure shapes match
+                if output.shape != target.shape:
+                    # Try to fix common shape issues
+                    if len(output.shape) == 3 and len(target.shape) == 2:
+                        # Output is [batch, seq, features], target is [batch, features]
+                        output = output[:, -1, :]  # Take last timestep
+                
                 loss = criterion(output, target)
                 loss.backward()
                 

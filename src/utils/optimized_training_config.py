@@ -71,7 +71,7 @@ class OptimizedTrainingPipeline:
     # Training data settings
     train_test_split: float = 0.8
     validation_split: float = 0.1
-    batch_size: int = 32
+    batch_size: int = 128               # Ottimizzato per RTX 3080 (10GB VRAM)
     
     # Model saving
     save_directory: str = "./optimized_models"

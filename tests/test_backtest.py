@@ -1863,7 +1863,7 @@ class MLLearningTestSuite:
                 except PermissionError:
                     safe_print("✅ Directory permission properly restricted")
                     error_tests_passed += 1
-                    
+                                   
             except Exception as e:
                 safe_print(f"✅ Directory permission error handled: {e}")
                 error_tests_passed += 1

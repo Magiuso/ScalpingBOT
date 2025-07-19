@@ -194,10 +194,10 @@ class AnalyzerConfig:
     # ========== LEARNING PHASE CONFIGURATION ==========
     min_learning_days: int = 30  # Giorni minimi di learning
     learning_ticks_threshold: int = 50000  # Tick minimi per completare learning
-    learning_mini_training_interval: int = 1000  # Ogni N tick durante learning
+    learning_mini_training_interval: int = 500   # Era 1000 -> 2x più frequente per GPU
     
     # ========== DATA MANAGEMENT ==========
-    max_tick_buffer_size: int = 500000  # 🔧 Aumentato a 500K per supportare training threshold
+    max_tick_buffer_size: int = 1000000  # Era 500K -> 2x per batch grandi GPU
     data_cleanup_days: int = 180  # Giorni di dati da mantenere
     aggregation_windows: List[int] = field(default_factory=lambda: [5, 15, 30, 60])  # Minuti
     
@@ -216,7 +216,7 @@ class AnalyzerConfig:
     emergency_score_decline: float = 0.4  # 🔧 RILASSATO: Declino 40% in 24h (era 25%)
     
     # ========== MODEL TRAINING ==========
-    training_batch_size: int = 32  # Batch size per training
+    training_batch_size: int = 128  # Era 32 -> 4x per RTX 3080 optimization
     training_epochs: int = 100  # Epoch per training
     training_patience: int = 15  # Early stopping patience
     training_test_split: float = 0.8  # Train/test split ratio
@@ -225,8 +225,8 @@ class AnalyzerConfig:
     
     # ========== LSTM CONFIGURATION ==========
     lstm_sequence_length: int = 30  # Lunghezza sequenza LSTM
-    lstm_hidden_size: int = 128  # Hidden size di default
-    lstm_num_layers: int = 3  # Layer LSTM di default
+    lstm_hidden_size: int = 512  # Era 128 -> ottimizzato per RTX 3080
+    lstm_num_layers: int = 4     # Era 3 -> ottimizzato per RTX 3080
     lstm_dropout: float = 0.3  # 🔧 FIXED: Dropout aumentato per regolarizzazione contro overfitting
     
     # ========== TECHNICAL INDICATORS ==========
@@ -6521,6 +6521,7 @@ class RollingWindowTrainer:
             return np.array([]), np.array([])
         
         print(f"[INFO] _prepare_sr_dataset: Generated {len(X)} samples with {X.shape[1]} features")
+        print(f"[INFO] _prepare_sr_dataset: Target shape: {y.shape} (should be [samples, 2])")
         
         return X, y
     
@@ -7572,20 +7573,32 @@ class RollingWindowTrainer:
                 epochs_in_batch = min(checkpoint_frequency, original_epochs - epoch_batch)
                 
                 try:
+                    # DEBUG: Log training start
+                    safe_print(f"🔍 DEBUG: Starting training batch {epoch_batch}-{epoch_batch+epochs_in_batch}")
+                    safe_print(f"🔍 DEBUG: Trainer type: {type(protected_trainer).__name__}")
+                    safe_print(f"🔍 DEBUG: X shape: {X.shape}, y shape: {y.shape}")
+                    
                     # Training batch con protezione - uso getattr per evitare errori statici
                     if hasattr(protected_trainer, 'fit'):
                         # EnhancedLSTMTrainer with fit method
+                        safe_print(f"🔍 DEBUG: Using fit method")
                         fit_method = getattr(protected_trainer, 'fit')
                         batch_result = fit_method(X, y, epochs=epochs_in_batch)
                     elif hasattr(protected_trainer, 'train_model_protected'):
                         # OptimizedLSTMTrainer with train_model_protected method
+                        safe_print(f"🔍 DEBUG: Using train_model_protected method")
                         train_method = getattr(protected_trainer, 'train_model_protected')
                         batch_result = train_method(X, y, epochs=epochs_in_batch)
                     else:
                         # Fallback error
+                        safe_print(f"🔍 DEBUG: No training method found!")
                         raise AttributeError(f"Trainer {type(protected_trainer).__name__} has no compatible training method")
                     
-                    if batch_result['status'] != 'success':
+                    safe_print(f"🔍 DEBUG: Training batch result: {batch_result.get('training_completed', 'NO TRAINING_COMPLETED')}")
+                    safe_print(f"🔍 DEBUG: Result keys: {list(batch_result.keys())}")
+                    
+                    if not batch_result.get('training_completed', False):
+                        safe_print(f"🔍 DEBUG: Training failed! Message: {batch_result.get('message', 'Training not completed')}")
                         break
                     
                     current_loss = float(batch_result['final_loss'])
@@ -7655,6 +7668,11 @@ class RollingWindowTrainer:
                     training_successful = True
                     
                 except Exception as batch_error:
+                    safe_print(f"🔍 DEBUG: Exception in training batch! Error: {str(batch_error)}")
+                    safe_print(f"🔍 DEBUG: Error type: {type(batch_error).__name__}")
+                    import traceback
+                    safe_print(f"🔍 DEBUG: Traceback: {traceback.format_exc()}")
+                    
                     training_info['batch_error'] = {
                         'epoch_batch': epoch_batch,
                         'error': str(batch_error)
@@ -7681,12 +7699,21 @@ class RollingWindowTrainer:
             training_info['best_loss'] = best_loss
             
         except Exception as training_error:
+            safe_print(f"🔍 DEBUG: Main training exception! Error: {str(training_error)}")
+            safe_print(f"🔍 DEBUG: Error type: {type(training_error).__name__}")
+            import traceback
+            safe_print(f"🔍 DEBUG: Full traceback: {traceback.format_exc()}")
+            
             training_successful = False
             final_result = {'status': 'error', 'message': str(training_error)}
             training_info['training_error'] = str(training_error)
         
         # GESTIONE FALLIMENTI E PRESERVE WEIGHTS
-        if not training_successful or final_result.get('status') != 'success':
+        safe_print(f"🔍 DEBUG: Training successful: {training_successful}")
+        safe_print(f"🔍 DEBUG: Final result training_completed: {final_result.get('training_completed', 'NO TRAINING_COMPLETED')}")
+        safe_print(f"🔍 DEBUG: Final result message: {final_result.get('message', 'NO MESSAGE')}")
+        
+        if not training_successful or not final_result.get('training_completed', False):
             # Se preserve_weights e il training è fallito, ripristina
             if preserve_weights and initial_state is not None:
                 try:

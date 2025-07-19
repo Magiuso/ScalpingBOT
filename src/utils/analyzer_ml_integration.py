@@ -46,7 +46,7 @@ class EnhancedLSTMTrainer:
     che risolve problemi di vanishing gradients, overfitting e instabilità.
     """
     
-    def __init__(self, input_size: int, hidden_size: int = 256, num_layers: int = 3,
+    def __init__(self, input_size: int, hidden_size: int = 512, num_layers: int = 4,
                  output_size: int = 1, model_type: str = "support_resistance",
                  optimization_profile: str = "stable_training"):
         
@@ -155,47 +155,61 @@ class EnhancedLSTMTrainer:
         Implementa la fix identificata nel modulo Analyzer originale
         """
         
-        # Converti targets a array 1D se necessario
-        if targets.ndim > 1:
-            # Per support/resistance prendiamo solo la prima colonna (support)
-            # invece di appiattire tutto che raddoppia le dimensioni
-            targets = targets[:, 0]  # Prendi solo support levels
+        # 🔧 FIX: Mantieni la dimensionalità 2D per support/resistance
+        if targets.ndim == 1:
+            # Se i target sono 1D, convertiamoli in 2D con support e resistance
+            print(f"⚠️ Converting 1D targets to 2D for S/R model")
+            targets = np.column_stack([targets, -targets])  # [support, resistance]
+        elif targets.ndim > 2:
+            # Se hanno più di 2 dimensioni, prendi solo le prime 2
+            targets = targets[:, :2]
         
-        # Rimuovi NaN e infiniti
-        valid_mask = np.isfinite(targets)
+        # Rimuovi NaN e infiniti (ora gestendo 2D)
+        valid_mask = np.all(np.isfinite(targets), axis=1)  # Check per riga
         if not np.any(valid_mask):
             print("⚠️ Tutti i targets sono NaN/Inf, usando valori sintetici")
-            return self._generate_synthetic_targets(len(targets))
+            return self._generate_synthetic_targets(len(targets), is_2d=True)
         
         targets_clean = targets[valid_mask]
         
         # Check per targets tutti zero (degenerazione principale)
         if np.all(targets_clean == 0.0):
             print("⚠️ Tutti i targets sono zero, applicando fix degenerazione")
-            return self._generate_synthetic_targets(len(targets))
+            return self._generate_synthetic_targets(len(targets), is_2d=True)
         
-        # Check per range troppo piccolo
-        target_range = np.max(targets_clean) - np.min(targets_clean)
-        if target_range < 1e-6:
-            print(f"⚠️ Range target troppo piccolo: {target_range:.2e}, applicando normalizzazione robusta")
+        # Check per range troppo piccolo (ora per ogni colonna)
+        target_ranges = np.max(targets_clean, axis=0) - np.min(targets_clean, axis=0)
+        if np.any(target_ranges < 1e-6):
+            print(f"⚠️ Range target troppo piccolo: {target_ranges}, applicando normalizzazione robusta")
             
             # Aggiungi piccola variazione ai targets
             noise_scale = max(1e-4, np.abs(np.mean(targets_clean)) * 0.01)
-            synthetic_noise = np.random.normal(0, noise_scale, len(targets_clean))
+            synthetic_noise = np.random.normal(0, noise_scale, targets_clean.shape)
             targets_clean = targets_clean + synthetic_noise
         
-        # Applica normalizzazione robusta
-        processed_targets = self.preprocessor.smart_normalize(targets_clean, "sr_targets")
+        # Applica normalizzazione robusta - MANTENENDO DIMENSIONALITÀ 2D
+        if targets_clean.ndim == 2:
+            # Per targets 2D, normalizza ogni colonna separatamente per mantenere la forma
+            processed_targets = np.zeros_like(targets_clean)
+            for i in range(targets_clean.shape[1]):
+                processed_targets[:, i] = self.preprocessor.smart_normalize(targets_clean[:, i].reshape(-1, 1), f"sr_targets_col_{i}").flatten()
+        else:
+            processed_targets = self.preprocessor.smart_normalize(targets_clean, "sr_targets")
         
         # Riempire valori mancanti se c'erano NaN
         if len(processed_targets) < len(targets):
-            full_targets = np.full(len(targets), np.mean(processed_targets))
-            full_targets[valid_mask] = processed_targets
+            # Mantieni shape 2D
+            if targets.ndim == 2:
+                full_targets = np.full((len(targets), targets.shape[1]), np.mean(processed_targets, axis=0))
+                full_targets[valid_mask] = processed_targets
+            else:
+                full_targets = np.full(len(targets), np.mean(processed_targets))
+                full_targets[valid_mask] = processed_targets
             processed_targets = full_targets
         
         return processed_targets
     
-    def _generate_synthetic_targets(self, size: int) -> np.ndarray:
+    def _generate_synthetic_targets(self, size: int, is_2d: bool = False) -> np.ndarray:
         """Genera targets sintetici quando quelli reali sono degeneri"""
         
         # Genera targets con pattern realistici per S/R
@@ -206,7 +220,14 @@ class EnhancedLSTMTrainer:
         # Assicura valori positivi
         synthetic_targets = np.maximum(synthetic_targets, 0.0001)
         
-        print(f"🔄 Generated {size} synthetic targets with range [{np.min(synthetic_targets):.6f}, {np.max(synthetic_targets):.6f}]")
+        if is_2d:
+            # Per support/resistance, crea due colonne: support (negativo) e resistance (positivo)
+            support_targets = -synthetic_targets
+            resistance_targets = synthetic_targets
+            synthetic_targets = np.column_stack([support_targets, resistance_targets])
+            print(f"🔄 Generated {size} synthetic 2D targets for S/R")
+        else:
+            print(f"🔄 Generated {size} synthetic targets with range [{np.min(synthetic_targets):.6f}, {np.max(synthetic_targets):.6f}]")
         
         return synthetic_targets
     
@@ -305,6 +326,7 @@ class EnhancedLSTMTrainer:
         
         # Salva la forma originale prima della normalizzazione
         original_shape = X_reshaped.shape
+        original_samples = X_reshaped.shape[0]
         
         X_processed = self.preprocessor.smart_normalize(X_reshaped, "training_features")
         
@@ -314,6 +336,12 @@ class EnhancedLSTMTrainer:
         
         X_processed = self.preprocessor.detect_and_handle_outliers(X_processed)
         
+        # 🔧 FIX: Ensure X and y have same number of samples after outlier removal
+        if len(X_processed) != original_samples:
+            print(f"⚠️ Outlier removal changed sample count: {original_samples} → {len(X_processed)}")
+            # Trim y to match X_processed length
+            y = y[:len(X_processed)]
+        
         # Preprocess targets con fix degenerazione
         target_type = self.model_type.value.split('_')[1].lower()
         
@@ -322,6 +350,13 @@ class EnhancedLSTMTrainer:
             target_type = "support_resistance"
             
         y_processed = self.preprocess_targets(y, target_type=target_type)
+        
+        # 🔧 FIX: Final check that X and y have same length
+        if len(X_processed) != len(y_processed):
+            min_len = min(len(X_processed), len(y_processed))
+            print(f"⚠️ Adjusting lengths to match: X={len(X_processed)}, y={len(y_processed)} → {min_len}")
+            X_processed = X_processed[:min_len]
+            y_processed = y_processed[:min_len]
         
         # Reshape se necessario per LSTM
         if X_processed.ndim == 2:
@@ -489,8 +524,16 @@ class EnhancedLSTMTrainer:
         if not self.is_trained:
             raise ValueError("Model must be trained before prediction")
         
-        # Preprocess input
-        X_processed = self.preprocessor.smart_normalize(X.reshape(X.shape[0], -1), "prediction_features")
+        # Preprocess input - MANTIENI LA FORMA 2D
+        X_reshaped = X.reshape(X.shape[0], -1)
+        
+        # 🔧 FIX: Apply normalization preserving batch dimension
+        original_shape = X_reshaped.shape
+        X_processed = self.preprocessor.smart_normalize(X_reshaped, "prediction_features")
+        
+        # 🔧 FIX: Ensure we keep the 2D shape after normalization
+        if X_processed.ndim == 1 and len(original_shape) == 2:
+            X_processed = X_processed.reshape(original_shape)
         
         # Reshape for LSTM
         if X_processed.ndim == 2:
@@ -582,7 +625,7 @@ def test_enhanced_trainer():
     print("🧪 Testing EnhancedLSTMTrainer...")
     
     # Create trainer
-    trainer = create_enhanced_sr_trainer(input_size=20, hidden_size=128)
+    trainer = create_enhanced_sr_trainer(input_size=20, hidden_size=512)
     
     # Generate test data
     X = np.random.randn(1000, 50, 4)  # 1000 samples, 50 timesteps, 4 features
