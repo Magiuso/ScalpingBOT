@@ -82,7 +82,7 @@ class UnifiedConfig:
     
     # === ANALYZER SETTINGS ===
     asset_symbol: str = "USTEC"
-    max_tick_buffer_size: int = 100000
+    max_tick_buffer_size: int = 500000
     learning_phase_enabled: bool = True
     min_learning_days: int = 7
     
