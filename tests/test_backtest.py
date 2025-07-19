@@ -1042,7 +1042,7 @@ class MLLearningTestSuite:
                     
                     # FASE 1: Carica batch fino al 80% memoria
                     if batch_number == 1:  # Print only for first batch
-                        print(f"\n\n📦 Starting batch loading process...")
+                        print(f"\n\n📦 Starting batch loading process (memory threshold: {MEMORY_THRESHOLD}%)...")
                     initial_memory = process.memory_percent()
                     
                     current_batch = []
@@ -1197,7 +1197,7 @@ class MLLearningTestSuite:
         if not self.unified_system or not batch_ticks:
             return 0, 0
         
-        # Configurazione chunk da 100K tick
+        # Configurazione chunk da 500K tick
         CHUNK_SIZE = 500000  # 500K tick per chunk
         total_processed = 0
         total_analyses = 0
