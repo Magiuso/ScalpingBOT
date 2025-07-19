@@ -516,7 +516,10 @@ class MLLearningTestSuite:
                 self.stop_requested = True  
                 self.monitoring_active = False
                 
-                safe_print("🚨 RICHIESTA DI STOP DA OPERATORE...")
+                safe_print("=" * 60)
+                safe_print("🛑 INTERRUZIONE SICURA RICHIESTA DALL'OPERATORE")
+                safe_print("⏳ Completamento operazioni in corso...")
+                safe_print("=" * 60)
                 
                 # Force exit dopo 1 secondo
                 import threading
@@ -859,7 +862,7 @@ class MLLearningTestSuite:
             for i, tick in enumerate(ticks):
                 # CHECK FOR STOP REQUEST DURING TICK PROCESSING
                 if self.stop_requested:
-                    safe_print(f"🛑 Stop requested during tick processing, processed {processed_count:,} ticks")
+                    safe_print(f"🛑 Interruzione confermata durante elaborazione tick - Processati {processed_count:,} tick")
                     break
                     
                 try:
@@ -976,7 +979,7 @@ class MLLearningTestSuite:
             
             process = psutil.Process()
             
-            MEMORY_THRESHOLD = 50.0
+            MEMORY_THRESHOLD = 80.0
             
             total_processed = 0
             total_analyses = 0
@@ -1034,10 +1037,10 @@ class MLLearningTestSuite:
                 while True:
                     # CHECK FOR STOP REQUEST AT BEGINNING OF MAIN LOOP
                     if self.stop_requested:
-                        safe_print("🛑 Stop requested, exiting main processing loop")
+                        safe_print("🛑 Interruzione confermata - Uscita dal loop principale di elaborazione")
                         break
                     
-                    # FASE 1: Carica batch fino al 50% memoria
+                    # FASE 1: Carica batch fino al 80% memoria
                     if batch_number == 1:  # Print only for first batch
                         print(f"\n\n📦 Starting batch loading process...")
                     initial_memory = process.memory_percent()
@@ -1052,7 +1055,7 @@ class MLLearningTestSuite:
                     while True:
                         # CHECK FOR STOP REQUEST BEFORE READING CHUNK
                         if self.stop_requested:
-                            safe_print("🛑 Stop requested, breaking file reading loop")
+                            safe_print("🛑 Interruzione confermata - Interrotto caricamento file")
                             break
                         
                         # ULTRA-FAST: Read a chunk of lines if buffer is empty
@@ -1091,7 +1094,7 @@ class MLLearningTestSuite:
                         batch_cycle_count = total_ticks_loaded // 5000  # Track cycles
                         
                         if self.stop_requested:
-                            safe_print("🛑 Stop requested, breaking batch loading")
+                            safe_print("🛑 Interruzione confermata - Interrotto caricamento batch")
                             break
                         
                         # Check memory only every 10 cycles (every ~50K ticks) for performance
@@ -1194,7 +1197,7 @@ class MLLearningTestSuite:
         if not self.unified_system or not batch_ticks:
             return 0, 0
         
-        # Configurazione chunk da 500K tick
+        # Configurazione chunk da 100K tick
         CHUNK_SIZE = 500000  # 500K tick per chunk
         total_processed = 0
         total_analyses = 0

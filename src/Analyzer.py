@@ -319,8 +319,8 @@ class AnalyzerConfig:
     
     # ========== ML TRAINING LOGGER CONFIGURATION ==========
     ml_logger_enabled: bool = True  # Abilita ML Training Logger
-    ml_logger_verbosity: str = "minimal"   # 🔧 SPAM FIX: Era "standard" -> Ridotto drasticamente
-    ml_logger_terminal_mode: str = "dashboard"  # dashboard, scroll, minimal
+    ml_logger_verbosity: str = "verbose"   # Mostra log dettagliati del training ML
+    ml_logger_terminal_mode: str = "scroll"  # dashboard, scroll, minimal - scroll mostra i log in console
     ml_logger_file_output: bool = True  # Abilita output su file
     ml_logger_formats: List[str] = field(default_factory=lambda: ["json", "csv"])  # Formati output
     ml_logger_base_directory: str = "./test_analyzer_data"  # Directory base log
@@ -9525,7 +9525,7 @@ class AssetAnalyzer:
             )
         
         # Data storage con gestione memoria - USA CONFIG
-        self.tick_data = deque(maxlen=getattr(self.config, 'max_tick_buffer_size', 100000) or 100000)  # 🔧 FIXED
+        self.tick_data = deque(maxlen=getattr(self.config, 'max_tick_buffer_size', 500000) or 500000)  # 🔧 FIXED
         self.aggregated_data = {}  # Diverse aggregazioni temporali
         
         # Thread safety - Lock multipli per evitare race conditions
@@ -10162,7 +10162,7 @@ class AssetAnalyzer:
     def _perform_learning_phase_training(self):
         """Esegue mini-training durante la fase di learning con logging strutturato"""
         
-        # 🎯 TRAINING inizia a 500K ticks per dataset più consistenti per LSTM
+        # 🎯 TRAINING inizia a 100K ticks per test rapidi
         TRAINING_THRESHOLD = 500000
         
         if len(self.tick_data) < TRAINING_THRESHOLD:
@@ -17192,7 +17192,7 @@ class AssetAnalyzer:
             # Filter tick data
             new_tick_data = deque(
                 [tick for tick in self.tick_data if tick['timestamp'] > cutoff_date],
-                maxlen=getattr(self.config, 'max_tick_buffer_size', 100000) or 100000  # 🔧 FIXED
+                maxlen=getattr(self.config, 'max_tick_buffer_size', 500000) or 500000  # 🔧 FIXED
             )
             
             self.tick_data = new_tick_data
