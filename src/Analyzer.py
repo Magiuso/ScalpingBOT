@@ -197,7 +197,7 @@ class AnalyzerConfig:
     learning_mini_training_interval: int = 1000  # Ogni N tick durante learning
     
     # ========== DATA MANAGEMENT ==========
-    max_tick_buffer_size: int = 150000  # 🔧 Aumentato buffer per evitare collisioni con training threshold
+    max_tick_buffer_size: int = 500000  # 🔧 Aumentato a 500K per supportare training threshold
     data_cleanup_days: int = 180  # Giorni di dati da mantenere
     aggregation_windows: List[int] = field(default_factory=lambda: [5, 15, 30, 60])  # Minuti
     
@@ -10162,8 +10162,8 @@ class AssetAnalyzer:
     def _perform_learning_phase_training(self):
         """Esegue mini-training durante la fase di learning con logging strutturato"""
         
-        # 🎯 TRAINING inizia a 100K ticks per test rapidi
-        TRAINING_THRESHOLD = 500000
+        # 🎯 TRAINING inizia a 50K ticks per debug
+        TRAINING_THRESHOLD = 50000
         
         if len(self.tick_data) < TRAINING_THRESHOLD:
             return

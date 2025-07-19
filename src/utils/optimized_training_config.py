@@ -336,6 +336,9 @@ class OptimizedTrainingManager:
     def __init__(self, pipeline_config: OptimizedTrainingPipeline):
         self.config = pipeline_config
         
+        # Determine device
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
         # Initialize components
         self.preprocessor = AdvancedDataPreprocessor(pipeline_config.preprocessing_config)
         self.model = None  # Will be created in setup_model
@@ -357,6 +360,9 @@ class OptimizedTrainingManager:
         if self.config.lstm_config is None:
             raise ValueError("LSTM config not initialized")
         self.model = OptimizedLSTM(self.config.lstm_config)
+        
+        # Move model to device
+        self.model = self.model.to(self.device)
         
         # Log model info
         model_info = self.model.get_model_info()
@@ -477,11 +483,13 @@ class OptimizedTrainingManager:
         return final_results
     
     def _create_data_loader(self, data, targets, batch_size):
-        """Crea PyTorch DataLoader"""
+        """Crea PyTorch DataLoader con tensori sul device corretto"""
         
         if data is None or targets is None:
             return None
         
+        # NON mettiamo i dati direttamente su GPU nel dataset
+        # Il DataLoader li trasferirà batch per batch per efficienza
         dataset = torch.utils.data.TensorDataset(
             torch.FloatTensor(data),
             torch.FloatTensor(targets)
@@ -491,7 +499,8 @@ class OptimizedTrainingManager:
             dataset,
             batch_size=batch_size,
             shuffle=True,
-            drop_last=True
+            drop_last=True,
+            pin_memory=True if self.device.type == 'cuda' else False  # Ottimizzazione per GPU
         )
     
     def _save_training_results(self, results: Dict[str, Any]):

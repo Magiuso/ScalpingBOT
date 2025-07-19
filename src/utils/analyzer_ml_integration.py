@@ -82,7 +82,17 @@ class EnhancedLSTMTrainer:
         
         # Override LSTM config with provided parameters
         if self.pipeline.lstm_config is not None:
-            self.pipeline.lstm_config.input_size = input_size
+            # Per LSTM, l'input_size deve essere il numero di features per timestep
+            # non il numero totale di features
+            sequence_length = self.pipeline.sequence_length  # 50
+            
+            # Se input_size non è divisibile per sequence_length, usa direttamente 4
+            if input_size % sequence_length != 0:
+                features_per_timestep = 4  # Default per support/resistance
+            else:
+                features_per_timestep = input_size // sequence_length
+            
+            self.pipeline.lstm_config.input_size = features_per_timestep
             self.pipeline.lstm_config.hidden_size = hidden_size
             self.pipeline.lstm_config.num_layers = num_layers
             self.pipeline.lstm_config.output_size = output_size
@@ -147,7 +157,9 @@ class EnhancedLSTMTrainer:
         
         # Converti targets a array 1D se necessario
         if targets.ndim > 1:
-            targets = targets.flatten()
+            # Per support/resistance prendiamo solo la prima colonna (support)
+            # invece di appiattire tutto che raddoppia le dimensioni
+            targets = targets[:, 0]  # Prendi solo support levels
         
         # Rimuovi NaN e infiniti
         valid_mask = np.isfinite(targets)
@@ -289,11 +301,27 @@ class EnhancedLSTMTrainer:
         print("📊 Advanced preprocessing...")
         
         # Preprocess features
-        X_processed = self.preprocessor.smart_normalize(X.reshape(X.shape[0], -1), "training_features")
+        X_reshaped = X.reshape(X.shape[0], -1)
+        
+        # Salva la forma originale prima della normalizzazione
+        original_shape = X_reshaped.shape
+        
+        X_processed = self.preprocessor.smart_normalize(X_reshaped, "training_features")
+        
+        # Se è stato appiattito, ripristina la forma 2D
+        if X_processed.ndim == 1 and len(original_shape) > 1:
+            X_processed = X_processed.reshape(original_shape)
+        
         X_processed = self.preprocessor.detect_and_handle_outliers(X_processed)
         
         # Preprocess targets con fix degenerazione
-        y_processed = self.preprocess_targets(y, target_type=self.model_type.value.split('_')[1])
+        target_type = self.model_type.value.split('_')[1].lower()
+        
+        # Fix per support/resistance che viene splittato male
+        if target_type == "support" or target_type == "resistance" or target_type == "supportresistance":
+            target_type = "support_resistance"
+            
+        y_processed = self.preprocess_targets(y, target_type=target_type)
         
         # Reshape se necessario per LSTM
         if X_processed.ndim == 2:
@@ -319,13 +347,17 @@ class EnhancedLSTMTrainer:
         # 3. TRAINING OTTIMIZZATO
         print("🎯 Starting optimized training...")
         
-        training_results = self.training_manager.train_model(
-            train_data=X_train,
-            train_targets=y_train,
-            val_data=X_val,
-            val_targets=y_val,
-            num_epochs=epochs
-        )
+        try:
+            training_results = self.training_manager.train_model(
+                train_data=X_train,
+                train_targets=y_train,
+                val_data=X_val,
+                val_targets=y_val,
+                num_epochs=epochs
+            )
+        except Exception as e:
+            # Re-raise l'eccezione senza print debug aggiuntivi
+            raise
         
         # 4. POST-TRAINING PROCESSING
         self.is_trained = True
