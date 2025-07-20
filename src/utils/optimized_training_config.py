@@ -215,25 +215,25 @@ class OptimizedTrainingPipeline:
             base_config.update({
                 'initial_learning_rate': 2e-3,  # Higher LR for speed
                 'lr_scheduler_type': 'exponential',
-                'early_stopping_patience': 10,  # Less patience
-                'validation_frequency': 200,  # Less frequent validation
+                'early_stopping_patience': 30,  # FIXED: Was 10, now more reasonable
+                'validation_frequency': 300,  # FIXED: Match stable_training for consistency
                 'max_grad_norm': 1.0,
                 'gradient_accumulation_steps': 2,
-                'swa_start_epoch': 3  # Earlier SWA
+                'swa_start_epoch': 10  # FIXED: Was 3, too early
             })
         
         elif self.optimization_profile == OptimizationProfile.STABLE_TRAINING:
             base_config.update({
-                'initial_learning_rate': 5e-4,  # Conservative LR
+                'initial_learning_rate': 1e-3,  # FIXED: Was 5e-4, now proper starting LR
                 'lr_scheduler_type': 'plateau',
-                'lr_patience': 8,
-                'lr_factor': 0.7,  # Gentler reduction
-                'early_stopping_patience': 25,  # More patience
-                'early_stopping_min_delta': 1e-7,  # Smaller delta
-                'validation_frequency': 50,  # Frequent validation
-                'max_grad_norm': 0.5,  # Conservative clipping
-                'warmup_steps': 200,  # Longer warmup
-                'swa_start_epoch': 10
+                'lr_patience': 30,  # FIXED: Was 15, now 30 for more patience before LR reduction
+                'lr_factor': 0.75,  # FIXED: Was 0.5, now 0.75 for gentler LR reduction
+                'early_stopping_patience': 50,  # FIXED: Was 25, now much more patient
+                'early_stopping_min_delta': 1e-5,  # Less sensitive to small changes
+                'validation_frequency': 300,  # FIXED: Was 50, now ~1 per epoch to fix LR scheduler
+                'max_grad_norm': 1.0,  # FIXED: Was 0.5, now standard clipping
+                'warmup_steps': 100,  # Reduced warmup for faster learning
+                'swa_start_epoch': 20  # Later SWA to allow more learning
             })
         
         elif self.optimization_profile == OptimizationProfile.RESEARCH_MODE:
@@ -241,7 +241,7 @@ class OptimizedTrainingPipeline:
                 'initial_learning_rate': 1e-3,
                 'lr_scheduler_type': 'cosine',
                 'early_stopping_patience': 50,  # Very patient
-                'validation_frequency': 25,  # Very frequent
+                'validation_frequency': 300,  # FIXED: Was 25, too frequent for LR scheduler
                 'save_frequency': 100,  # Frequent saves
                 'log_frequency': 10,  # Detailed logging
                 'max_grad_norm': 2.0,  # Allow larger gradients
@@ -252,8 +252,10 @@ class OptimizedTrainingPipeline:
             base_config.update({
                 'initial_learning_rate': 1e-3,
                 'lr_scheduler_type': 'plateau',
-                'early_stopping_patience': 20,
-                'validation_frequency': 100,
+                'early_stopping_patience': 40,  # FIXED: Was 20, now better for production
+                'validation_frequency': 300,  # FIXED: Match other profiles
+                'lr_patience': 20,  # FIXED: Was 10, now more patient like stable_training
+                'lr_factor': 0.75,   # FIXED: Was 0.5, now gentler like stable_training
                 'max_grad_norm': 1.0,
                 'warmup_steps': 100,
                 'swa_start_epoch': 8,

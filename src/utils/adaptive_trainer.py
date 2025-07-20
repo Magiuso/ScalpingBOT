@@ -43,7 +43,7 @@ class TrainingConfig:
     
     # Core training settings
     initial_learning_rate: float = 2e-3     # Era 1e-3 -> aumentato per batch grandi
-    min_learning_rate: float = 1e-6
+    min_learning_rate: float = 1e-4        # FIXED: Was 1e-5, now 1e-4 to prevent too low LR
     max_learning_rate: float = 1e-1
     
     # Batch size settings - OTTIMIZZATO per RTX 3080
@@ -59,8 +59,8 @@ class TrainingConfig:
     
     # Learning rate scheduling
     lr_scheduler_type: str = 'plateau'  # 'plateau', 'cosine', 'exponential', 'cyclic', 'adaptive'
-    lr_patience: int = 5
-    lr_factor: float = 0.5
+    lr_patience: int = 30  # FIXED: Was 5, now 30 to match optimized config
+    lr_factor: float = 0.75  # FIXED: Was 0.5, now 0.75 to match optimized config
     lr_cooldown: int = 2
     
     # Training stability
@@ -73,7 +73,7 @@ class TrainingConfig:
     amp_enabled: bool = True
     
     # Monitoring
-    validation_frequency: int = 100  # Steps between validation
+    validation_frequency: int = 300  # Steps between validation (FIXED: was 100)
     save_frequency: int = 500      # Steps between model saves
     log_frequency: int = 50        # Steps between detailed logging
     
@@ -238,12 +238,13 @@ class AdaptiveLRScheduler:
         
         self.step_count += 1
         
-        # Warmup phase
-        if self.step_count <= self.warmup_steps:
-            lr = self.base_lr * (self.step_count / self.warmup_steps)
-            for param_group in self.optimizer.param_groups:
-                param_group['lr'] = lr
-            return
+        # Warmup phase - DISABLED: Skip warmup to maintain stable LR
+        # Warmup was causing LR to be adjusted every step regardless of validation
+        # if self.step_count <= self.warmup_steps:
+        #     lr = self.base_lr * (self.step_count / self.warmup_steps)
+        #     for param_group in self.optimizer.param_groups:
+        #         param_group['lr'] = lr
+        #     return
         
         # Regular scheduling
         if self.config.lr_scheduler_type == 'plateau' and metric is not None and self.base_scheduler is not None:
@@ -488,12 +489,11 @@ class AdaptiveTrainer:
                 self.global_step % self.config.validation_frequency == 0):
                 val_loss = self._validate(validation_loader, criterion)
                 self.loss_tracker.update(train_loss=loss.item(), val_loss=val_loss)
-            
-            # Learning rate scheduling
-            if validation_loader is not None and len(self.loss_tracker.val_losses) > 0:
-                self.lr_scheduler.step(self.loss_tracker.val_losses[-1])
-            else:
-                self.lr_scheduler.step()
+                
+                # Learning rate scheduling - FIXED: Only after validation
+                if len(self.loss_tracker.val_losses) > 0:
+                    self.lr_scheduler.step(self.loss_tracker.val_losses[-1])
+            # REMOVED: No fallback LR stepping - scheduler only steps after validation
             
             # SWA update
             if (self.swa_model is not None and 

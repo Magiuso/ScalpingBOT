@@ -202,8 +202,8 @@ class AnalyzerConfig:
     aggregation_windows: List[int] = field(default_factory=lambda: [5, 15, 30, 60])  # Minuti
     
     # ========== COMPETITION SYSTEM ==========
-    champion_threshold: float = 0.20  # 20% migliore per detronizzare champion
-    min_predictions_for_champion: int = 100  # Predizioni minime per essere champion
+    champion_threshold: float = 0.10  # FIXED: Was 0.20, now 10% improvement to dethrone
+    min_predictions_for_champion: int = 50  # FIXED: Was 100, now 50 for faster promotion
     reality_check_interval_hours: int = 6  # Ore tra reality check
     
     # ========== PERFORMANCE THRESHOLDS ==========
@@ -7921,12 +7921,40 @@ class RollingWindowTrainer:
         
         improvement = (final_score - initial_score) / abs(initial_score) if initial_score != 0 else 0
         
+        # 🔍 OVERFITTING DETECTION for tree models
+        overfitting_detected = False
+        overfitting_ratio = 1.0
+        
+        # Get model name for overfitting check
+        model_name = getattr(model, '__class__', type(model)).__name__
+        if 'RandomForest' in model_name or 'GradientBoosting' in model_name:
+            # Calculate training score to compare with test score
+            train_predictions = model.predict(X_train)
+            if model_type == 'regression':
+                train_score = r2_score(y_train, train_predictions)
+                train_loss = mean_squared_error(y_train, train_predictions)
+                test_loss = final_loss
+                
+                # Calculate overfitting ratio (test_loss / train_loss)
+                if train_loss > 0:
+                    overfitting_ratio = test_loss / train_loss
+                    # Flag overfitting if test loss is >2x training loss OR ultra-low training loss
+                    overfitting_detected = (overfitting_ratio > 2.0) or (train_loss < 1e-5 and final_score < 0.6)
+                
+                safe_print(f"🔍 Overfitting check: train_loss={train_loss:.2e}, test_loss={test_loss:.2e}")
+                safe_print(f"🔍 Overfitting ratio: {overfitting_ratio:.2f} ({'⚠️ DETECTED' if overfitting_detected else '✅ OK'})")
+                
+                if overfitting_detected:
+                    safe_print(f"⚠️ OVERFITTING DETECTED in {model_name}! Consider more regularization.")
+        
         return {
             'status': 'success',
             'final_loss': final_loss,
             'improvement': improvement,
             'training_time': (datetime.now() - start_time).total_seconds(),
-            'test_score': final_score
+            'test_score': final_score,
+            'overfitting_detected': overfitting_detected,
+            'overfitting_ratio': overfitting_ratio
         }
 
 # ================== POST-ERROR REANALYSIS SYSTEM ==================
@@ -9242,7 +9270,29 @@ class AlgorithmCompetition:
                     best_challenger_score = algorithm.final_score
         
         # Controlla se lo sfidante può detronizzare il champion
-        if best_challenger and best_challenger_score > current_champion_score * (1 + self.champion_threshold):
+        # FIXED: Better champion selection logic that considers overfitting
+        improvement_factor = 1.10  # FIXED: Was 1.20 (20%), now 10% improvement needed
+        
+        # Check if challenger is better AND not overfitting
+        if best_challenger is not None:
+            challenger_algorithm = self.algorithms.get(best_challenger)
+            is_tree_model = 'RandomForest' in best_challenger or 'GradientBoosting' in best_challenger
+            
+            # For tree models, check if they have reasonable validation performance and no overfitting
+            can_become_champion = (
+                challenger_algorithm is not None and
+                best_challenger_score > current_champion_score * improvement_factor and
+                challenger_algorithm.total_predictions >= self.config.min_predictions_for_champion and
+                # Additional check for tree models to prevent overfitting champions
+                (not is_tree_model or (
+                    challenger_algorithm.accuracy_rate > 0.55 and  # Tree models need decent accuracy
+                    not getattr(challenger_algorithm, 'overfitting_detected', False)  # No overfitting detected
+                ))
+            )
+        else:
+            can_become_champion = False
+        
+        if can_become_champion and best_challenger is not None:
             # Preserva il vecchio champion se ha performato bene
             if current_champion_score > 70 and current_champion.total_predictions > 100:
                 self._preserve_champion(current_champion)
@@ -9255,9 +9305,12 @@ class AlgorithmCompetition:
             self.algorithms[best_challenger].is_champion = True
             self.champion = best_challenger
             
+            # Get the new champion algorithm (we know it exists from can_become_champion check)
+            new_champion_algorithm = self.algorithms[best_challenger]
+            
             # Calcola ragione del cambio
             reason = self._determine_champion_change_reason(
-                current_champion, self.algorithms[best_challenger]
+                current_champion, new_champion_algorithm
             )
             
             # Log il cambio
@@ -9893,14 +9946,28 @@ class AssetAnalyzer:
         for model_name, config in transformer_configs.items():
             self.ml_models[model_name] = TransformerPredictor(**config)
         
-        # Traditional ML models con configurazione
+        # Traditional ML models con configurazione - FIXED REGULARIZATION
         self.ml_models['RandomForest_Trend'] = RandomForestRegressor(
-            n_estimators=200, max_depth=20, random_state=42, n_jobs=-1
+            n_estimators=50,            # AGGRESSIVE: Reduced from 100 to prevent overfitting
+            max_depth=5,                # AGGRESSIVE: Reduced from 10 to 5 for strong regularization
+            min_samples_split=50,       # AGGRESSIVE: Increased from 20 to 50 for more restrictive splits
+            min_samples_leaf=20,        # AGGRESSIVE: Increased from 10 to 20 for larger leaf requirement
+            max_features='sqrt',        # KEPT: Good for preventing overfitting
+            bootstrap=True,
+            oob_score=True,            # KEPT: Out-of-bag score for validation
+            random_state=42,
+            n_jobs=-1
         )
         
         self.ml_models['GradientBoosting_Trend'] = GradientBoostingRegressor(
-            n_estimators=150, learning_rate=self.config.learning_rate * 1000,  # 🔧 CHANGED
-            max_depth=8, random_state=42
+            n_estimators=50,            # AGGRESSIVE: Reduced from 100 to prevent overfitting
+            learning_rate=0.01,         # AGGRESSIVE: Much lower learning rate from 0.1 to 0.01
+            max_depth=3,                # AGGRESSIVE: Very limited depth from 5 to 3
+            min_samples_split=50,       # AGGRESSIVE: Increased from 20 to 50 for restrictive splits
+            min_samples_leaf=20,        # AGGRESSIVE: Increased from 10 to 20 for larger leaves
+            subsample=0.8,              # KEPT: Good for regularization
+            max_features='sqrt',        # KEPT: Feature subsampling prevents overfitting
+            random_state=42
         )
         
         # Scalers per normalizzazione
