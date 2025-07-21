@@ -3987,7 +3987,7 @@ class AdvancedLSTM(nn.Module):
         
         # 🛡️ VALIDAZIONE RANGE INPUT
         if torch.abs(x).max() > 1000:
-            safe_print(f"⚠️ Input ha valori estremi: max={torch.abs(x).max():.2f}")
+            self._log(f"Input ha valori estremi: max={torch.abs(x).max():.2f}", "input_validation", "debug")
             x = torch.clamp(x, -100, 100)  # Clamp valori estremi
         
         original_shape = x.shape
@@ -4153,7 +4153,7 @@ class AdvancedLSTM(nn.Module):
                     # Aggiungi residual connection se possibile
                     if projected_input is not None:
                         lstm_out = lstm_out + projected_input
-                        self._log("✅ Applied residual connection", "architecture_fixes", "debug")
+                        self._log("Applied residual connection", "architecture_fixes", "debug")
                         
                         # Validazione post-residual
                         if torch.isnan(lstm_out).any() or torch.isinf(lstm_out).any():
@@ -4263,7 +4263,7 @@ class AdvancedLSTM(nn.Module):
         # 🛡️ CLAMP OUTPUT PER SICUREZZA
         out = torch.clamp(out, -100, 100)  # Previeni output estremi
         
-        safe_print(f"✅ Forward completato con successo: {original_shape} → {out.shape}")
+        self._log(f"Forward completato con successo: {original_shape} → {out.shape}", "forward", "debug")
         return out
             
     def get_resize_stats(self) -> Dict[str, Any]:
@@ -5518,13 +5518,14 @@ class OptimizedLSTMTrainer:
             # Normalizzazione invece di clamping distruttivo
             abs_max = torch.abs(tensor).max()
             if abs_max > 1000:
-                safe_print(f"⚠️ {name} ha valori estremi: max_abs={abs_max:.2f}")
+                self._log(f"{name} ha valori estremi: max_abs={abs_max:.2f}", "validation", "debug")
+                
                 # Z-score normalizzazione preserva le relazioni relative
                 mean_val = tensor.mean()
                 std_val = tensor.std()
                 if std_val > 1e-8:
                     tensor = (tensor - mean_val) / std_val
-                    safe_print(f"🔧 {name}: Normalizzato con Z-score (mean={mean_val:.2f}, std={std_val:.2f})")
+                    self._log(f"{name}: Normalizzato con Z-score (mean={mean_val:.2f}, std={std_val:.2f})", "normalization", "debug")
                 else:
                     # Fallback a min-max se std troppo piccolo
                     min_val = tensor.min()
@@ -5872,15 +5873,14 @@ class OptimizedLSTMTrainer:
                     # 🔧 SELECTIVE CLIPPING per weight_hh problematici
                     if 'weight_hh' in name and self.vanishing_gradient_fixes['selective_clipping']:
                         if param_grad_norm < 1e-6:  # Gradiente quasi zero
-                            self._log(f"🚀 FIXING vanishing gradient in {name}: {param_grad_norm:.2e}", 
-                                     category="gradient_fixes", severity="warning")
+                            # Increment counter silently - logging handled by aggregate summary
                             
                             # 🔧 GRADIENT NOISE INJECTION
                             if self.vanishing_gradient_fixes['gradient_noise']:
                                 noise = torch.randn_like(param.grad) * 1e-6
                                 param.grad.data += noise
                                 weight_hh_fixed += 1
-                                self._log(f"✅ Added gradient noise to {name}", "gradient_fixes", "debug")
+                                # Silent fix - logged in aggregate summary only
                         
                         # 🔧 SELECTIVE CLIPPING con valore più basso per weight_hh
                         torch.nn.utils.clip_grad_norm_([param], max_norm=0.5)
@@ -6008,7 +6008,7 @@ class OptimizedLSTMTrainer:
         if not (0 <= final_loss <= 1e6):
             safe_print(f"⚠️ Loss finale fuori range ragionevole: {final_loss}")
         
-        safe_print(f"✅ Training step completato: loss={final_loss:.6f}")
+        self._log(f"Training step completato: loss={final_loss:.6f}", "training", "debug")
         return final_loss
     
     def _ensure_lstm_input_shape(self, data: torch.Tensor) -> torch.Tensor:
