@@ -293,7 +293,7 @@ class MT5DataExporter:
             if chunk_tick_count > 5_000_000:
                 progress_interval = 100_000  # Ogni 100K ticks per chunk enormi (fluido)
             elif chunk_tick_count > 1_000_000:
-                progress_interval = 50_000   # Ogni 50K ticks per chunk grandi
+                progress_interval = 100_000  # Ogni 100K ticks per chunk grandi
             else:
                 progress_interval = 25_000   # Ogni 25K ticks per chunk medi
             
@@ -650,7 +650,7 @@ class BacktestDataProcessor:
             self.logger.info(f"📊 Found {total_lines:,} tick lines to process")
             
             # 🚀 STREAMING LOAD: Process in memory-safe batches
-            batch_size = 50000  # 50K ticks per batch
+            batch_size = 100000  # 100K ticks per batch
             ticks = []
             processed_lines = 0
             
@@ -1075,7 +1075,7 @@ class MT5BacktestRunner:
         if total_ticks > 5_000_000:
             # Per volumi molto grandi (>5M): report ogni 250k ticks  
             progress_interval = 250_000
-            console_interval = 50_000  # Console più frequente
+            console_interval = 100_000  # Console più frequente
         elif total_ticks > 1_000_000:
             # Per volumi grandi (>1M): report ogni 100k ticks
             progress_interval = 100_000
@@ -1214,7 +1214,7 @@ class MT5BacktestRunner:
                     
                 # ENHANCED: Checkpoint saves con notifica
                 if hasattr(config, 'save_progress') and config.save_progress:
-                    checkpoint_interval = max(50_000, total_ticks // 20)  # Ogni 5%
+                    checkpoint_interval = max(100_000, total_ticks // 20)  # Ogni 5%
                     if i > 0 and i % checkpoint_interval == 0:
                         try:
                             # Salva stato del sistema unificato

@@ -1049,7 +1049,7 @@ class MLLearningTestSuite:
                     current_batch_size = 0  # Reset contatore batch
                     
                     # OPTIMIZED: Read lines in chunks instead of one-by-one
-                    CHUNK_SIZE = 50000  # Read 50K lines at once for maximum I/O performance
+                    CHUNK_SIZE = 100000  # Read 100K lines at once for maximum I/O performance
                     lines_buffer = []
                     
                     while True:
@@ -1097,7 +1097,7 @@ class MLLearningTestSuite:
                             safe_print("🛑 Interruzione confermata - Interrotto caricamento batch")
                             break
                         
-                        # Check memory only every 10 cycles (every ~50K ticks) for performance
+                        # Check memory only every 10 cycles (every ~100K ticks) for performance
                         if batch_cycle_count % 10 == 0 and len(batch_ticks) > 0:
                             try:
                                 system_memory = psutil.virtual_memory().percent
@@ -1192,17 +1192,17 @@ class MLLearningTestSuite:
         return TickObject(tick_data)
 
     async def _process_batch_memory_safe(self, batch_ticks: list) -> tuple:
-        """Processa un batch in chunk di 50K con ML learning tra ogni chunk"""
+        """Processa un batch in chunk di 100K con ML learning tra ogni chunk"""
         
         if not self.unified_system or not batch_ticks:
             return 0, 0
         
-        # Configurazione chunk da 50K tick
-        CHUNK_SIZE = 50000  # 50K tick per chunk
+        # Configurazione chunk da 100K tick
+        CHUNK_SIZE = 100000  # 100K tick per chunk
         total_processed = 0
         total_analyses = 0
         
-        # Dividi il batch in chunk di 50K
+        # Dividi il batch in chunk di 100K
         chunks = [batch_ticks[i:i + CHUNK_SIZE] for i in range(0, len(batch_ticks), CHUNK_SIZE)]
         
         safe_print(f"📊 Dividing batch into {len(chunks)} chunks of max {CHUNK_SIZE:,} ticks each")
@@ -1292,7 +1292,7 @@ class MLLearningTestSuite:
                         total_ticks_processed=total_processed + processed_count
                     )
                 
-                # Esegui ML learning dopo ogni chunk di 50K
+                # Esegui ML learning dopo ogni chunk di 100K
                 if chunk_idx < len(chunks):  # Non sull'ultimo chunk
                     safe_print(f"🧠 Starting ML learning after chunk {chunk_idx}...")
                     await self._perform_ml_learning_phase()
@@ -1311,7 +1311,7 @@ class MLLearningTestSuite:
         return total_processed, total_analyses
     
     async def _perform_ml_learning_phase(self):
-        """Esegue ML learning phase intermedio dopo ogni chunk di 50K"""
+        """Esegue ML learning phase intermedio dopo ogni chunk di 100K"""
         try:
             # Usa l'analyzer dell'unified system (AdvancedMarketAnalyzer)
             if self.unified_system and hasattr(self.unified_system, 'analyzer') and self.unified_system.analyzer:

@@ -82,7 +82,7 @@ class UnifiedConfig:
     
     # === ANALYZER SETTINGS ===
     asset_symbol: str = "USTEC"
-    max_tick_buffer_size: int = 500000
+    max_tick_buffer_size: int = 1000000  # Increased to 1M to support 100K chunks
     learning_phase_enabled: bool = True
     min_learning_days: int = 7
     
@@ -172,7 +172,7 @@ class UnifiedConfig:
             learning_phase_enabled=False,          # NO LEARNING PHASE
             demo_predictor_enabled=False,          # NO DEMO PREDICTOR
             rate_limits={
-                'tick_processing': 50000,          # RATE LIMITING ALTO
+                'tick_processing': 100000,         # RATE LIMITING ALTO - Increased to 100K
                 'predictions': 10000,
                 'validations': 10000,
                 'training_events': 1000,

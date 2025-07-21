@@ -41,41 +41,41 @@ warnings.filterwarnings('ignore')
 class TrainingConfig:
     """Configurazione per AdaptiveTrainer"""
     
-    # Core training settings
-    initial_learning_rate: float = 2e-3     # Era 1e-3 -> aumentato per batch grandi
-    min_learning_rate: float = 1e-4        # FIXED: Was 1e-5, now 1e-4 to prevent too low LR
-    max_learning_rate: float = 1e-1
+    # Core training settings - ANTI-OVERFITTING
+    initial_learning_rate: float = 2e-4     # RIDOTTO da 2e-3 per maggiore stabilità
+    min_learning_rate: float = 1e-6        # RIDOTTO da 1e-4 per fine-tuning più fine
+    max_learning_rate: float = 1e-3        # RIDOTTO da 1e-1 per prevenire instabilità
     
-    # Batch size settings - OTTIMIZZATO per RTX 3080
-    initial_batch_size: int = 128        # Ottimizzato per RTX 3080 (10GB VRAM)
-    min_batch_size: int = 32             # Minimo per efficienza GPU
-    max_batch_size: int = 2048           # Era 512 -> 4x per GPU memory
-    batch_size_increment: int = 32       # Era 8 -> 4x per faster scaling
+    # Batch size settings - ANTI-OVERFITTING
+    initial_batch_size: int = 32         # RIDOTTO da 128 per prevenire overfitting
+    min_batch_size: int = 16             # RIDOTTO da 32 per fine-tuning
+    max_batch_size: int = 128            # RIDOTTO da 2048 per stabilità
+    batch_size_increment: int = 16       # RIDOTTO da 32 per incrementi graduali
     
-    # Early stopping
-    early_stopping_patience: int = 20
-    early_stopping_min_delta: float = 1e-6
+    # Early stopping - PIÙ AGGRESSIVO
+    early_stopping_patience: int = 15   # RIDOTTO da 20 per stop più rapido
+    early_stopping_min_delta: float = 1e-4  # AUMENTATO da 1e-6 per essere meno sensibile
     early_stopping_restore_best_weights: bool = True
     
-    # Learning rate scheduling
+    # Learning rate scheduling - PIÙ REATTIVO
     lr_scheduler_type: str = 'plateau'  # 'plateau', 'cosine', 'exponential', 'cyclic', 'adaptive'
-    lr_patience: int = 30  # FIXED: Was 5, now 30 to match optimized config
-    lr_factor: float = 0.75  # FIXED: Was 0.5, now 0.75 to match optimized config
-    lr_cooldown: int = 2
+    lr_patience: int = 10  # RIDOTTO da 30 per reazione più rapida
+    lr_factor: float = 0.5  # RIDOTTO da 0.75 per riduzione più aggressiva
+    lr_cooldown: int = 5   # AUMENTATO da 2 per maggiore stabilità
     
-    # Training stability
-    gradient_accumulation_steps: int = 1
-    max_grad_norm: float = 1.0
-    warmup_steps: int = 100
+    # Training stability - POTENZIATA
+    gradient_accumulation_steps: int = 4  # AUMENTATO da 1 per batch virtuali più grandi
+    max_grad_norm: float = 0.5           # RIDOTTO da 1.0 per maggiore stabilità
+    warmup_steps: int = 50               # RIDOTTO da 100 per learning più rapido
     
     # Mixed precision
     use_mixed_precision: bool = True
     amp_enabled: bool = True
     
-    # Monitoring
-    validation_frequency: int = 300  # Steps between validation (FIXED: was 100)
-    save_frequency: int = 500      # Steps between model saves
-    log_frequency: int = 50        # Steps between detailed logging
+    # Monitoring - OTTIMIZZATO
+    validation_frequency: int = 150  # RIDOTTO da 300 per monitoring più frequente
+    save_frequency: int = 300       # RIDOTTO da 500 per checkpoint più frequenti
+    log_frequency: int = 100        # AUMENTATO da 50 per ridurre verbosità
     
     # Advanced features
     use_gradient_checkpointing: bool = False

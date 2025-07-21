@@ -28,14 +28,238 @@ from pathlib import Path
 
 # Import optimization modules
 from .data_preprocessing import AdvancedDataPreprocessor, PreprocessingConfig
-from .optimized_lstm import OptimizedLSTM, LSTMConfig
+# OptimizedLSTM and LSTMConfig are now integrated in the main Analyzer.py file
+# from .optimized_lstm import OptimizedLSTM, LSTMConfig
 from .adaptive_trainer import AdaptiveTrainer, TrainingConfig
 from .training_monitor import TrainingMonitor, MonitorConfig
-from .optimized_training_config import (
-    OptimizedTrainingPipeline, OptimizedTrainingManager,
-    ModelType, OptimizationProfile,
-    create_stable_training_pipeline
-)
+# Import required enums from Analyzer.py
+from ..Analyzer import ModelType, OptimizationProfile
+
+# Create missing classes that were in optimized_training_config.py
+class OptimizedTrainingPipeline:
+    def __init__(self, model_type: ModelType, input_features: int, sequence_length: int,
+                 output_size: int, optimization_profile: OptimizationProfile):
+        self.model_type = model_type
+        self.input_features = input_features
+        self.sequence_length = sequence_length
+        self.output_size = output_size
+        self.optimization_profile = optimization_profile
+        
+        # Create LSTM configuration
+        self.lstm_config = self._create_lstm_config()
+    
+    def _create_lstm_config(self):
+        # Create a simple config object that mimics the expected interface
+        class LSTMConfig:
+            def __init__(self, input_size, hidden_size, num_layers, output_size):
+                self.input_size = input_size
+                self.hidden_size = hidden_size
+                self.num_layers = num_layers
+                self.output_size = output_size
+        
+        # Optimization profile determines the model parameters
+        if self.optimization_profile == OptimizationProfile.HIGH_PERFORMANCE:
+            hidden_size = 256
+            num_layers = 2
+        elif self.optimization_profile == OptimizationProfile.STABLE_TRAINING:
+            hidden_size = 512
+            num_layers = 4
+        elif self.optimization_profile == OptimizationProfile.RESEARCH_MODE:
+            hidden_size = 768
+            num_layers = 6
+        else:  # PRODUCTION_READY
+            hidden_size = 384
+            num_layers = 3
+            
+        return LSTMConfig(self.input_features, hidden_size, num_layers, self.output_size)
+
+class OptimizedTrainingManager:
+    def __init__(self, pipeline: OptimizedTrainingPipeline):
+        self.pipeline = pipeline
+        self.preprocessor = self.setup_preprocessor()
+        self.monitor = self.setup_monitor()
+        self.model = None
+        self.trainer = None
+    
+    def setup_model(self):
+        # Import LSTM model from main Analyzer
+        import sys
+        import importlib
+        analyzer_module = importlib.import_module('src.Analyzer')
+        LSTMModel = getattr(analyzer_module, 'LSTMModel', None)
+        
+        if LSTMModel is None:
+            # Create a simple LSTM model if not available
+            import torch
+            import torch.nn as nn
+            
+            class SimpleLSTMModel(nn.Module):
+                def __init__(self, input_size, hidden_size, num_layers, output_size):
+                    super().__init__()
+                    self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+                    self.fc = nn.Linear(hidden_size, output_size)
+                
+                def forward(self, x):
+                    lstm_out, _ = self.lstm(x)
+                    return self.fc(lstm_out[:, -1, :])
+                
+                def get_model_info(self):
+                    return {"type": "SimpleLSTM", "parameters": sum(p.numel() for p in self.parameters())}
+                
+                def get_gradient_stats(self):
+                    return {"vanishing_count": 0, "exploding_count": 0, "healthy_count": 1}
+            
+            self.model = SimpleLSTMModel(
+                self.pipeline.lstm_config.input_size,
+                self.pipeline.lstm_config.hidden_size,
+                self.pipeline.lstm_config.num_layers,
+                self.pipeline.lstm_config.output_size
+            )
+        else:
+            self.model = LSTMModel(
+                self.pipeline.lstm_config.input_size,
+                self.pipeline.lstm_config.hidden_size,
+                self.pipeline.lstm_config.num_layers,
+                self.pipeline.lstm_config.output_size
+            )
+        
+        return self.model
+    
+    def setup_trainer(self):
+        config = TrainingConfig()
+        if self.model is None:
+            self.model = self.setup_model()
+        self.trainer = AdaptiveTrainer(self.model, config)
+        return self.trainer
+    
+    def setup_preprocessor(self):
+        config = PreprocessingConfig()
+        self.preprocessor = AdvancedDataPreprocessor(config)
+        return self.preprocessor
+    
+    def setup_monitor(self):
+        config = MonitorConfig()
+        self.monitor = TrainingMonitor(config)
+        return self.monitor
+    
+    def train_model(self, train_data, train_targets, val_data, val_targets, num_epochs=100):
+        """Train the model using the adaptive trainer"""
+        if self.model is None:
+            self.model = self.setup_model()
+        if self.trainer is None:
+            self.trainer = self.setup_trainer()
+            
+        # Use the adaptive trainer to train the model
+        # Note: AdaptiveTrainer uses train_step method, not train
+        # We need to create data loaders and loop through epochs
+        import torch
+        from torch.utils.data import DataLoader, TensorDataset
+        
+        # Create datasets and data loaders
+        train_dataset = TensorDataset(
+            torch.FloatTensor(train_data), 
+            torch.FloatTensor(train_targets)
+        )
+        val_dataset = TensorDataset(
+            torch.FloatTensor(val_data), 
+            torch.FloatTensor(val_targets)
+        )
+        
+        train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+        
+        # Training loop using train_step
+        criterion = torch.nn.MSELoss()
+        epoch_results = []
+        best_val_loss = float('inf')
+        final_loss = float('inf')
+        
+        for epoch in range(num_epochs):
+            result = self.trainer.train_step(train_loader, criterion, val_loader)
+            epoch_results.append(result)
+            
+            # Track best validation loss
+            if 'val_loss' in result:
+                val_loss = result['val_loss']
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    
+            # Track final loss
+            if 'loss' in result:
+                final_loss = result['loss']
+            
+            # Early stopping or other training logic can be added here
+            if 'should_stop' in result and result['should_stop']:
+                break
+        
+        # Return dictionary format expected by calling code
+        training_results = {
+            'epoch_results': epoch_results,
+            'final_loss': final_loss,
+            'training_summary': {
+                'training_stats': {
+                    'best_val_loss': best_val_loss,
+                    'final_loss': final_loss,
+                    'total_epochs': len(epoch_results)
+                },
+                'model_info': self.model.get_model_info() if hasattr(self.model, 'get_model_info') else {},
+                'gradient_stats': self.model.get_gradient_stats() if hasattr(self.model, 'get_gradient_stats') else {}
+            }
+        }
+                
+        return training_results
+    
+    def save_model(self, filepath: str) -> bool:
+        """Save the trained model"""
+        try:
+            if self.model is not None:
+                import torch
+                torch.save({
+                    'model_state_dict': self.model.state_dict(),
+                    'pipeline_config': {
+                        'model_type': self.pipeline.model_type,
+                        'input_features': self.pipeline.input_features,
+                        'sequence_length': self.pipeline.sequence_length,
+                        'output_size': self.pipeline.output_size,
+                        'optimization_profile': self.pipeline.optimization_profile
+                    }
+                }, filepath)
+                return True
+        except Exception as e:
+            print(f"Error saving model: {e}")
+        return False
+    
+    def load_model(self, filepath: str) -> bool:
+        """Load a trained model"""
+        try:
+            import torch
+            checkpoint = torch.load(filepath)
+            
+            if self.model is None:
+                self.model = self.setup_model()
+                
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            return True
+        except Exception as e:
+            print(f"Error loading model: {e}")
+        return False
+
+def create_stable_training_pipeline(model_type: ModelType, **kwargs) -> OptimizedTrainingPipeline:
+    """Create a stable training pipeline for the given model type"""
+    defaults = {
+        'input_features': kwargs.get('input_features', 50),
+        'sequence_length': kwargs.get('sequence_length', 50),
+        'output_size': kwargs.get('output_size', 1),
+        'optimization_profile': OptimizationProfile.STABLE_TRAINING
+    }
+    
+    return OptimizedTrainingPipeline(
+        model_type=model_type,
+        input_features=defaults['input_features'],
+        sequence_length=defaults['sequence_length'],
+        output_size=defaults['output_size'],
+        optimization_profile=defaults['optimization_profile']
+    )
 
 
 class EnhancedLSTMTrainer:
@@ -52,12 +276,12 @@ class EnhancedLSTMTrainer:
         
         # Map model type string to enum
         model_type_map = {
-            "support_resistance": ModelType.LSTM_SUPPORT_RESISTANCE,
-            "pattern_recognition": ModelType.LSTM_PATTERN_RECOGNITION,
-            "bias_detection": ModelType.LSTM_BIAS_DETECTION,
-            "trend_analysis": ModelType.LSTM_TREND_ANALYSIS,
-            "volatility_prediction": ModelType.LSTM_VOLATILITY_PREDICTION,
-            "momentum_analysis": ModelType.LSTM_MOMENTUM_ANALYSIS
+            "support_resistance": ModelType.SUPPORT_RESISTANCE,
+            "pattern_recognition": ModelType.PATTERN_RECOGNITION,
+            "bias_detection": ModelType.BIAS_DETECTION,
+            "trend_analysis": ModelType.TREND_ANALYSIS,
+            "volatility_prediction": ModelType.VOLATILITY_PREDICTION,
+            "momentum_analysis": ModelType.MOMENTUM_ANALYSIS
         }
         
         # Map optimization profile string to enum
@@ -68,7 +292,7 @@ class EnhancedLSTMTrainer:
             "production_ready": OptimizationProfile.PRODUCTION_READY
         }
         
-        self.model_type = model_type_map.get(model_type, ModelType.LSTM_SUPPORT_RESISTANCE)
+        self.model_type = model_type_map.get(model_type, ModelType.SUPPORT_RESISTANCE)
         self.optimization_profile = profile_map.get(optimization_profile, OptimizationProfile.STABLE_TRAINING)
         
         # Create optimized training pipeline

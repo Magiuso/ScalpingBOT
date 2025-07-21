@@ -4,12 +4,14 @@ import pandas as pd
 import tensorflow as tf
 from tensorflow.keras.models import Sequential # type: ignore
 from tensorflow.keras.layers import Dense, LSTM, Dropout # type: ignore
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, VotingRegressor, StackingRegressor, ExtraTreesRegressor
 from sklearn.cluster import DBSCAN, KMeans
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics import accuracy_score, precision_score, recall_score, r2_score, mean_squared_error
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import torch.nn.utils
 from transformers import AutoModel, AutoTokenizer
@@ -193,7 +195,7 @@ class AnalyzerConfig:
     
     # ========== LEARNING PHASE CONFIGURATION ==========
     min_learning_days: int = 30  # Giorni minimi di learning
-    learning_ticks_threshold: int = 50000  # Tick minimi per completare learning
+    learning_ticks_threshold: int = 100000  # Tick minimi per completare learning - Increased to 100K
     learning_mini_training_interval: int = 500   # Era 1000 -> 2x più frequente per GPU
     
     # ========== DATA MANAGEMENT ==========
@@ -225,9 +227,9 @@ class AnalyzerConfig:
     
     # ========== LSTM CONFIGURATION ==========
     lstm_sequence_length: int = 30  # Lunghezza sequenza LSTM
-    lstm_hidden_size: int = 512  # Era 128 -> ottimizzato per RTX 3080
-    lstm_num_layers: int = 4     # Era 3 -> ottimizzato per RTX 3080
-    lstm_dropout: float = 0.3  # 🔧 FIXED: Dropout aumentato per regolarizzazione contro overfitting
+    lstm_hidden_size: int = 256  # ANTI-OVERFITTING: Reduced from 512 to 256
+    lstm_num_layers: int = 2     # ANTI-OVERFITTING: Reduced from 4 to 2 layers
+    lstm_dropout: float = 0.5    # ANTI-OVERFITTING: Increased from 0.3 to 0.5
     
     # ========== TECHNICAL INDICATORS ==========
     sma_periods: List[int] = field(default_factory=lambda: [5, 10, 20, 50])
@@ -1055,9 +1057,9 @@ init_universal_encoding(silent=False)
 try:
     from src.utils.adaptive_trainer import AdaptiveTrainer, TrainingConfig
     from src.utils.data_preprocessing import AdvancedDataPreprocessor, PreprocessingConfig
-    from src.utils.optimized_lstm import OptimizedLSTM, LSTMConfig
     from src.utils.training_monitor import TrainingMonitor, MonitorConfig
     from src.utils.analyzer_ml_integration import EnhancedLSTMTrainer
+    # OptimizedLSTM and LSTMConfig are now defined directly in this file
     UTILS_ML_AVAILABLE = True
     safe_print("✅ Utils ML modules imported successfully")
 except ImportError as e:
@@ -2338,7 +2340,7 @@ class LearningDiagnostics:
         
         # 1. Controlla se i tick si stanno accumulando ma l'apprendimento non progredisce
         if (analyzer_instance.learning_phase and 
-            len(analyzer_instance.tick_data) >= 50000 and 
+            len(analyzer_instance.tick_data) >= 100000 and 
             analyzer_instance.learning_progress < 0.1):
             
             days_learning = (datetime.now() - analyzer_instance.learning_start_time).days
@@ -2694,6 +2696,12 @@ class ModelType(Enum):
     TREND_ANALYSIS = "trend_analysis"
     VOLATILITY_PREDICTION = "volatility_prediction"
     MOMENTUM_ANALYSIS = "momentum_analysis"
+
+class OptimizationProfile(Enum):
+    HIGH_PERFORMANCE = "high_performance"
+    STABLE_TRAINING = "stable_training"
+    RESEARCH_MODE = "research_mode"
+    PRODUCTION_READY = "production_ready"
 
 @dataclass
 class Prediction:
@@ -3465,7 +3473,7 @@ class MT5Interface:
 class AdvancedLSTM(nn.Module):
     """LSTM avanzato con auto-resize dinamico per qualsiasi dimensione input"""
     
-    def __init__(self, input_size: int, hidden_size: int, num_layers: int, output_size: int, dropout: float = 0.2):
+    def __init__(self, input_size: int, hidden_size: int, num_layers: int, output_size: int, dropout: float = 0.5):
         super(AdvancedLSTM, self).__init__()
         self.hidden_size = hidden_size
         self.expected_input_size = input_size  # Dimensione target preferita
@@ -4653,6 +4661,424 @@ class CustomLossWithGradientPenalty(nn.Module):
                 return total_loss
         
         return base_loss
+
+
+# ================== OPTIMIZED LSTM IMPLEMENTATION ==================
+# Integrato da src/utils/optimized_lstm.py per risolvere problemi di vanishing gradients e overfitting
+
+@dataclass
+class LSTMConfig:
+    """Configurazione per OptimizedLSTM"""
+    
+    # Architecture - ANTI-OVERFITTING (ridotta complessità)
+    input_size: int = 64                # MANTENUTO per compatibilità dati esistenti
+    hidden_size: int = 128              # RIDOTTO da 512 per prevenire overfitting
+    num_layers: int = 2                 # RIDOTTO da 4 per semplificare modello
+    output_size: int = 1
+    
+    # Regularization - POTENZIATA
+    dropout_rate: float = 0.5            # AUMENTATO da 0.2 per forte regularization
+    weight_decay: float = 1e-3           # AUMENTATO da 1e-4 per maggiore penalizzazione
+    
+    # Normalization
+    use_layer_norm: bool = True
+    use_batch_norm: bool = False
+    norm_eps: float = 1e-5
+    
+    # Skip connections
+    use_skip_connections: bool = True
+    skip_connection_interval: int = 2
+    
+    # Attention - SEMPLIFICATA
+    use_attention: bool = True
+    attention_heads: int = 2             # RIDOTTO da 4 per semplificare
+    attention_dropout: float = 0.3       # AUMENTATO da 0.1 per più regularization
+    
+    # Highway connections - DISABILITATE per ridurre complessità
+    use_highway: bool = False            # DISABILITATO per prevenire overfitting
+    highway_bias_init: float = -1.0
+    
+    # Gradient handling - PIÙ CONSERVATIVO
+    gradient_clip_value: float = 0.5     # RIDOTTO da 1.0 per maggiore stabilità
+    gradient_clip_norm: float = 1.0      # RIDOTTO da 5.0 per maggiore controllo
+    use_gradient_checkpointing: bool = True  # ABILITATO per ridurre memoria
+    
+    # Initialization
+    weight_init_method: str = 'xavier_uniform'  # 'xavier_uniform', 'kaiming_normal', 'orthogonal'
+    bias_init_value: float = 0.0
+    forget_gate_bias: float = 1.0  # LSTM forget gate bias (anti-vanishing)
+
+
+class LayerNormLSTMCell(nn.Module):
+    """LSTM Cell con Layer Normalization integrata"""
+    
+    def __init__(self, input_size: int, hidden_size: int, bias: bool = True, 
+                 layer_norm: bool = True, dropout: float = 0.0):
+        super().__init__()
+        
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.bias = bias
+        self.layer_norm = layer_norm
+        
+        # Input transformations
+        self.input_transform = nn.Linear(input_size, 4 * hidden_size, bias=bias)
+        self.hidden_transform = nn.Linear(hidden_size, 4 * hidden_size, bias=bias)
+        
+        # Layer normalization
+        if layer_norm:
+            self.ln_input = nn.LayerNorm(4 * hidden_size)
+            self.ln_hidden = nn.LayerNorm(4 * hidden_size)
+            self.ln_cell = nn.LayerNorm(hidden_size)
+        
+        # Dropout
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else None
+        
+        # Initialize weights
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        """Inizializzazione ottimizzata dei pesi"""
+        # Xavier uniform per input e hidden transforms
+        if self.input_transform.weight.dim() >= 2:
+            nn.init.xavier_uniform_(self.input_transform.weight)
+        if self.hidden_transform.weight.dim() >= 2:
+            nn.init.xavier_uniform_(self.hidden_transform.weight)
+        
+        if self.bias:
+            # Bias forget gate a 1 per combattere vanishing gradients
+            with torch.no_grad():
+                forget_gate_bias_idx = slice(self.hidden_size, 2 * self.hidden_size)
+                if hasattr(self.input_transform, 'bias') and self.input_transform.bias is not None:
+                    self.input_transform.bias[forget_gate_bias_idx].fill_(1.0)
+                if hasattr(self.hidden_transform, 'bias') and self.hidden_transform.bias is not None:
+                    self.hidden_transform.bias[forget_gate_bias_idx].fill_(1.0)
+    
+    def forward(self, input_tensor: torch.Tensor, hidden_state: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass del LSTM cell con layer normalization"""
+        h_prev, c_prev = hidden_state
+        
+        # Linear transformations
+        input_proj = self.input_transform(input_tensor)
+        hidden_proj = self.hidden_transform(h_prev)
+        
+        # Layer normalization
+        if self.layer_norm:
+            input_proj = self.ln_input(input_proj)
+            hidden_proj = self.ln_hidden(hidden_proj)
+        
+        # Combined projections
+        combined = input_proj + hidden_proj
+        
+        # Split into gates
+        input_gate, forget_gate, cell_gate, output_gate = torch.chunk(combined, 4, dim=1)
+        
+        # Apply activations
+        input_gate = torch.sigmoid(input_gate)
+        forget_gate = torch.sigmoid(forget_gate)
+        cell_gate = torch.tanh(cell_gate)
+        output_gate = torch.sigmoid(output_gate)
+        
+        # Update cell state
+        c_new = forget_gate * c_prev + input_gate * cell_gate
+        
+        # Layer norm on cell state
+        if self.layer_norm:
+            c_new_norm = self.ln_cell(c_new)
+        else:
+            c_new_norm = c_new
+        
+        # Update hidden state
+        h_new = output_gate * torch.tanh(c_new_norm)
+        
+        # Apply dropout
+        if self.dropout is not None and self.training:
+            h_new = self.dropout(h_new)
+        
+        return h_new, c_new
+
+
+class MultiHeadAttention(nn.Module):
+    """Multi-Head Attention mechanism per LSTM features"""
+    
+    def __init__(self, hidden_size: int, num_heads: int = 4, dropout: float = 0.1):
+        super().__init__()
+        
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.head_dim = hidden_size // num_heads
+        
+        assert hidden_size % num_heads == 0, "hidden_size must be divisible by num_heads"
+        
+        # Linear projections
+        self.query_proj = nn.Linear(hidden_size, hidden_size)
+        self.key_proj = nn.Linear(hidden_size, hidden_size)
+        self.value_proj = nn.Linear(hidden_size, hidden_size)
+        self.output_proj = nn.Linear(hidden_size, hidden_size)
+        
+        # Dropout
+        self.dropout = nn.Dropout(dropout)
+        
+        # Layer norm
+        self.layer_norm = nn.LayerNorm(hidden_size)
+        
+        # Initialize weights
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        """Inizializzazione pesi attention"""
+        for module in [self.query_proj, self.key_proj, self.value_proj, self.output_proj]:
+            if module.weight.dim() >= 2:
+                nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+    
+    def forward(self, hidden_states: torch.Tensor, attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Forward pass attention mechanism"""
+        batch_size, seq_len, _ = hidden_states.shape
+        
+        # Linear projections
+        query = self.query_proj(hidden_states)
+        key = self.key_proj(hidden_states)
+        value = self.value_proj(hidden_states)
+        
+        # Reshape for multi-head attention
+        query = query.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        key = key.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        value = value.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        
+        # Scaled dot-product attention
+        scores = torch.matmul(query, key.transpose(-2, -1)) / np.sqrt(self.head_dim)
+        
+        # Apply attention mask if provided
+        if attention_mask is not None:
+            mask = attention_mask.unsqueeze(1).unsqueeze(1)
+            scores = scores.masked_fill(mask == 0, -1e9)
+        
+        # Softmax
+        attention_weights = F.softmax(scores, dim=-1)
+        attention_weights = self.dropout(attention_weights)
+        
+        # Apply attention to values
+        context = torch.matmul(attention_weights, value)
+        
+        # Concatenate heads
+        context = context.transpose(1, 2).contiguous().view(batch_size, seq_len, self.hidden_size)
+        
+        # Output projection
+        output = self.output_proj(context)
+        
+        # Residual connection + layer norm
+        output = self.layer_norm(output + hidden_states)
+        
+        return output
+
+
+class HighwayNetwork(nn.Module):
+    """Highway Network per accelerare l'apprendimento"""
+    
+    def __init__(self, size: int, bias_init: float = -1.0):
+        super().__init__()
+        
+        self.transform_gate = nn.Linear(size, size)
+        self.carry_gate = nn.Linear(size, size)
+        self.transform_layer = nn.Linear(size, size)
+        
+        # Initialize carry gate bias to negative value (prefer carrying)
+        nn.init.constant_(self.carry_gate.bias, bias_init)
+        
+        # Initialize other weights
+        if self.transform_gate.weight.dim() >= 2:
+            nn.init.xavier_uniform_(self.transform_gate.weight)
+        else:
+            nn.init.normal_(self.transform_gate.weight, mean=0.0, std=0.01)
+        
+        if self.transform_layer.weight.dim() >= 2:
+            nn.init.xavier_uniform_(self.transform_layer.weight)
+        else:
+            nn.init.normal_(self.transform_layer.weight, mean=0.0, std=0.01)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass highway network"""
+        # Transform gate (how much to transform)
+        transform_gate = torch.sigmoid(self.transform_gate(x))
+        
+        # Carry gate (how much to carry through)
+        carry_gate = torch.sigmoid(self.carry_gate(x))
+        
+        # Transform layer
+        transformed = torch.relu(self.transform_layer(x))
+        
+        # Highway equation: T(x) * H(x) + C(x) * x
+        output = transform_gate * transformed + carry_gate * x
+        
+        return output
+
+
+class OptimizedLSTM(nn.Module):
+    """
+    LSTM ottimizzato con tutte le tecniche anti-vanishing gradient
+    
+    Features:
+    - Layer Normalization
+    - Skip Connections
+    - Multi-Head Attention
+    - Highway Networks
+    - Gradient Clipping intelligente
+    - Inizializzazione ottimizzata
+    """
+    
+    def __init__(self, config: LSTMConfig):
+        super().__init__()
+        
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+        
+        # LSTM layers with layer normalization
+        self.lstm_layers = nn.ModuleList()
+        
+        for i in range(config.num_layers):
+            input_size = config.input_size if i == 0 else config.hidden_size
+            
+            lstm_cell = LayerNormLSTMCell(
+                input_size=input_size,
+                hidden_size=config.hidden_size,
+                layer_norm=config.use_layer_norm,
+                dropout=config.dropout_rate if i < config.num_layers - 1 else 0.0
+            )
+            
+            self.lstm_layers.append(lstm_cell)
+        
+        # Attention mechanism
+        if config.use_attention:
+            self.attention = MultiHeadAttention(
+                hidden_size=config.hidden_size,
+                num_heads=config.attention_heads,
+                dropout=config.attention_dropout
+            )
+        
+        # Highway networks for skip connections
+        if config.use_highway:
+            self.highway_networks = nn.ModuleList([
+                HighwayNetwork(config.hidden_size, config.highway_bias_init)
+                for _ in range(config.num_layers)
+            ])
+        
+        # Output projection
+        self.output_projection = nn.Sequential(
+            nn.Linear(config.hidden_size, config.hidden_size // 2),
+            nn.ReLU(),
+            nn.Dropout(config.dropout_rate),
+            nn.Linear(config.hidden_size // 2, config.output_size)
+        )
+        
+        # Layer normalization for final output
+        if config.use_layer_norm:
+            self.output_norm = nn.LayerNorm(config.hidden_size)
+        
+        # Initialize all weights
+        self._initialize_weights()
+        
+        print(f"🧠 OptimizedLSTM initialized: {config.num_layers} layers, {config.hidden_size} hidden, attention={config.use_attention}")
+    
+    def _initialize_weights(self):
+        """Inizializzazione ottimizzata di tutti i pesi"""
+        
+        for name, param in self.named_parameters():
+            if 'weight' in name:
+                if param.dim() >= 2:  # Solo per tensori 2D o superiori
+                    if self.config.weight_init_method == 'xavier_uniform':
+                        nn.init.xavier_uniform_(param)
+                    elif self.config.weight_init_method == 'kaiming_normal':
+                        nn.init.kaiming_normal_(param)
+                    elif self.config.weight_init_method == 'orthogonal':
+                        nn.init.orthogonal_(param)
+                else:
+                    # Per tensori 1D (bias), usa normal initialization
+                    nn.init.normal_(param, mean=0.0, std=0.01)
+            
+            elif 'bias' in name:
+                nn.init.constant_(param, self.config.bias_init_value)
+        
+        # Special initialization for output projection
+        for module in self.output_projection:
+            if isinstance(module, nn.Linear):
+                if module.weight.dim() >= 2:
+                    nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+    
+    def forward(self, x: torch.Tensor, hidden_states: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None) -> Tuple[torch.Tensor, List[Tuple[torch.Tensor, torch.Tensor]]]:
+        """Forward pass dell'OptimizedLSTM"""
+        batch_size, seq_len, _ = x.shape
+        
+        # Initialize hidden states if not provided
+        if hidden_states is None:
+            hidden_states = []
+            for _ in range(self.config.num_layers):
+                h_0 = torch.zeros(batch_size, self.config.hidden_size, device=x.device, dtype=x.dtype)
+                c_0 = torch.zeros(batch_size, self.config.hidden_size, device=x.device, dtype=x.dtype)
+                hidden_states.append((h_0, c_0))
+        
+        # Process through LSTM layers
+        layer_outputs = []
+        new_hidden_states = []
+        current_input = x
+        
+        for layer_idx, (lstm_cell, hidden_state) in enumerate(zip(self.lstm_layers, hidden_states)):
+            
+            # Process sequence through this layer
+            layer_hidden_outputs = []
+            current_hidden = hidden_state
+            
+            for t in range(seq_len):
+                # LSTM cell forward
+                h_new, c_new = lstm_cell(current_input[:, t, :], current_hidden)
+                current_hidden = (h_new, c_new)
+                layer_hidden_outputs.append(h_new)
+            
+            # Stack outputs for this layer
+            layer_output = torch.stack(layer_hidden_outputs, dim=1)  # [batch, seq_len, hidden]
+            
+            # Apply highway network if enabled
+            if self.config.use_highway and hasattr(self, 'highway_networks'):
+                layer_output = self.highway_networks[layer_idx](layer_output)
+            
+            # Skip connections every N layers
+            if (self.config.use_skip_connections and 
+                layer_idx > 0 and 
+                layer_idx % self.config.skip_connection_interval == 0 and
+                layer_output.shape == layer_outputs[layer_idx - self.config.skip_connection_interval].shape):
+                
+                layer_output = layer_output + layer_outputs[layer_idx - self.config.skip_connection_interval]
+            
+            layer_outputs.append(layer_output)
+            new_hidden_states.append(current_hidden)
+            current_input = layer_output
+        
+        # Final layer output
+        final_output = layer_outputs[-1]
+        
+        # Apply attention mechanism
+        if self.config.use_attention and hasattr(self, 'attention'):
+            final_output = self.attention(final_output)
+        
+        # Apply output normalization
+        if self.config.use_layer_norm and hasattr(self, 'output_norm'):
+            final_output = self.output_norm(final_output)
+        
+        # Project to output size
+        # Take only the last timestep for final prediction
+        last_output = final_output[:, -1, :]  # [batch_size, hidden_size]
+        prediction = self.output_projection(last_output)  # [batch_size, output_size]
+        
+        # DEBUG: Ensure output shape is correct
+        if len(prediction.shape) == 3:
+            # If somehow we get 3D output, take last dimension
+            prediction = prediction[:, -1, :]
+            print(f"🔍 DEBUG LSTM: Fixed 3D output to 2D: {prediction.shape}")
+        
+        return prediction, new_hidden_states
 
 
 class CNNPatternRecognizer(nn.Module):
@@ -6183,7 +6609,7 @@ class RollingWindowTrainer:
     
     def __init__(self, window_size_days: int = 180, retrain_frequency_days: int = 7,
                  asset: Optional[str] = None, model_type: Optional['ModelType'] = None, 
-                 logger: Optional['AnalyzerLogger'] = None):
+                 logger: Optional['AnalyzerLogger'] = None, analyzer: Optional['AssetAnalyzer'] = None):
         self.window_size_days = window_size_days
         self.retrain_frequency_days = retrain_frequency_days
         self.last_training_dates: Dict[str, datetime] = {}
@@ -6193,6 +6619,7 @@ class RollingWindowTrainer:
         self.asset = asset
         self.model_type = model_type
         self.logger = logger
+        self.analyzer = analyzer  # Riferimento all'AssetAnalyzer parent
         
     def should_retrain(self, asset: str, model_type: ModelType, algorithm_name: str,
                       force: bool = False) -> bool:
@@ -7145,7 +7572,7 @@ class RollingWindowTrainer:
         skipped_samples = 0
         
         for i in range(window_size, len(prices) - future_window):
-            # Features aggregate con validazione NaN
+            # Features aggregate con validazione NaN - ENHANCED v3.0
             features = []
             
             # Price position relative to MAs
@@ -7156,7 +7583,7 @@ class RollingWindowTrainer:
                 skipped_samples += 1
                 continue
             
-            # SMA features con validazione
+            # 1. SMA features con validazione (esistenti)
             if not np.isnan(data['sma_20'][i]):
                 features.append((current_price - data['sma_20'][i]) / data['sma_20'][i])
             else:
@@ -7167,14 +7594,14 @@ class RollingWindowTrainer:
             else:
                 features.append(0)
             
-            # RSI con validazione
+            # 2. RSI con validazione (esistente)
             rsi_val = data['rsi'][i]
             if np.isnan(rsi_val):
                 features.append(0.5)  # Neutro se RSI non disponibile
             else:
                 features.append(rsi_val / 100)
             
-            # Recent returns statistics con validazione
+            # 3. Recent returns statistics con validazione (esistente)
             recent_returns = data['returns'][max(0, i-20):i]
             if len(recent_returns) > 0 and not np.isnan(recent_returns).all():
                 valid_returns = recent_returns[~np.isnan(recent_returns)]
@@ -7190,7 +7617,7 @@ class RollingWindowTrainer:
             else:
                 features.extend([0, 0, 0, 0])  # Default se non ci sono dati
             
-            # Volume trend con validazione
+            # 4. Volume trend con validazione (esistente)
             recent_volumes = volumes[max(0, i-20):i]
             if len(recent_volumes) > 0 and not np.isnan(recent_volumes).all():
                 valid_volumes = recent_volumes[~np.isnan(recent_volumes)]
@@ -7201,6 +7628,260 @@ class RollingWindowTrainer:
                     features.append(1.0)  # Volume neutro
             else:
                 features.append(1.0)  # Volume neutro
+            
+            # 5. NUOVO: Price momentum features
+            if i >= 10:
+                price_10_back = prices[i-10]
+                if not np.isnan(price_10_back) and price_10_back > 0:
+                    momentum_10 = (current_price - price_10_back) / price_10_back
+                    features.append(momentum_10)
+                else:
+                    features.append(0)
+            else:
+                features.append(0)
+                
+            # 6. NUOVO: Bollinger Bands position
+            if i >= 20:
+                recent_prices = prices[max(0, i-20):i]
+                if len(recent_prices) > 0 and not np.isnan(recent_prices).all():
+                    mean_price = np.mean(recent_prices)
+                    std_price = np.std(recent_prices)
+                    if std_price > 0:
+                        bb_position = (current_price - mean_price) / (2 * std_price)
+                        features.append(np.clip(bb_position, -1, 1))
+                    else:
+                        features.append(0)
+                else:
+                    features.append(0)
+            else:
+                features.append(0)
+                
+            # 7. NUOVO: Price acceleration
+            if i >= 2:
+                price_1_back = prices[i-1] if i >= 1 else current_price
+                price_2_back = prices[i-2] if i >= 2 else price_1_back
+                if not np.isnan(price_1_back) and not np.isnan(price_2_back):
+                    velocity_1 = (current_price - price_1_back) / (price_1_back + 1e-8)
+                    velocity_2 = (price_1_back - price_2_back) / (price_2_back + 1e-8)
+                    acceleration = velocity_1 - velocity_2
+                    features.append(np.clip(acceleration, -0.1, 0.1))
+                else:
+                    features.append(0)
+            else:
+                features.append(0)
+                
+            # 8. NUOVO: High-Low range indicator
+            if i >= 20:
+                recent_highs = prices[max(0, i-20):i]
+                if len(recent_highs) > 0 and not np.isnan(recent_highs).all():
+                    highest = np.max(recent_highs)
+                    lowest = np.min(recent_highs)
+                    if highest > lowest:
+                        hl_position = (current_price - lowest) / (highest - lowest)
+                        features.append(hl_position)
+                    else:
+                        features.append(0.5)
+                else:
+                    features.append(0.5)
+            else:
+                features.append(0.5)
+                
+            # 9. NUOVO: Volume-weighted price ratio
+            if i >= 5 and len(recent_volumes) > 0:
+                recent_prices_5 = prices[max(0, i-5):i]
+                recent_volumes_5 = volumes[max(0, i-5):i]
+                if (len(recent_prices_5) > 0 and len(recent_volumes_5) > 0 and 
+                    not np.isnan(recent_prices_5).all() and not np.isnan(recent_volumes_5).all()):
+                    vwap = np.sum(recent_prices_5 * recent_volumes_5) / (np.sum(recent_volumes_5) + 1e-8)
+                    if vwap > 0:
+                        vwap_ratio = current_price / vwap
+                        features.append(vwap_ratio)
+                    else:
+                        features.append(1.0)
+                else:
+                    features.append(1.0)
+            else:
+                features.append(1.0)
+            
+            # 10. NUOVO: MACD Indicator
+            if i >= 26:
+                ema12_data = []
+                ema26_data = []
+                alpha12 = 2/13  # per EMA 12 periodi
+                alpha26 = 2/27  # per EMA 26 periodi
+                
+                # Calcola EMA semplificato
+                recent_prices = prices[max(0, i-26):i+1]
+                if len(recent_prices) >= 26:
+                    ema12 = recent_prices[-12:].mean() if len(recent_prices) >= 12 else current_price
+                    ema26 = recent_prices[-26:].mean() if len(recent_prices) >= 26 else current_price
+                    macd = ema12 - ema26
+                    macd_normalized = macd / current_price if current_price != 0 else 0
+                    features.append(np.clip(macd_normalized, -0.05, 0.05))
+                else:
+                    features.append(0)
+            else:
+                features.append(0)
+            
+            # 11. NUOVO: Stochastic Oscillator
+            if i >= 14:
+                recent_14 = prices[max(0, i-14):i+1]
+                if len(recent_14) >= 14 and not np.isnan(recent_14).all():
+                    highest_14 = np.max(recent_14)
+                    lowest_14 = np.min(recent_14)
+                    if highest_14 > lowest_14:
+                        stoch_k = (current_price - lowest_14) / (highest_14 - lowest_14)
+                        features.append(stoch_k)
+                    else:
+                        features.append(0.5)
+                else:
+                    features.append(0.5)
+            else:
+                features.append(0.5)
+                
+            # 12. NUOVO: Williams %R
+            if i >= 14:
+                recent_14 = prices[max(0, i-14):i+1]
+                if len(recent_14) >= 14 and not np.isnan(recent_14).all():
+                    highest_14 = np.max(recent_14)
+                    lowest_14 = np.min(recent_14)
+                    if highest_14 > lowest_14:
+                        williams_r = (highest_14 - current_price) / (highest_14 - lowest_14)
+                        features.append(williams_r)
+                    else:
+                        features.append(0.5)
+                else:
+                    features.append(0.5)
+            else:
+                features.append(0.5)
+                
+            # 13. NUOVO: CCI (Commodity Channel Index) semplificato
+            if i >= 20:
+                recent_20 = prices[max(0, i-20):i+1]
+                if len(recent_20) >= 20 and not np.isnan(recent_20).all():
+                    typical_price = current_price  # Semplificato: solo close price
+                    sma_tp = np.mean(recent_20)
+                    mean_deviation = np.mean(np.abs(recent_20 - sma_tp))
+                    if mean_deviation > 0:
+                        cci = (typical_price - sma_tp) / (0.015 * mean_deviation)
+                        cci_normalized = np.clip(cci / 100, -2, 2)  # Normalizzato
+                        features.append(cci_normalized)
+                    else:
+                        features.append(0)
+                else:
+                    features.append(0)
+            else:
+                features.append(0)
+                
+            # 14. NUOVO: Rate of Change (ROC)
+            if i >= 10:
+                price_10_back = prices[i-10] if i >= 10 else current_price
+                if not np.isnan(price_10_back) and price_10_back != 0:
+                    roc = (current_price - price_10_back) / price_10_back
+                    features.append(np.clip(roc, -0.2, 0.2))
+                else:
+                    features.append(0)
+            else:
+                features.append(0)
+                
+            # 15. NUOVO: Money Flow Index (MFI) semplificato
+            if i >= 14:
+                recent_prices_14 = prices[max(0, i-14):i+1]
+                recent_volumes_14 = volumes[max(0, i-14):i+1]
+                if (len(recent_prices_14) >= 14 and len(recent_volumes_14) >= 14 and 
+                    not np.isnan(recent_prices_14).all() and not np.isnan(recent_volumes_14).all()):
+                    
+                    positive_flow = 0
+                    negative_flow = 0
+                    
+                    for j in range(1, len(recent_prices_14)):
+                        typical_price_curr = recent_prices_14[j]
+                        typical_price_prev = recent_prices_14[j-1]
+                        volume_curr = recent_volumes_14[j]
+                        
+                        money_flow = typical_price_curr * volume_curr
+                        
+                        if typical_price_curr > typical_price_prev:
+                            positive_flow += money_flow
+                        elif typical_price_curr < typical_price_prev:
+                            negative_flow += money_flow
+                    
+                    if positive_flow + negative_flow > 0:
+                        mfi = positive_flow / (positive_flow + negative_flow)
+                        features.append(mfi)
+                    else:
+                        features.append(0.5)
+                else:
+                    features.append(0.5)
+            else:
+                features.append(0.5)
+                
+            # 16. NUOVO: Average True Range (ATR) ratio
+            if i >= 14:
+                recent_prices_14 = prices[max(0, i-14):i+1]
+                if len(recent_prices_14) >= 14:
+                    true_ranges = []
+                    for j in range(1, len(recent_prices_14)):
+                        high_low = abs(recent_prices_14[j] - recent_prices_14[j-1])
+                        true_ranges.append(high_low)
+                    
+                    if len(true_ranges) > 0:
+                        atr = np.mean(true_ranges)
+                        atr_ratio = atr / current_price if current_price != 0 else 0
+                        features.append(np.clip(atr_ratio, 0, 0.1))
+                    else:
+                        features.append(0.01)
+                else:
+                    features.append(0.01)
+            else:
+                features.append(0.01)
+                
+            # 17. NUOVO: Price position relative to 5-period high/low
+            if i >= 5:
+                recent_5 = prices[max(0, i-5):i+1]
+                if len(recent_5) >= 5 and not np.isnan(recent_5).all():
+                    high_5 = np.max(recent_5)
+                    low_5 = np.min(recent_5)
+                    if high_5 > low_5:
+                        position_5 = (current_price - low_5) / (high_5 - low_5)
+                        features.append(position_5)
+                    else:
+                        features.append(0.5)
+                else:
+                    features.append(0.5)
+            else:
+                features.append(0.5)
+                
+            # 18. NUOVO: Volume Rate of Change
+            if i >= 10:
+                current_volume = volumes[i] if not np.isnan(volumes[i]) else 0
+                volume_10_back = volumes[i-10] if i >= 10 and not np.isnan(volumes[i-10]) else current_volume
+                if volume_10_back != 0:
+                    volume_roc = (current_volume - volume_10_back) / volume_10_back
+                    features.append(np.clip(volume_roc, -2, 2))
+                else:
+                    features.append(0)
+            else:
+                features.append(0)
+                
+            # 19. NUOVO: Trend Strength Indicator
+            if i >= 20:
+                recent_20_trend = prices[max(0, i-20):i+1]
+                if len(recent_20_trend) >= 20:
+                    # Calcola coefficiente di correlazione con trend lineare
+                    x_trend = np.arange(len(recent_20_trend))
+                    if len(recent_20_trend) > 1 and np.std(recent_20_trend) > 0:
+                        correlation = np.corrcoef(x_trend, recent_20_trend)[0, 1]
+                        if not np.isnan(correlation):
+                            features.append(correlation)
+                        else:
+                            features.append(0)
+                    else:
+                        features.append(0)
+                else:
+                    features.append(0)
+            else:
+                features.append(0)
             
             # Target: slope della regressione lineare sui prezzi futuri
             future_prices = prices[i:i+future_window]
@@ -7872,16 +8553,74 @@ class RollingWindowTrainer:
             self._training_events_buffer = critical_events + recent_routine
     
     def _train_sklearn_model(self, model: Any, X: np.ndarray, y: np.ndarray) -> Dict[str, Any]:
-        """Training per modelli scikit-learn"""
+        """Training per modelli scikit-learn con CROSS-VALIDATION e ANTI-OVERFITTING"""
         
-        # Split train/test
-        train_size = int(0.8 * len(X))
+        from sklearn.model_selection import cross_val_score, KFold
+        from sklearn.metrics import make_scorer
+        
+        # ANTI-OVERFITTING: Use K-Fold Cross Validation
+        kfold = KFold(n_splits=5, shuffle=True, random_state=42)
+        
+        # Split train/test with smaller test set to have more training data
+        train_size = int(0.85 * len(X))  # Increased from 0.8 to 0.85
         indices = np.random.permutation(len(X))
         train_indices = indices[:train_size]
         test_indices = indices[train_size:]
         
         X_train, y_train = X[train_indices], y[train_indices]
         X_test, y_test = X[test_indices], y[test_indices]
+        
+        # ENHANCED PREPROCESSING v3.0
+        # Get model name first
+        model_name = getattr(model, '__class__', type(model)).__name__
+        
+        # 1. Feature scaling with robust scaler (less sensitive to outliers)
+        from sklearn.preprocessing import RobustScaler
+        scaler = RobustScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+        
+        # 2. Intelligent noise injection based on feature variance
+        noise_level = 0.01  # Base 1% noise
+        feature_stds = np.std(X_train_scaled, axis=0)
+        noise = np.random.normal(0, noise_level, X_train_scaled.shape) * feature_stds
+        X_train_noisy = X_train_scaled + noise
+        
+        # 3. Feature augmentation for tree models
+        if 'RandomForest' in model_name or 'GradientBoosting' in model_name or 'VotingRegressor' in model_name:
+            try:
+                # Add polynomial features for better pattern capture
+                from sklearn.preprocessing import PolynomialFeatures
+                from scipy.sparse import issparse
+                
+                # Only use top features to avoid explosion
+                n_top_features = min(5, X_train_scaled.shape[1])
+                
+                # Create polynomial features without generating sparse matrices
+                poly = PolynomialFeatures(degree=2, include_bias=False, interaction_only=True)
+                X_train_poly = poly.fit_transform(X_train_scaled[:, :n_top_features])
+                X_test_poly = poly.transform(X_test_scaled[:, :n_top_features])
+                
+                # Convert to dense array safely
+                if hasattr(X_train_poly, 'toarray') and callable(getattr(X_train_poly, 'toarray')):
+                    X_train_poly = X_train_poly.toarray()  # type: ignore
+                X_train_poly = np.asarray(X_train_poly)
+                
+                if hasattr(X_test_poly, 'toarray') and callable(getattr(X_test_poly, 'toarray')):
+                    X_test_poly = X_test_poly.toarray()  # type: ignore
+                X_test_poly = np.asarray(X_test_poly)
+                
+                # Combine original and polynomial features
+                X_train_enhanced = np.hstack([X_train_noisy, X_train_poly])
+                X_test_enhanced = np.hstack([X_test_scaled, X_test_poly])
+            except Exception as e:
+                # Fallback to original features if polynomial fails
+                safe_print(f"⚠️ Polynomial features failed: {e}, using original features")
+                X_train_enhanced = X_train_noisy
+                X_test_enhanced = X_test_scaled
+        else:
+            X_train_enhanced = X_train_noisy
+            X_test_enhanced = X_test_scaled
         
         # Training
         start_time = datetime.now()
@@ -7898,11 +8637,39 @@ class RollingWindowTrainer:
             except:
                 pass
         
-        # Train model
-        model.fit(X_train, y_train)
+        # CROSS-VALIDATION before final training
+        if 'RandomForest' in model_name or 'GradientBoosting' in model_name:
+            safe_print(f"🔄 Running 5-fold cross-validation for {model_name}...")
+            cv_scores = cross_val_score(model, X_train_enhanced, y_train, cv=kfold, 
+                                      scoring='neg_mean_squared_error', n_jobs=-1)
+            cv_mean = -np.mean(cv_scores)
+            cv_std = np.std(cv_scores)
+            safe_print(f"📊 CV MSE: {cv_mean:.4f} (+/- {cv_std:.4f})")
+        
+        # 🎯 HYPERPARAMETER TUNING per modelli supportati
+        if (self.analyzer and hasattr(self.analyzer, '_enable_hyperparameter_tuning') and 
+            self.analyzer._enable_hyperparameter_tuning):
+            # Identifica il nome del modello per tuning
+            for model_key, model_instance in self.analyzer.ml_models.items():
+                if model_instance is model:
+                    if 'RandomForest_Trend' in model_key or 'GradientBoosting_Trend' in model_key:
+                        safe_print(f"🎯 Hyperparameter tuning enabled for {model_key}")
+                        # Usa i dati enhanced per tuning
+                        optimized_model = self.analyzer._optimize_hyperparameters(
+                            model_name=model_key, 
+                            X=X_train_enhanced, 
+                            y=y_train,
+                            use_randomized=True,  # Più veloce per production
+                            n_iter=15  # Ridotto per performance
+                        )
+                        model = optimized_model
+                    break
+        
+        # Train model with enhanced data
+        model.fit(X_train_enhanced, y_train)
         
         # Evaluate
-        predictions = model.predict(X_test)
+        predictions = model.predict(X_test_enhanced)
         
         # Auto-detect se è classificazione o regressione
         if len(np.unique(y)) <= 10 and np.all(y == y.astype(int)):
@@ -7921,15 +8688,17 @@ class RollingWindowTrainer:
         
         improvement = (final_score - initial_score) / abs(initial_score) if initial_score != 0 else 0
         
-        # 🔍 OVERFITTING DETECTION for tree models
+        # 🔍 ENHANCED OVERFITTING DETECTION for tree models
         overfitting_detected = False
         overfitting_ratio = 1.0
+        train_score = 0
+        train_loss = 0
         
-        # Get model name for overfitting check
-        model_name = getattr(model, '__class__', type(model)).__name__
-        if 'RandomForest' in model_name or 'GradientBoosting' in model_name:
+        # Get model name for overfitting check (already defined above)
+        if 'RandomForest' in model_name or 'GradientBoosting' in model_name or 'VotingRegressor' in model_name:
             # Calculate training score to compare with test score
-            train_predictions = model.predict(X_train)
+            # Use the enhanced data for consistency
+            train_predictions = model.predict(X_train_enhanced)
             if model_type == 'regression':
                 train_score = r2_score(y_train, train_predictions)
                 train_loss = mean_squared_error(y_train, train_predictions)
@@ -7938,14 +8707,38 @@ class RollingWindowTrainer:
                 # Calculate overfitting ratio (test_loss / train_loss)
                 if train_loss > 0:
                     overfitting_ratio = test_loss / train_loss
-                    # Flag overfitting if test loss is >2x training loss OR ultra-low training loss
-                    overfitting_detected = (overfitting_ratio > 2.0) or (train_loss < 1e-5 and final_score < 0.6)
+                else:
+                    overfitting_ratio = float('inf')  # Perfect training fit = extreme overfitting
                 
-                safe_print(f"🔍 Overfitting check: train_loss={train_loss:.2e}, test_loss={test_loss:.2e}")
-                safe_print(f"🔍 Overfitting ratio: {overfitting_ratio:.2f} ({'⚠️ DETECTED' if overfitting_detected else '✅ OK'})")
+                # EXTREME STRICT: Multiple overfitting conditions
+                overfitting_conditions = [
+                    overfitting_ratio > 1.2,  # Test loss 20% worse than train
+                    train_loss < 1e-5,        # Training loss suspiciously low
+                    train_score > 0.99,       # Perfect training fit
+                    (train_score > 0.95 and final_score < 0.8),  # Big gap
+                    (train_score - final_score) > 0.15,  # Score drop > 15%
+                    test_loss < 0 and model_type == 'regression'  # Negative R2 on test
+                ]
+                
+                overfitting_detected = any(overfitting_conditions)
+                
+                safe_print(f"🔍 Training performance: score={train_score:.4f}, loss={train_loss:.2e}")
+                safe_print(f"🔍 Test performance: score={final_score:.4f}, loss={test_loss:.2e}")
+                safe_print(f"🔍 Overfitting ratio: {overfitting_ratio:.2f}")
+                safe_print(f"🔍 Score gap: {train_score - final_score:.4f}")
+                safe_print(f"🔍 Overfitting status: {'⚠️ SEVERE OVERFITTING DETECTED!' if overfitting_detected else '✅ Acceptable'}")
                 
                 if overfitting_detected:
-                    safe_print(f"⚠️ OVERFITTING DETECTED in {model_name}! Consider more regularization.")
+                    safe_print(f"⚠️ {model_name} shows SEVERE OVERFITTING!")
+                    safe_print(f"⚠️ Recommendations:")
+                    safe_print(f"   - Reduce model complexity further")
+                    safe_print(f"   - Add more training data")
+                    safe_print(f"   - Increase regularization parameters")
+                    
+                    # Store overfitting info in model attributes if possible
+                    if hasattr(model, 'overfitting_detected'):
+                        model.overfitting_detected = True
+                        model.overfitting_ratio = overfitting_ratio
         
         return {
             'status': 'success',
@@ -9594,7 +10387,7 @@ class AssetAnalyzer:
         self.reality_checker = RealityChecker()
         self.emergency_stop = EmergencyStopSystem(self.logger)
         self.mt5_interface = MT5Interface(self.logger)
-        self.rolling_trainer = RollingWindowTrainer(asset=asset, logger=self.logger)
+        self.rolling_trainer = RollingWindowTrainer(asset=asset, logger=self.logger, analyzer=self)
         
         # Inizializza competizioni per ogni modello
         self.competitions: Dict[ModelType, AlgorithmCompetition] = {}
@@ -9605,7 +10398,7 @@ class AssetAnalyzer:
             )
         
         # Data storage con gestione memoria - USA CONFIG
-        self.tick_data = deque(maxlen=getattr(self.config, 'max_tick_buffer_size', 500000) or 500000)  # 🔧 FIXED
+        self.tick_data = deque(maxlen=getattr(self.config, 'max_tick_buffer_size', 1000000) or 1000000)  # 🔧 FIXED - Increased to 1M
         self.aggregated_data = {}  # Diverse aggregazioni temporali
         
         # Thread safety - Lock multipli per evitare race conditions
@@ -9627,6 +10420,9 @@ class AssetAnalyzer:
         self.learning_start_time = datetime.now()
         self.min_learning_days = self.config.min_learning_days  # 🔧 CHANGED
         self.learning_progress = 0.0
+        
+        # Hyperparameter tuning control
+        self._enable_hyperparameter_tuning = getattr(self.config, 'enable_hyperparameter_tuning', True)  # Default enabled
         
         # Performance tracking - USA CONFIG
         self.analysis_count = 0
@@ -9782,60 +10578,175 @@ class AssetAnalyzer:
                 'timestamp': datetime.now()
             })
 
-        def _load_recent_predictions(self):
-            """Carica predizioni recenti salvate - VERSIONE PULITA"""
+    def _optimize_hyperparameters(self, model_name: str, X: np.ndarray, y: np.ndarray, 
+                                  use_randomized: bool = True, n_iter: int = 20) -> Any:
+        """
+        🎯 HYPERPARAMETER TUNING avanzato per modelli RF e GF
+        
+        Args:
+            model_name: Nome del modello ('RandomForest_Trend' o 'GradientBoosting_Trend')
+            X: Feature matrix
+            y: Target array
+            use_randomized: Se True usa RandomizedSearchCV, altrimenti GridSearchCV
+            n_iter: Numero di iterazioni per RandomizedSearch
             
-            predictions_dir = f"{self.data_path}/predictions"
+        Returns:
+            Miglior modello ottimizzato
+        """
+        
+        if 'RandomForest' in model_name:
+            # 🌲 PARAMETRI AVANZATI PER RANDOMFOREST
+            param_distributions = {
+                'n_estimators': [80, 100, 120, 150],
+                'max_depth': [4, 5, 6, 7, 8],
+                'min_samples_split': [50, 80, 100, 120],
+                'min_samples_leaf': [20, 30, 40, 50],
+                'max_features': ['sqrt', 'log2', None],
+                'bootstrap': [True],
+                'max_samples': [0.6, 0.7, 0.8],
+                'min_weight_fraction_leaf': [0.0, 0.02, 0.05],
+                'max_leaf_nodes': [12, 16, 20, 24],
+                'ccp_alpha': [0.0, 0.01, 0.02]
+            }
+            base_model = RandomForestRegressor(
+                random_state=42, n_jobs=-1, oob_score=True
+            )
             
-            if not os.path.exists(predictions_dir):
-                return
+        elif 'GradientBoosting' in model_name:
+            # 📈 PARAMETRI ANTI-OVERFITTING PER GRADIENT BOOSTING  
+            param_distributions = {
+                'n_estimators': [50, 80, 100, 120],        # Ridotti per evitare overfitting
+                'learning_rate': [0.01, 0.02, 0.03, 0.05], # Learning rate più bassi
+                'max_depth': [2, 3, 4],                     # Alberi più shallow
+                'min_samples_split': [100, 150, 200, 250], # Più campioni per split
+                'min_samples_leaf': [60, 80, 100, 120],    # Foglie più grandi
+                'subsample': [0.5, 0.6, 0.7, 0.8],        # Più subsample per diversità
+                'max_features': ['sqrt', 'log2'],          # Solo features limitate
+                'validation_fraction': [0.2, 0.25, 0.3],  # Più dati per validation
+                'n_iter_no_change': [5, 8, 10],           # Early stopping più aggressivo
+                'tol': [1e-3, 1e-2],                      # Toleranza più alta per stopping
+                'alpha': [0.9, 0.95, 0.99]                # Regolarizzazione più forte
+            }
+            base_model = GradientBoostingRegressor(
+                random_state=42, warm_start=False
+            )
+        else:
+            # Modello non supportato, return base model
+            return self.ml_models.get(model_name)
+        
+        # Strategia di ricerca
+        if use_randomized:
+            search = RandomizedSearchCV(
+                estimator=base_model,
+                param_distributions=param_distributions,
+                n_iter=n_iter,
+                cv=3,  # 3-fold per velocità durante tuning
+                scoring='neg_mean_squared_error',
+                n_jobs=-1,
+                random_state=42,
+                verbose=1
+            )
+        else:
+            # GridSearch solo per parametri critici (troppo lento altrimenti)
+            if 'RandomForest' in model_name:
+                param_grid = {
+                    'n_estimators': [100, 120],
+                    'max_depth': [5, 6, 7],
+                    'min_samples_leaf': [25, 30, 35],
+                    'max_features': ['sqrt', 'log2']
+                }
+            else:  # GradientBoosting
+                param_grid = {
+                    'n_estimators': [150, 200],
+                    'learning_rate': [0.03, 0.05, 0.08],
+                    'max_depth': [4, 5],
+                    'subsample': [0.7, 0.8]
+                }
             
-            predictions_loaded = 0
-            predictions_failed = 0
+            search = GridSearchCV(
+                estimator=base_model,
+                param_grid=param_grid,
+                cv=3,
+                scoring='neg_mean_squared_error',
+                n_jobs=-1,
+                verbose=1
+            )
+        
+        try:
+            # Esegui ottimizzazione
+            print(f"🎯 Starting hyperparameter optimization for {model_name}...")
+            search.fit(X, y)
             
-            for model_type, competition in self.competitions.items():
-                predictions_file = f"{predictions_dir}/{model_type.value}_recent.pkl"
-                
-                if os.path.exists(predictions_file):
-                    try:
-                        with open(predictions_file, 'rb') as f:
-                            recent_predictions = pickle.load(f)
-                        
-                        # Add to competition history
-                        competition.predictions_history.extend(recent_predictions[-100:])  # Last 100
-                        
-                        # 🧹 PULITO: Sostituito logger con event storage
-                        self._store_system_event('predictions_loaded', {
-                            'model_type': model_type.value,
-                            'status': 'success',
-                            'predictions_count': len(recent_predictions),
-                            'predictions_added': len(recent_predictions[-100:]),
-                            'predictions_file': predictions_file,
-                            'timestamp': datetime.now()
-                        })
-                        predictions_loaded += 1
-                        
-                    except Exception as e:
-                        # 🧹 PULITO: Sostituito logger con event storage
-                        self._store_system_event('predictions_load_failed', {
-                            'model_type': model_type.value,
-                            'status': 'error',
-                            'error_message': str(e),
-                            'error_type': type(e).__name__,
-                            'predictions_file': predictions_file,
-                            'timestamp': datetime.now(),
-                            'severity': 'error'
-                        })
-                        predictions_failed += 1
+            # Log risultati migliori
+            best_score = -search.best_score_  # Converti da neg_mse a mse
+            print(f"✅ Best CV Score: {best_score:.6f}")
+            print(f"🏆 Best Parameters: {search.best_params_}")
             
-            # Summary event
-            if predictions_loaded > 0 or predictions_failed > 0:
-                self._store_system_event('predictions_loading_complete', {
-                    'model_types_loaded': predictions_loaded,
-                    'model_types_failed': predictions_failed,
-                    'total_model_types': len(self.competitions),
-                    'timestamp': datetime.now()
-                })
+            # Update del modello nell'analyzer
+            optimized_model = search.best_estimator_
+            self.ml_models[model_name] = optimized_model
+            
+            return optimized_model
+            
+        except Exception as e:
+            print(f"❌ Hyperparameter tuning failed for {model_name}: {e}")
+            # Return modello originale in caso di errore
+            return self.ml_models.get(model_name)
+
+    def _load_recent_predictions(self):
+        """Carica predizioni recenti salvate - VERSIONE PULITA"""
+        
+        predictions_dir = f"{self.data_path}/predictions"
+        
+        if not os.path.exists(predictions_dir):
+            return
+            
+        predictions_loaded = 0
+        predictions_failed = 0
+        
+        for model_type, competition in self.competitions.items():
+            predictions_file = f"{predictions_dir}/{model_type.value}_recent.pkl"
+            
+            if os.path.exists(predictions_file):
+                try:
+                    with open(predictions_file, 'rb') as f:
+                        recent_predictions = pickle.load(f)
+                    
+                    # Add to competition history
+                    competition.predictions_history.extend(recent_predictions[-100:])  # Last 100
+                    
+                    # 🧹 PULITO: Sostituito logger con event storage
+                    self._store_system_event('predictions_loaded', {
+                        'model_type': model_type.value,
+                        'status': 'success',
+                        'predictions_count': len(recent_predictions),
+                        'predictions_added': len(recent_predictions[-100:]),
+                        'predictions_file': predictions_file,
+                        'timestamp': datetime.now()
+                    })
+                    predictions_loaded += 1
+                    
+                except Exception as e:
+                    # 🧹 PULITO: Sostituito logger con event storage
+                    self._store_system_event('predictions_load_failed', {
+                        'model_type': model_type.value,
+                        'status': 'error',
+                        'error_message': str(e),
+                        'error_type': type(e).__name__,
+                        'predictions_file': predictions_file,
+                        'timestamp': datetime.now(),
+                        'severity': 'error'
+                    })
+                    predictions_failed += 1
+        
+        # Summary event
+        if predictions_loaded > 0 or predictions_failed > 0:
+            self._store_system_event('predictions_loading_complete', {
+                'model_types_loaded': predictions_loaded,
+                'model_types_failed': predictions_failed,
+                'total_model_types': len(self.competitions),
+                'timestamp': datetime.now()
+            })
 
     def _initialize_algorithms(self) -> None:
         """Inizializza tutti gli algoritmi per ogni modello"""
@@ -9946,29 +10857,101 @@ class AssetAnalyzer:
         for model_name, config in transformer_configs.items():
             self.ml_models[model_name] = TransformerPredictor(**config)
         
-        # Traditional ML models con configurazione - FIXED REGULARIZATION
+        # Traditional ML models - OPTIMIZED v3.0 with better balance
+        # RandomForest con parametri bilanciati per migliore generalizzazione
         self.ml_models['RandomForest_Trend'] = RandomForestRegressor(
-            n_estimators=50,            # AGGRESSIVE: Reduced from 100 to prevent overfitting
-            max_depth=5,                # AGGRESSIVE: Reduced from 10 to 5 for strong regularization
-            min_samples_split=50,       # AGGRESSIVE: Increased from 20 to 50 for more restrictive splits
-            min_samples_leaf=20,        # AGGRESSIVE: Increased from 10 to 20 for larger leaf requirement
-            max_features='sqrt',        # KEPT: Good for preventing overfitting
+            n_estimators=100,           # IMPROVED: More trees for better accuracy
+            max_depth=6,                # IMPROVED: Deeper for better patterns
+            min_samples_split=100,      # BALANCED: Reasonable split threshold
+            min_samples_leaf=30,        # IMPROVED: Lower leaf size for more granularity
+            max_features='log2',        # IMPROVED: Better feature selection
             bootstrap=True,
-            oob_score=True,            # KEPT: Out-of-bag score for validation
+            oob_score=True,            
+            random_state=42,
+            n_jobs=-1,
+            max_samples=0.6,            # BALANCED: More data per tree
+            min_weight_fraction_leaf=0.05, # BALANCED: 5% weight in leaf
+            max_leaf_nodes=16,          # BALANCED: More leaf nodes allowed
+            ccp_alpha=0.01              # MILD: Less aggressive pruning
+        )
+        
+        # GradientBoosting ANTI-OVERFITTING ottimizzato
+        self.ml_models['GradientBoosting_Trend'] = GradientBoostingRegressor(
+            n_estimators=100,           # ANTI-OVERFITTING: Ridotto da 200 a 100
+            learning_rate=0.02,         # ANTI-OVERFITTING: Ridotto da 0.05 a 0.02
+            max_depth=3,                # ANTI-OVERFITTING: Ridotto da 4 a 3
+            min_samples_split=150,      # ANTI-OVERFITTING: Aumentato da 80 a 150
+            min_samples_leaf=80,        # ANTI-OVERFITTING: Aumentato da 40 a 80
+            subsample=0.6,              # ANTI-OVERFITTING: Ridotto da 0.8 a 0.6
+            max_features='sqrt',        # OPTIMAL: Square root of features
+            random_state=42,
+            validation_fraction=0.25,   # ANTI-OVERFITTING: Aumentato da 0.2 a 0.25
+            n_iter_no_change=5,         # ANTI-OVERFITTING: Ridotto da 10 a 5
+            tol=1e-3,                   # ANTI-OVERFITTING: Aumentato da 1e-4 a 1e-3
+            alpha=0.95,                 # ANTI-OVERFITTING: Aumentato da 0.9 a 0.95
+            max_leaf_nodes=20,          # ANTI-OVERFITTING: Aggiunto limite
+            min_impurity_decrease=0.01, # ANTI-OVERFITTING: Aggiunta regolarizzazione
+            warm_start=False            # Fresh start each time
+        )
+        
+        # 🎯 ENSEMBLE METHODS AVANZATI
+        
+        # 1. Extra Trees per diversità aggiuntiva
+        self.ml_models['ExtraTrees_Trend'] = ExtraTreesRegressor(
+            n_estimators=100,           # Stesso numero base di RF
+            max_depth=6,                # Stessa profondità
+            min_samples_split=100,
+            min_samples_leaf=30,
+            max_features='log2',        # Ancora più randomness
+            bootstrap=False,            # Extra Trees non usa bootstrap
             random_state=42,
             n_jobs=-1
         )
         
-        self.ml_models['GradientBoosting_Trend'] = GradientBoostingRegressor(
-            n_estimators=50,            # AGGRESSIVE: Reduced from 100 to prevent overfitting
-            learning_rate=0.01,         # AGGRESSIVE: Much lower learning rate from 0.1 to 0.01
-            max_depth=3,                # AGGRESSIVE: Very limited depth from 5 to 3
-            min_samples_split=50,       # AGGRESSIVE: Increased from 20 to 50 for restrictive splits
-            min_samples_leaf=20,        # AGGRESSIVE: Increased from 10 to 20 for larger leaves
-            subsample=0.8,              # KEPT: Good for regularization
-            max_features='sqrt',        # KEPT: Feature subsampling prevents overfitting
-            random_state=42
+        # 2. Ensemble Voting OTTIMIZZATO con pesi bilanciati
+        from sklearn.linear_model import Ridge
+        
+        # Creo un modello Ridge aggiuntivo per diversità
+        ridge_model = Ridge(alpha=1.0, random_state=42)
+        
+        self.ml_models['Ensemble_Voting'] = VotingRegressor(
+            estimators=[
+                ('rf', self.ml_models['RandomForest_Trend']),      # Stabile, no overfitting
+                ('gb', self.ml_models['GradientBoosting_Trend']),  # Alta performance (ora anti-overfitting)
+                ('et', self.ml_models['ExtraTrees_Trend']),       # Diversità algoritmica
+                ('ridge', ridge_model)                             # Modello lineare per stability
+            ],
+            weights=[0.4, 0.3, 0.15, 0.15]  # Più peso a RF e GB, meno a ET e Ridge
         )
+        
+        # 3. Ensemble Stacking con meta-learner MIGLIORATO
+        self.ml_models['Ensemble_Stacking'] = StackingRegressor(
+            estimators=[
+                ('rf', self.ml_models['RandomForest_Trend']),
+                ('gb', self.ml_models['GradientBoosting_Trend']),
+                ('et', self.ml_models['ExtraTrees_Trend']),
+                ('ridge_base', Ridge(alpha=1.0, random_state=42))  # Modello lineare base
+            ],
+            final_estimator=Ridge(alpha=0.1),  # Meta-learner regolarizzato
+            cv=3,                              # 3-fold CV per stacking
+            n_jobs=-1
+        )
+        
+        # 4. Ensemble Bagging personalizzato
+        from sklearn.ensemble import BaggingRegressor
+        self.ml_models['Ensemble_Bagging'] = BaggingRegressor(
+            estimator=self.ml_models['RandomForest_Trend'],  # Base learner
+            n_estimators=10,                                 # 10 istanze diverse
+            max_samples=0.8,                                # 80% dei dati per istanza
+            max_features=0.8,                               # 80% delle features per istanza
+            bootstrap=True,
+            bootstrap_features=True,
+            random_state=42,
+            n_jobs=-1
+        )
+        
+        # 5. LEGACY: Mantengo per compatibilità 
+        self.ml_models['Ensemble_RF_GB'] = self.ml_models['Ensemble_Voting']
         
         # Scalers per normalizzazione
         for model_name in self.ml_models.keys():
@@ -10257,7 +11240,7 @@ class AssetAnalyzer:
         """Esegue mini-training durante la fase di learning con logging strutturato"""
         
         # 🎯 TRAINING inizia a 50K ticks per debug
-        TRAINING_THRESHOLD = 50000
+        TRAINING_THRESHOLD = 100000  # Increased to 100K
         
         if len(self.tick_data) < TRAINING_THRESHOLD:
             return
@@ -10705,7 +11688,7 @@ class AssetAnalyzer:
             n_ticks = len(recent_ticks_range)
             
             # 🔍 DEBUG: Log market data preparation (ogni 50k ticks per ridurre spam)
-            if total_ticks % 50000 == 0 and total_ticks > 0:
+            if total_ticks % 100000 == 0 and total_ticks > 0:
                 first_tick = self.tick_data[0]
                 last_tick = self.tick_data[-1]
                 # Market data processing completed
@@ -16999,7 +17982,7 @@ class AssetAnalyzer:
                 'epoch_reached': epoch,
                 'architecture_config': {
                     'min_learning_days': 45,
-                    'learning_ticks_threshold': 50000,
+                    'learning_ticks_threshold': 100000,
                     'learning_mini_training_interval': 1000,
                     'overfitting_threshold': 0.0001,
                     'optimal_range': '0.001-0.01'
@@ -17243,34 +18226,6 @@ class AssetAnalyzer:
             except Exception as e:
                 self.logger.loggers['errors'].error(f"Failed to load scalers: {e}")
     
-    def _load_recent_predictions(self):
-        """Carica predizioni recenti salvate"""
-        
-        predictions_dir = f"{self.data_path}/predictions"
-        
-        if not os.path.exists(predictions_dir):
-            return
-        
-        for model_type, competition in self.competitions.items():
-            predictions_file = f"{predictions_dir}/{model_type.value}_recent.pkl"
-            
-            if os.path.exists(predictions_file):
-                try:
-                    with open(predictions_file, 'rb') as f:
-                        recent_predictions = pickle.load(f)
-                    
-                    # Add to competition history
-                    competition.predictions_history.extend(recent_predictions[-100:])  # Last 100
-                    
-                    self.logger.loggers['system'].info(
-                        f"Loaded {len(recent_predictions)} predictions for {model_type.value}"
-                    )
-                    
-                except Exception as e:
-                    self.logger.loggers['errors'].error(
-                        f"Failed to load predictions for {model_type.value}: {e}"
-                    )
-    
     def cleanup_old_data(self, days_to_keep: Optional[int] = None) -> None:
         """Pulisce dati vecchi mantenendo finestra configurabile"""
         
@@ -17286,7 +18241,7 @@ class AssetAnalyzer:
             # Filter tick data
             new_tick_data = deque(
                 [tick for tick in self.tick_data if tick['timestamp'] > cutoff_date],
-                maxlen=getattr(self.config, 'max_tick_buffer_size', 500000) or 500000  # 🔧 FIXED
+                maxlen=getattr(self.config, 'max_tick_buffer_size', 1000000) or 1000000  # 🔧 FIXED - Increased to 1M
             )
             
             self.tick_data = new_tick_data
