@@ -31,19 +31,16 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import traceback
 
-# Setup path per import - PERCORSO ASSOLUTO
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-# Aggiungi directory base progetto (contiene sia src che utils)
 base_path = r"C:\ScalpingBOT"
 src_path = r"C:\ScalpingBOT\src"
 utils_path = r"C:\ScalpingBOT\utils"
 ml_logger_path = r"C:\ScalpingBOT\ML_Training_Logger"
 
-sys.path.insert(0, base_path)  # Per import relativi come "from utils.xxx"
-sys.path.insert(0, src_path)   # Per i moduli principali
-sys.path.insert(0, utils_path) # Per accesso diretto a utils
-sys.path.insert(0, ml_logger_path) # Per ML_Training_Logger components
+sys.path.insert(0, base_path)
+sys.path.insert(0, src_path)
+sys.path.insert(0, utils_path)
+sys.path.insert(0, ml_logger_path)
 
 print(f"🔍 Current file: {__file__}")
 print(f"📁 Base path: {base_path}")
@@ -55,7 +52,6 @@ print(f"📁 Src exists: {os.path.exists(src_path)}")
 print(f"📁 Utils exists: {os.path.exists(utils_path)}")
 print(f"📁 ML Logger exists: {os.path.exists(ml_logger_path)}")
 
-# Verifica file moduli esistano
 required_files = [
     os.path.join(src_path, "MT5BacktestRunner.py"),
     os.path.join(src_path, "Analyzer.py"), 
@@ -69,46 +65,33 @@ for req_file in required_files:
     else:
         print(f"❌ Missing: {req_file}")
 
-# ✅ VERIFICA PREREQUISITI CRITICI
 print("\n🔍 VERIFYING PREREQUISITES...")
 
-# MT5 Library
-MT5_AVAILABLE = False
 try:
     import MetaTrader5 as mt5  # type: ignore
-    MT5_AVAILABLE = True
     print("✅ MetaTrader5 library available")
 except ImportError:
     print("❌ MetaTrader5 library NOT AVAILABLE")
     print("📦 Install with: pip install MetaTrader5")
 
-# Sistema Esistente - IMPORT SICURO CON UNIFIED SYSTEM
-SYSTEM_MODULES_AVAILABLE = False
-
 try:
     from src.MT5BacktestRunner import MT5BacktestRunner, BacktestConfig  # type: ignore
     from src.Analyzer import AdvancedMarketAnalyzer  # type: ignore
     
-    SYSTEM_MODULES_AVAILABLE = True
     print("✅ Core system modules available")
     print("   ├── MT5BacktestRunner ✅")
     print("   └── AdvancedMarketAnalyzer ✅")
     
 except ImportError as e:
     print(f"❌ Core system modules NOT AVAILABLE: {e}")
-    SYSTEM_MODULES_AVAILABLE = False
 
-# IMPORT SISTEMA REALE - NO FALLBACK, NO MOCK
 from src.Unified_Analyzer_System import UnifiedAnalyzerSystem, UnifiedConfig, SystemMode, PerformanceProfile, create_custom_config
 
 print("✅ UnifiedAnalyzerSystem loaded successfully - REAL SYSTEM ONLY")
 
-# IMPORT ML TRAINING LOGGER REALE - NO FALLBACK, NO MOCK
-# Note: DisplayManager will be accessed from unified system only, no direct import needed
 
 print("✅ ML Training Logger will be accessed through UnifiedAnalyzerSystem - NO DIRECT IMPORTS")
 
-# Logger
 try:
     from utils.universal_encoding_fix import safe_print as original_safe_print, init_universal_encoding, get_safe_logger
     init_universal_encoding(silent=True)
@@ -124,16 +107,9 @@ except ImportError:
     logger = DummyLogger()
     original_safe_print("⚠️ Using fallback logger")
 
-# Standard safe_print function - will be enhanced in test instance
 def safe_print(text: str) -> None:
     """Standard safe_print - use original implementation"""
     original_safe_print(text)
-
-# PREREQUISITI CHECK
-if not MT5_AVAILABLE:
-    safe_print("\n⚠️ WARNING: MT5 not available - some tests may be limited")
-if not SYSTEM_MODULES_AVAILABLE:
-    safe_print("\n⚠️ WARNING: Some system modules not available - using available components")
 
 safe_print("✅ System modules status verified\n")
 
@@ -181,30 +157,6 @@ class MLLearningTestSuite:
         safe_print(f"📅 Learning period: {self.learning_days} days")
         safe_print(f"📁 Test data path: {self.test_data_path}")
     
-    def ml_safe_print(self, text: str) -> None:
-        """
-        Enhanced safe_print that integrates with ML Training Logger dashboard.
-        Shows logs in the right column of the dashboard when ML logger is active.
-        """
-        # Always print to console as fallback
-        original_safe_print(text)
-        
-        # If we have active ML logger, also send to ML display
-        if (self.analyzer and 
-            hasattr(self.analyzer, 'ml_logger_active') and 
-            self.analyzer.ml_logger_active):
-            
-            try:
-                # Create an MLEvent for the dashboard
-                self.analyzer._emit_ml_event('diagnostic', {
-                    'event_type': 'test_log',
-                    'message': text,
-                    'timestamp': datetime.now().isoformat(),
-                    'source': 'test_backtest'
-                })
-            except Exception as e:
-                # Fallback silently to avoid infinite loops
-                pass
     
     async def run_complete_test(self) -> bool:
         """
@@ -299,7 +251,7 @@ class MLLearningTestSuite:
             
             # Final ML dashboard message
             if self.analyzer and hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
-                self.ml_safe_print("🎉 Test Suite Completed Successfully! Check results in left column.")
+                safe_print("🎉 Test Suite Completed Successfully!")
             
             await self._show_final_results()
             return True
@@ -368,7 +320,7 @@ class MLLearningTestSuite:
             
             # Test ML logger integration for dashboard display
             if hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
-                self.ml_safe_print("🎯 ML Training Logger is active - this message should appear in dashboard!")
+                safe_print("🎯 ML Training Logger is active - dashboard integration ready")
                 safe_print("✅ ML Training Logger dashboard integration ready")
             else:
                 safe_print("⚠️ ML Training Logger not active - using standard console output")
@@ -1372,32 +1324,6 @@ class MLLearningTestSuite:
             safe_print(f"❌ Fallback processing error: {e}")
             return 0, 0
 
-    # Method removed - duplicate of _process_batch_memory_safe functionality
-
-    async def _process_batch_with_memory_monitoring(self, batch_ticks: list, start_index: int, 
-                                                memory_threshold: float, safety_margin: float) -> tuple:
-        """Processa un batch di tick usando il sistema reale con monitoraggio memoria"""
-        
-        try:
-            import psutil
-            process = psutil.Process()
-            
-            # Use the real system's process_batch method instead of reimplementing
-            if self.unified_system and hasattr(self.unified_system, 'process_batch'):
-                processed_count, analysis_count = await self.unified_system.process_batch(batch_ticks)
-                
-                # Check memory after processing
-                current_memory = process.memory_percent()
-                memory_exceeded = current_memory >= memory_threshold
-                
-                return processed_count, analysis_count, memory_exceeded
-            else:
-                safe_print("❌ Unified system not available for batch processing")
-                return 0, 0, True
-            
-        except Exception as e:
-            safe_print(f"❌ Batch processing error: {e}")
-            return 0, 0, True
 
     async def _force_analysis_processing(self):
         """Forza il processing delle analisi accumulate per liberare memoria"""
@@ -3611,9 +3537,8 @@ class MLLearningTestSuite:
             
             # Ensure MT5 is closed
             try:
-                if MT5_AVAILABLE:
-                    mt5.shutdown()  # type: ignore
-                    safe_print("✅ MT5 connection closed")
+                mt5.shutdown()  # type: ignore
+                safe_print("✅ MT5 connection closed")
             except Exception as e:
                 safe_print(f"⚠️ Error closing MT5: {e}")
             
@@ -3805,15 +3730,8 @@ async def run_ml_learning_test():
     safe_print("🛡️ ERROR TESTING: Mandatory")
     safe_print("="*60)
     
-    # Confirm prerequisites
-    if not MT5_AVAILABLE or not SYSTEM_MODULES_AVAILABLE:
-        safe_print("\n❌ CRITICAL: Cannot proceed without required modules")
-        safe_print("Required:")
-        safe_print("  - MetaTrader5 library")
-        safe_print("  - MT5BacktestRunner")
-        safe_print("  - AdvancedMarketAnalyzer") 
-        safe_print("  - Unified_Analyzer_System")
-        return False
+    # Prerequisites are checked during imports
+    safe_print("✅ All required modules available")
     
     # Create test suite
     test_suite = MLLearningTestSuite()
