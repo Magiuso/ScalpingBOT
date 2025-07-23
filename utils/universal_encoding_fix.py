@@ -61,6 +61,7 @@ class UniversalEncodingFixer:
         # Sicurezza e protezione
         '🔒': '[LOCK]', '🔓': '[UNLOCK]', '🛡️': '[SHIELD]',
         '🔑': '[KEY]', '🚪': '[DOOR]', '👁️': '[EYE]',
+        '🛑': '[STOP]', '⛔': '[NO_ENTRY]',
         
         # Sistema e computer
         '💻': '[COMPUTER]', '🖥️': '[DESKTOP]', '📱': '[MOBILE]',
@@ -70,7 +71,8 @@ class UniversalEncodingFixer:
         # Varie utili
         '📅': '[CALENDAR]', '🕐': '[CLOCK]', '🌐': '[GLOBE]',
         '🎮': '[GAME]', '🎵': '[MUSIC]', '🔊': '[SPEAKER]',
-        '🔇': '[MUTE]', '📖': '[BOOK]', '📚': '[BOOKS]'
+        '🔇': '[MUTE]', '📖': '[BOOK]', '📚': '[BOOKS]',
+        '🧪': '[TEST]', '⚗️': '[ALCHEMY]', '🔬': '[MICROSCOPE]'
     }
     
     def __init__(self, force_utf8: bool = True, silent: bool = False):

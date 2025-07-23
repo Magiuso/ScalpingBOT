@@ -158,6 +158,11 @@ DEBUG_MODE = os.getenv('SCALPINGBOT_DEBUG', 'false').lower() == 'true'
 
 def conditional_smart_print(message: str, category: str = 'general', severity: str = "info") -> None:
     """🔧 SPAM FIX: Log solo se in debug mode o se severity >= WARNING"""
+    # Filtra più aggressivamente i log ripetitivi del training
+    skip_categories = ['forward', 'architecture_fixes', 'validation', 'normalization', 'tensor_validation']
+    if category in skip_categories and severity not in ['error', 'critical']:
+        return
+        
     if DEBUG_MODE or severity in ['warning', 'error', 'critical']:
         smart_print(message, category)
 
@@ -222,8 +227,8 @@ class AnalyzerConfig:
     training_epochs: int = 100  # Epoch per training
     training_patience: int = 15  # Early stopping patience
     training_test_split: float = 0.8  # Train/test split ratio
-    max_grad_norm: float = 0.5  # 🔧 FIXED: Gradient clipping più aggressivo per vanishing gradients
-    learning_rate: float = 1e-5  # 🔧 FIXED: Learning rate ridotto per evitare collasso loss LSTM
+    max_grad_norm: float = 1.0  # 🔧 FIXED: Gradient clipping meno aggressivo per permettere apprendimento
+    learning_rate: float = 1e-3  # 🔧 FIXED: Learning rate aumentato per combattere vanishing gradients
     
     # ========== LSTM CONFIGURATION ==========
     lstm_sequence_length: int = 30  # Lunghezza sequenza LSTM
@@ -3491,7 +3496,7 @@ class AdvancedLSTM(nn.Module):
         original_num_layers = num_layers
         if self.architecture_fixes['reduce_layers'] and num_layers > 2:
             self.num_layers = 2
-            self._log(f"🚀 ARCHITECTURE FIX: Reduced LSTM layers {original_num_layers}→{self.num_layers}", "architecture_fixes", "info")
+            self._log(f"🚀 ARCHITECTURE FIX: Reduced LSTM layers {original_num_layers}→{self.num_layers}", "architecture_fixes", "debug")
         else:
             self.num_layers = num_layers
         
@@ -3504,7 +3509,7 @@ class AdvancedLSTM(nn.Module):
         lstm_output_size = hidden_size * (2 if bidirectional else 1)
         
         if not bidirectional:
-            self._log("🚀 ARCHITECTURE FIX: Disabled bidirectional LSTM", "architecture_fixes", "info")
+            self._log("🚀 ARCHITECTURE FIX: Disabled bidirectional LSTM", "architecture_fixes", "debug")
         
         self.lstm = nn.LSTM(input_size, hidden_size, self.num_layers, 
                            batch_first=True, dropout=dropout, bidirectional=bidirectional)
@@ -3514,7 +3519,7 @@ class AdvancedLSTM(nn.Module):
             self.lstm_layer_norms = nn.ModuleList([
                 nn.LayerNorm(lstm_output_size) for _ in range(self.num_layers)
             ])
-            self._log(f"🚀 ARCHITECTURE FIX: Added {self.num_layers} LayerNorm modules after LSTM layers", "architecture_fixes", "info")
+            self._log(f"🚀 ARCHITECTURE FIX: Added {self.num_layers} LayerNorm modules after LSTM layers", "architecture_fixes", "debug")
         else:
             self.lstm_layer_norms = None
         
@@ -3526,7 +3531,7 @@ class AdvancedLSTM(nn.Module):
         if self.architecture_fixes['residual_connections']:
             # Projection layers per residual connections se necessario
             self.residual_projection = nn.Linear(input_size, lstm_output_size) if input_size != lstm_output_size else None
-            self._log("🚀 ARCHITECTURE FIX: Added residual connection support", "architecture_fixes", "info")
+            self._log("🚀 ARCHITECTURE FIX: Added residual connection support", "architecture_fixes", "debug")
         else:
             self.residual_projection = None
         
@@ -3543,7 +3548,7 @@ class AdvancedLSTM(nn.Module):
     
     def _log(self, message: str, category: str = "adapter", severity: str = "info"):
         """Helper per logging che funziona con o senza parent"""
-        smart_print(f"[{category}] {message}", category)
+        conditional_smart_print(f"[{category}] {message}", category, severity)
     
     def _get_or_create_adapter(self, actual_input_size: int) -> nn.Module:
         """Ottiene o crea un adapter per la dimensione specifica con caching ottimizzato"""
@@ -3987,7 +3992,7 @@ class AdvancedLSTM(nn.Module):
         
         # 🛡️ VALIDAZIONE RANGE INPUT
         if torch.abs(x).max() > 1000:
-            self._log(f"Input ha valori estremi: max={torch.abs(x).max():.2f}", "input_validation", "debug")
+            self._log(f"Input ha valori estremi: max={torch.abs(x).max():.2f}", "input_validation", "warning")
             x = torch.clamp(x, -100, 100)  # Clamp valori estremi
         
         original_shape = x.shape
@@ -4444,7 +4449,7 @@ class TransformerPredictor(nn.Module):
     
     def _log(self, message: str, category: str = "transformer", severity: str = "info"):
         """Helper per logging che funziona con o senza parent"""
-        smart_print(f"[{category}] {message}", category)
+        conditional_smart_print(f"[{category}] {message}", category, severity)
         
     def forward(self, x):
         batch_size, seq_len, _ = x.shape
@@ -4490,7 +4495,7 @@ class AdvancedGRU(nn.Module):
     
     def _log(self, message: str, category: str = "gru", severity: str = "info"):
         """Helper per logging"""
-        smart_print(f"[{category}] {message}", category)
+        conditional_smart_print(f"[{category}] {message}", category, severity)
     
     def forward(self, x):
         """Forward pass GRU - più semplice e stabile di LSTM"""
@@ -5125,7 +5130,7 @@ class CNNPatternRecognizer(nn.Module):
     
     def _log(self, message: str, category: str = "cnn", severity: str = "info"):
         """Helper per logging che funziona con o senza parent"""
-        smart_print(f"[{category}] {message}", category)
+        conditional_smart_print(f"[{category}] {message}", category, severity)
         
     def forward(self, x):
         x = self.conv_layers(x)
@@ -5254,7 +5259,7 @@ class OptimizedLSTMTrainer:
     
     def _log(self, message: str, category: str = "training", severity: str = "info"):
         """Helper per logging che funziona con o senza parent"""
-        smart_print(f"[{category}] {message}", category)
+        conditional_smart_print(f"[{category}] {message}", category, severity)
     
     def _apply_lstm_initialization(self):
         """🔧 FASE 1.3: Applica re-inizializzazione specifica per LSTM contro vanishing gradients"""
@@ -5518,14 +5523,14 @@ class OptimizedLSTMTrainer:
             # Normalizzazione invece di clamping distruttivo
             abs_max = torch.abs(tensor).max()
             if abs_max > 1000:
-                self._log(f"{name} ha valori estremi: max_abs={abs_max:.2f}", "validation", "debug")
+                self._log(f"{name} ha valori estremi: max_abs={abs_max:.2f}", "validation", "warning")
                 
                 # Z-score normalizzazione preserva le relazioni relative
                 mean_val = tensor.mean()
                 std_val = tensor.std()
                 if std_val > 1e-8:
                     tensor = (tensor - mean_val) / std_val
-                    self._log(f"{name}: Normalizzato con Z-score (mean={mean_val:.2f}, std={std_val:.2f})", "normalization", "debug")
+                    self._log(f"{name}: Normalizzato con Z-score (mean={mean_val:.2f}, std={std_val:.2f})", "normalization", "info")
                 else:
                     # Fallback a min-max se std troppo piccolo
                     min_val = tensor.min()
@@ -5837,10 +5842,19 @@ class OptimizedLSTMTrainer:
                 raise ValueError("Gradienti contengono NaN/Inf")
             
             if zero_gradients:
-                smart_print(f"⚠️ Gradienti zero in: {zero_gradients}", "training")
-                # Se la maggior parte dei gradienti è zero, potrebbe indicare un problema
+                # Usa gradient aggregator per evitare spam
                 total_params = len([p for p in self.model.parameters() if p.grad is not None])
                 zero_ratio = len(zero_gradients) / max(1, total_params)
+                
+                # Aggrega i messaggi di gradienti zero
+                if not hasattr(self, '_zero_gradient_count'):
+                    self._zero_gradient_count = 0
+                self._zero_gradient_count += 1
+                
+                # Log solo ogni 100 occorrenze o se critico
+                if self._zero_gradient_count % 100 == 1 or zero_ratio > 0.5:
+                    smart_print(f"⚠️ Gradienti zero in: {zero_gradients} (x{self._zero_gradient_count})", "training")
+                    
                 if zero_ratio > 0.5:  # Se più del 50% dei gradienti è zero
                     smart_print(f"⚠️ Troppi gradienti zero ({zero_ratio:.1%}), possibile vanishing gradient", "error")
             
@@ -6008,7 +6022,7 @@ class OptimizedLSTMTrainer:
         if not (0 <= final_loss <= 1e6):
             safe_print(f"⚠️ Loss finale fuori range ragionevole: {final_loss}")
         
-        self._log(f"Training step completato: loss={final_loss:.6f}", "training", "debug")
+        self._log(f"Training step completato: loss={final_loss:.6f}", "training", "info")
         return final_loss
     
     def _ensure_lstm_input_shape(self, data: torch.Tensor) -> torch.Tensor:
@@ -6653,7 +6667,8 @@ class RollingWindowTrainer:
         # Se il filtro temporale elimina troppi dati, usa tutti i dati disponibili
         if len(filtered_data) < 1000 and len(tick_data) >= 1000:
             filtered_data = list(tick_data)
-            print(f"Backtesting mode detected - using all {len(filtered_data)} tick data points")
+            # Silenzioso - log già presente altrove
+            pass
         
         if len(filtered_data) < 1000:  # Minimo di dati richiesti
             return {}
@@ -10844,7 +10859,7 @@ class AssetAnalyzer:
                     output_size=config['output_size'],
                     dropout=config['dropout']
                 )
-                safe_print(f"⚠️ Using legacy AdvancedLSTM for {model_name}")
+                self._log(f"⚠️ Using legacy AdvancedLSTM for {model_name}", "model_creation", "warning")
         
         # Transformer models con configurazione
         transformer_configs = {
@@ -10970,9 +10985,10 @@ class AssetAnalyzer:
     def _log(self, message: str, category: str = "general", severity: str = "info"):
         """Helper per logging che funziona con o senza parent"""
         if self.parent and hasattr(self.parent, '_smart_log'):
-            self._log(message, category, severity)
+            self.parent._smart_log(message, category, severity)
         else:
-            smart_print(message, category)
+            conditional_smart_print(message, category, severity)
+    
     
     def _load_preserved_models(self):
         """Carica modelli preservati per champion precedenti - VERSIONE CORRETTA"""
@@ -11041,8 +11057,8 @@ class AssetAnalyzer:
         # If more than 80% of first 50 ticks are old, we're in backtesting
         is_backtesting = old_ticks_count > 40
         
-        # Log the detection result once
-        if len(self.tick_data) == 50:
+        # Log the detection result once - SILENZIOSO per evitare spam
+        if len(self.tick_data) == 50 and DEBUG_MODE:
             print(f"🔍 BACKTESTING DETECTION: {old_ticks_count}/50 old ticks -> is_backtesting={is_backtesting}")
         
         return is_backtesting
@@ -11133,7 +11149,7 @@ class AssetAnalyzer:
             # Force exit from learning if we have enough data (ticks OR days)
             # BUT skip this in backtesting mode to allow processing all data
             if sufficient_ticks and days_learning >= 1 and not is_backtesting:  # At least 1 day and enough ticks
-                smart_print(f"✅ Forcing learning phase exit: {len(self.tick_data)} ticks, {days_learning:.1f} days")
+                conditional_smart_print(f"✅ Forcing learning phase exit: {len(self.tick_data)} ticks, {days_learning:.1f} days", "learning", "info")
                 self.learning_phase = False
                 self._perform_final_training()
             elif not sufficient_days:
@@ -11160,7 +11176,8 @@ class AssetAnalyzer:
                     self._perform_final_training()
                 else:
                     # In backtesting, continue learning but log progress
-                    smart_print(f"📊 Backtesting learning progress: {len(self.tick_data)} ticks, {days_learning:.1f} days")
+                    # Silenzioso - già loggato altrove
+                    pass
                     # Perform mini-training to keep models updated (async)
                     if len(self.tick_data) % self.config.learning_mini_training_interval == 0:
                         asyncio.create_task(self._perform_learning_phase_training_async())
@@ -11260,7 +11277,7 @@ class AssetAnalyzer:
         self._training_started_at_threshold.add(current_threshold_key)
 
         # 🔍 DEBUG INFO
-        print(f"[TRAINING] Starting training session for milestone {current_milestone} with {len(self.tick_data)} ticks")
+        conditional_smart_print(f"[TRAINING] Starting training session for milestone {current_milestone} with {len(self.tick_data)} ticks", "training", "info")
         
         # CONTROLLI DI SICUREZZA PRELIMINARI
         if not hasattr(self, 'rolling_trainer') or self.rolling_trainer is None:
@@ -18760,9 +18777,12 @@ class AdvancedMarketAnalyzer:
     VERSIONE COMPLETA E MODIFICATA per compatibilità con UnifiedAnalyzerSystem
     """
     
-    def __init__(self, data_path: str = "./test_analyzer_data"):
+    def __init__(self, data_path: str = "./test_analyzer_data", config: Optional[AnalyzerConfig] = None):
         self.data_path = data_path
         os.makedirs(data_path, exist_ok=True)
+        
+        # Usa config personalizzata o default con verbosità ridotta per produzione
+        self.config = config or AnalyzerConfig()
         
         self.asset_analyzers: Dict[str, AssetAnalyzer] = {}
         self.global_stats = {
@@ -18867,6 +18887,7 @@ class AdvancedMarketAnalyzer:
             timestamp = datetime.now().strftime('%H:%M:%S')
             print(f"[{timestamp}] FALLBACK: {message}")
     
+    
     def _load_existing_analyzers(self) -> None:
         """Carica gli analyzer esistenti"""
         
@@ -18877,7 +18898,7 @@ class AdvancedMarketAnalyzer:
                     try:
                         # Assume directory name is asset name
                         asset = item
-                        analyzer = AssetAnalyzer(asset, self.data_path)
+                        analyzer = AssetAnalyzer(asset, self.data_path, config=self.config)
                         analyzer.parent = self  # ✅ Assegna parent reference
                         # 🔧 FIX: Collegamento parent_analyzer per ML Training Logger anche negli asset
                         analyzer.logger.parent_analyzer = self
@@ -19002,7 +19023,7 @@ class AdvancedMarketAnalyzer:
         
         if asset not in self.asset_analyzers:
             try:
-                self.asset_analyzers[asset] = AssetAnalyzer(asset, self.data_path)
+                self.asset_analyzers[asset] = AssetAnalyzer(asset, self.data_path, config=self.config)
                 self.asset_analyzers[asset].parent = self  # ✅ Assegna parent reference
                 # 🔧 FIX: Collegamento parent_analyzer per ML Training Logger anche negli asset
                 self.asset_analyzers[asset].logger.parent_analyzer = self
@@ -19486,7 +19507,10 @@ class AdvancedMarketAnalyzer:
             total_accuracy = 0.0
             total_predictions = 0
             
-            for asset_name, analyzer in self.asset_analyzers.items():
+            # Use only the primary asset to avoid duplicate model display
+            primary_asset = list(self.asset_analyzers.keys())[0] if self.asset_analyzers else None
+            if primary_asset and primary_asset in self.asset_analyzers:
+                asset_name, analyzer = primary_asset, self.asset_analyzers[primary_asset]
                 # Get real ML training progress from analyzer
                 asset_ticks = len(analyzer.tick_data) if hasattr(analyzer, 'tick_data') else 0
                 

@@ -407,6 +407,8 @@ class LoggingSlave:
         # Skip setup completo in modalità backtesting
         if config.system_mode == SystemMode.BACKTESTING:
             self.is_backtesting_mode = True
+            self.is_running = False
+            self.stop_requested = False
             self.stats = {
                 'events_received': 0,
                 'events_processed': 0,
@@ -426,6 +428,7 @@ class LoggingSlave:
         # Event processing ottimizzato
         self.event_queue = asyncio.Queue(maxsize=config.max_queue_size)
         self.is_running = False
+        self.stop_requested = False
         self.processing_task: Optional[asyncio.Task] = None
         
         # 🚀 BATCH PROCESSING OTTIMIZZATO
@@ -479,6 +482,7 @@ class LoggingSlave:
             self.file_logger = logging.getLogger('unified_file')
             self.file_logger.addHandler(file_handler)
             self.file_logger.setLevel(logging.DEBUG)
+            self.file_logger.propagate = False  # Evita output al terminale
         
         # CSV output (condizionale)
         if self.config.enable_csv_export:
@@ -519,6 +523,7 @@ class LoggingSlave:
             return
         
         self.is_running = False
+        self.stop_requested = True
         
         # Process remaining events in batch
         await self._flush_remaining_events_batch()
@@ -586,7 +591,7 @@ class LoggingSlave:
     async def _process_events_batch(self):
         """🚀 MAIN EVENT PROCESSING LOOP - BATCH OPTIMIZED"""
         
-        while self.is_running:
+        while self.is_running and not self.stop_requested:
             try:
                 # Collect events in batch
                 batch_collected = await self._collect_batch()
@@ -660,8 +665,24 @@ class LoggingSlave:
         
         # File output batch
         if self.config.enable_file_output and hasattr(self, 'file_logger'):
-            for event in events:
-                self.file_logger.info(json.dumps(event, default=str))
+            # Applica stesso filtro per file logging - evita spam tick_processed
+            if event_type == 'tick_processed' and len(events) > 10:
+                # Solo summary per tick_processed nei file
+                summary_event = {
+                    'timestamp': datetime.now().isoformat(),
+                    'event_type': 'tick_batch_summary', 
+                    'data': {
+                        'total_ticks': len(events),
+                        'asset': events[0].get('data', {}).get('asset', 'unknown'),
+                        'time_range': f"{events[0].get('data', {}).get('timestamp', 'unknown')} - {events[-1].get('data', {}).get('timestamp', 'unknown')}",
+                        'avg_processing_ms': sum(e.get('data', {}).get('processing_time_ms', 0) for e in events) / len(events)
+                    }
+                }
+                self.file_logger.info(json.dumps(summary_event, default=str))
+            else:
+                # Output normale per altri eventi
+                for event in events:
+                    self.file_logger.info(json.dumps(event, default=str))
         
         # CSV output batch (ULTRA OTTIMIZZATO)
         if self.config.enable_csv_export and 'main' in self.csv_writers:
@@ -684,12 +705,23 @@ class LoggingSlave:
         """Output batch ottimizzato per console"""
         
         # Solo eventi importanti in console per performance
-        important_types = {'prediction_generated', 'learning_completed', 'error', 'emergency'}
+        important_types = {
+            'prediction_generated', 'learning_completed', 'error', 'emergency',
+            'learning_progress', 'training_completed', 'champion_changed', 
+            'model_trained', 'performance_alert', 'system_status'
+        }
         
-        if event_type not in important_types and len(events) > 10:
+        if (event_type not in important_types and len(events) > 10) or event_type == 'tick_processed':
             # Batch summary per eventi non importanti
             if self.config.system_mode == SystemMode.DEMO:
-                print(f"[{datetime.now():%H:%M:%S}] 📦 Batch: {len(events)} {event_type} events")
+                if event_type == 'tick_processed':
+                    # Mostra progresso tick con informazioni utili
+                    first_tick = events[0].get('data', {})
+                    last_tick = events[-1].get('data', {})
+                    avg_processing_ms = sum(e.get('data', {}).get('processing_time_ms', 0) for e in events) / len(events)
+                    print(f"[{datetime.now():%H:%M:%S}] 📈 Processed {len(events)} ticks | {first_tick.get('asset', 'N/A')} | Avg: {avg_processing_ms:.1f}ms | Status: {first_tick.get('result_status', 'N/A')}")
+                else:
+                    print(f"[{datetime.now():%H:%M:%S}] 📦 Batch: {len(events)} {event_type} events")
             return
         
         # Output normale per eventi importanti
@@ -779,8 +811,30 @@ class UnifiedAnalyzerSystem:
     def __init__(self, config: Optional[UnifiedConfig] = None):
         self.config = config or UnifiedConfig()
         
+        # Crea configurazione Analyzer con verbosità appropriata
+        from src.Analyzer import AnalyzerConfig
+        analyzer_config = AnalyzerConfig()
+        
+        # Imposta verbosità basata sul log level del sistema
+        if self.config.log_level in ["ERROR", "WARNING"]:
+            analyzer_config.ml_logger_verbosity = "minimal"
+            analyzer_config.log_level_system = "WARNING"
+            analyzer_config.log_level_predictions = "ERROR"
+        elif self.config.log_level == "INFO":
+            analyzer_config.ml_logger_verbosity = "standard"
+            analyzer_config.log_level_system = "INFO"
+            analyzer_config.log_level_predictions = "WARNING"
+        else:  # VERBOSE, DEBUG
+            analyzer_config.ml_logger_verbosity = "verbose"
+            analyzer_config.log_level_system = "DEBUG"
+            analyzer_config.log_level_predictions = "DEBUG"
+        
+        # Disabilita ML logger per performance in modalità WARNING/ERROR
+        if self.config.log_level in ["ERROR", "WARNING"]:
+            analyzer_config.ml_logger_enabled = False
+        
         # Core components
-        self.analyzer = AdvancedMarketAnalyzer(self.config.base_directory)
+        self.analyzer = AdvancedMarketAnalyzer(self.config.base_directory, config=analyzer_config)
         self.logging_slave = LoggingSlave(self.config)
 
         # Add asset to analyzer
@@ -797,6 +851,7 @@ class UnifiedAnalyzerSystem:
         
         # System state
         self.is_running = False
+        self.stop_requested = False
         self.start_time: Optional[datetime] = None
         
         # Background tasks (condizionali)
@@ -823,7 +878,7 @@ class UnifiedAnalyzerSystem:
         
         try:
             def signal_handler(signum, frame):
-                print(f"\n🛑 Received signal {signum}, shutting down gracefully...")
+                print(f"\n🛑 Richiesta stop da operatore!")
                 if self.is_running:
                     asyncio.create_task(self.stop())
             
@@ -881,6 +936,7 @@ class UnifiedAnalyzerSystem:
             print("🛑 Stopping Unified Analyzer System...")
         
         self.is_running = False
+        self.stop_requested = True
         
         # Cancel background tasks
         if self.event_processing_task:
@@ -1037,7 +1093,7 @@ class UnifiedAnalyzerSystem:
     async def _event_processing_loop(self):
         """Background loop ottimizzato per processing eventi"""
         
-        while self.is_running:
+        while self.is_running and not self.stop_requested:
             try:
                 await asyncio.sleep(self.config.event_processing_interval)
                 
@@ -1069,7 +1125,7 @@ class UnifiedAnalyzerSystem:
         if not self.performance_monitor:
             return
             
-        while self.is_running:
+        while self.is_running and not self.stop_requested:
             try:
                 await asyncio.sleep(self.config.performance_report_interval)
                 
@@ -1161,6 +1217,42 @@ class UnifiedAnalyzerSystem:
             status['performance'] = asdict(self.performance_monitor.metrics_history[-1])
         
         return status
+    
+    def get_event_queue_stats(self) -> Dict[str, Any]:
+        """Get event queue statistics from logging slave"""
+        if self.logging_slave:
+            stats = self.logging_slave.get_stats()
+            return {
+                'queue_size': stats.get('queue_size', 0),
+                'total_processed': stats.get('total_processed', 0),
+                'processing_rate': stats.get('processing_rate', 0.0),
+                'last_processed': stats.get('last_processed'),
+                'errors': stats.get('errors', 0)
+            }
+        return {
+            'queue_size': 0,
+            'total_processed': 0, 
+            'processing_rate': 0.0,
+            'last_processed': None,
+            'errors': 0
+        }
+    
+    def get_processing_rate(self) -> float:
+        """Get current processing rate in events/second"""
+        if self.logging_slave:
+            stats = self.logging_slave.get_stats()
+            return stats.get('processing_rate', 0.0)
+        return 0.0
+    
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """Get performance statistics from analyzer"""
+        if self.analyzer and hasattr(self.analyzer, 'get_performance_stats'):
+            return self.analyzer.get_performance_stats()
+        return {}
+    
+    def get_analyzer_stats(self) -> Dict[str, Any]:
+        """Get analyzer statistics (public method)"""
+        return self._get_analyzer_stats()
     
     def update_config(self, new_config: UnifiedConfig):
         """Update system configuration (limited runtime updates)"""

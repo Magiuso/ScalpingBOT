@@ -412,7 +412,7 @@ class MLLearningTestSuite:
                 
                 
                 # Logging optimized for learning phase monitoring
-                log_level="NORMAL",  # More detailed for learning phase
+                log_level="MINIMAL",  # Reduced spam for clean output
                 enable_console_output=True,
                 enable_file_output=True,
                 enable_csv_export=True,
