@@ -1,4 +1,4 @@
-#!/usr/bin/env python3wun
+#!/usr/bin/env python3wu
 """
 Test Backtest ML Learning - Sistema Completo
 ============================================

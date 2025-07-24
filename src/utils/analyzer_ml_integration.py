@@ -172,6 +172,7 @@ class OptimizedTrainingManager:
         from torch.utils.data import DataLoader, TensorDataset
         
         # Create datasets and data loaders
+        # Note: Keep tensors on CPU for DataLoader, they'll be moved to device in training loop
         train_dataset = TensorDataset(
             torch.FloatTensor(train_data), 
             torch.FloatTensor(train_targets)
@@ -339,11 +340,17 @@ class EnhancedLSTMTrainer:
         else:
             raise ValueError("Pipeline LSTM config is None - initialization failed")
         
+        # Device - determine early
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
         # Initialize training manager
         self.training_manager = OptimizedTrainingManager(self.pipeline)
         
         # Setup components
         self.model = self.training_manager.setup_model()
+        # Move model to device immediately after creation
+        self.model.to(self.device)
+        
         self.trainer = self.training_manager.setup_trainer()
         self.preprocessor = self.training_manager.preprocessor
         self.monitor = self.training_manager.monitor
@@ -352,10 +359,6 @@ class EnhancedLSTMTrainer:
         self.is_trained = False
         self.training_history = {}
         self.best_model_state = None
-        
-        # Device
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model.to(self.device)
         
         print(f"🔧 EnhancedLSTMTrainer initialized: {model_type} with {optimization_profile} profile")
     
