@@ -32,8 +32,24 @@ from .data_preprocessing import AdvancedDataPreprocessor, PreprocessingConfig
 # from .optimized_lstm import OptimizedLSTM, LSTMConfig
 from .adaptive_trainer import AdaptiveTrainer, TrainingConfig
 from .training_monitor import TrainingMonitor, MonitorConfig
-# Import required enums from Analyzer.py
-from ..Analyzer import ModelType, OptimizationProfile
+# Define enums locally to avoid circular import with Analyzer.py
+from enum import Enum
+
+class ModelType(Enum):
+    """Model types - copied from Analyzer to avoid circular import"""
+    SUPPORT_RESISTANCE = "support_resistance"
+    PATTERN_RECOGNITION = "pattern_recognition"
+    BIAS_DETECTION = "bias_detection"
+    TREND_ANALYSIS = "trend_analysis"
+    VOLATILITY_PREDICTION = "volatility_prediction"
+    MOMENTUM_ANALYSIS = "momentum_analysis"
+
+class OptimizationProfile(Enum):
+    """Optimization profiles - copied from Analyzer to avoid circular import"""
+    HIGH_PERFORMANCE = "high_performance"
+    STABLE_TRAINING = "stable_training"
+    RESEARCH_MODE = "research_mode"
+    PRODUCTION_READY = "production_ready"
 
 # Create missing classes that were in optimized_training_config.py
 class OptimizedTrainingPipeline:

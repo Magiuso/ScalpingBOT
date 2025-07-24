@@ -1065,7 +1065,7 @@ try:
         from src.utils.adaptive_trainer import AdaptiveTrainer, TrainingConfig
         from src.utils.data_preprocessing import AdvancedDataPreprocessor, PreprocessingConfig
         from src.utils.training_monitor import TrainingMonitor, MonitorConfig
-        from src.utils.analyzer_ml_integration import EnhancedLSTMTrainer
+        # EnhancedLSTMTrainer is imported locally where needed to avoid circular import
     except ImportError:
         # Fallback to relative import if running from different location
         import sys
@@ -1075,7 +1075,7 @@ try:
         from utils.adaptive_trainer import AdaptiveTrainer, TrainingConfig
         from utils.data_preprocessing import AdvancedDataPreprocessor, PreprocessingConfig
         from utils.training_monitor import TrainingMonitor, MonitorConfig
-        from utils.analyzer_ml_integration import EnhancedLSTMTrainer
+        # EnhancedLSTMTrainer is imported locally where needed to avoid circular import
     
     # OptimizedLSTM and LSTMConfig are now defined directly in this file
     UTILS_ML_AVAILABLE = True
@@ -8223,6 +8223,9 @@ class RollingWindowTrainer:
         # CREA TRAINER PROTETTO CON GESTIONE ERRORI
         try:
             if UTILS_ML_AVAILABLE:
+                # Import EnhancedLSTMTrainer here to avoid circular import at module level
+                from src.utils.analyzer_ml_integration import EnhancedLSTMTrainer
+                
                 # Usa il nuovo EnhancedLSTMTrainer se disponibile
                 input_size = getattr(model, 'input_size', 64)  # Fallback value
                 hidden_size = getattr(model, 'hidden_size', 256)  # Fallback value
