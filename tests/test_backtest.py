@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3wu
 """
 Test Backtest ML Learning - Sistema Completo
 ============================================
@@ -193,55 +193,67 @@ class MLLearningTestSuite:
             if not await self._test_health_metrics():
                 return False
             
-            # FASE 6: Error Scenarios
-            safe_print("\n🛡️ PHASE 6: ERROR SCENARIOS TESTING")
+            # FASE 6: Individual ML Algorithm Testing
+            safe_print("\n🔬 PHASE 6: INDIVIDUAL ML ALGORITHM TESTING")
+            if not await self._test_individual_ml_algorithms():
+                safe_print("⚠️ Warning: Some ML algorithms not working optimally (not critical)")
+                # Don't fail overall test for this
+            
+            # FASE 7: Algorithm Benchmark Testing
+            safe_print("\n🏆 PHASE 7: ALGORITHM BENCHMARK TESTING")
+            if not await self._test_algorithm_benchmark():
+                safe_print("⚠️ Warning: Algorithm benchmarking incomplete (not critical)")
+                # Don't fail overall test for this
+            
+            # FASE 8: Error Scenarios
+            safe_print("\n🛡️ PHASE 8: ERROR SCENARIOS TESTING")
             if not await self._test_error_scenarios():
                 return False
             
-            # FASE 7: Unified System Events Testing
-            safe_print("\n🎯 PHASE 7: UNIFIED SYSTEM EVENTS TESTING")
+            # FASE 9: Unified System Events Testing
+            safe_print("\n🎯 PHASE 9: UNIFIED SYSTEM EVENTS TESTING")
             if not await self._test_unified_system_events():
                 safe_print("⚠️ Warning: Unified system events testing incomplete (not critical)")
                 # Don't fail overall test for this
             
-            # FASE 8: Unified System Performance Monitoring
-            safe_print("\n⚡ PHASE 8: UNIFIED SYSTEM PERFORMANCE MONITORING")
+            # FASE 10: Unified System Performance Monitoring
+            safe_print("\n⚡ PHASE 10: UNIFIED SYSTEM PERFORMANCE MONITORING")
             if not await self._test_unified_performance_monitoring():
                 safe_print("⚠️ Warning: Performance monitoring testing incomplete (not critical)")
                 # Don't fail overall test for this
             
-            # FASE 9: Unified System Persistence Integration
-            safe_print("\n💾 PHASE 9: UNIFIED SYSTEM PERSISTENCE INTEGRATION")
+            # FASE 11: Unified System Persistence Integration
+            safe_print("\n💾 PHASE 11: UNIFIED SYSTEM PERSISTENCE INTEGRATION")
             if not await self._test_unified_persistence_integration():
                 safe_print("⚠️ Warning: Persistence integration testing incomplete (not critical)")
                 # Don't fail overall test for this
             
-            # FASE 10: ML Learning Progress Tracking
-            safe_print("\n🧠 PHASE 10: ML LEARNING PROGRESS TRACKING")
+            # FASE 12: ML Learning Progress Tracking
+            safe_print("\n🧠 PHASE 12: ML LEARNING PROGRESS TRACKING")
             if not await self._test_ml_learning_progress_tracking():
                 safe_print("⚠️ Warning: ML progress tracking testing incomplete (not critical)")
                 # Don't fail overall test for this
             
-            # FASE 11: Unified ML Persistence Integration
-            safe_print("\n🔄 PHASE 11: UNIFIED ML PERSISTENCE INTEGRATION")
+            # FASE 13: Unified ML Persistence Integration
+            safe_print("\n🔄 PHASE 13: UNIFIED ML PERSISTENCE INTEGRATION")
             if not await self._test_unified_ml_persistence():
                 safe_print("⚠️ Warning: Unified ML persistence testing incomplete (not critical)")
                 # Don't fail overall test for this
             
-            # FASE 12: Learning Phase Optimization
-            safe_print("\n⚡ PHASE 12: LEARNING PHASE OPTIMIZATION")
+            # FASE 14: Learning Phase Optimization
+            safe_print("\n⚡ PHASE 14: LEARNING PHASE OPTIMIZATION")
             if not await self._test_learning_phase_optimization():
                 safe_print("⚠️ Warning: Learning phase optimization testing incomplete (not critical)")
                 # Don't fail overall test for this
             
-            # FASE 13: ML Training Logger Integration Testing
-            safe_print("\n🔗 PHASE 13: ML TRAINING LOGGER INTEGRATION TESTING")
+            # FASE 15: ML Training Logger Integration Testing
+            safe_print("\n🔗 PHASE 15: ML TRAINING LOGGER INTEGRATION TESTING")
             if not await self._test_ml_training_logger_integration():
                 safe_print("⚠️ Warning: ML Training Logger integration testing incomplete (not critical)")
                 # Don't fail overall test for this
 
-            # FASE 14: ML Training Logger Events Testing  
-            safe_print("\n🤖 PHASE 14: ML TRAINING LOGGER EVENTS TESTING")
+            # FASE 16: ML Training Logger Events Testing  
+            safe_print("\n🤖 PHASE 16: ML TRAINING LOGGER EVENTS TESTING")
             if not await self._test_ml_training_logger_events():
                 safe_print("⚠️ Warning: ML Training Logger events testing incomplete (not critical)")
                 # Don't fail overall test for this
@@ -308,9 +320,19 @@ class MLLearningTestSuite:
             
             safe_print("✅ MT5BacktestRunner initialized successfully")
             
-            # Initialize AdvancedMarketAnalyzer
-            safe_print("🧠 Initializing AdvancedMarketAnalyzer...")
-            self.analyzer = AdvancedMarketAnalyzer(self.test_data_path)
+            # Initialize AdvancedMarketAnalyzer with PURE SCROLL mode
+            safe_print("🧠 Initializing AdvancedMarketAnalyzer with PURE SCROLL mode...")
+            from src.Analyzer import AnalyzerConfig
+            
+            # Create analyzer config with pure scroll logging
+            analyzer_config = AnalyzerConfig(
+                ml_logger_enabled=True,
+                ml_logger_verbosity="verbose",
+                ml_logger_terminal_mode="scroll"  # Now PURE scroll without dashboard formatting
+            )
+            
+            safe_print(f"📜 Pure SCROLL mode enabled - simple text logs only")
+            self.analyzer = AdvancedMarketAnalyzer(data_path=self.test_data_path, config=analyzer_config)
             
             if self.analyzer is None:
                 safe_print("❌ AdvancedMarketAnalyzer initialization failed")
@@ -318,10 +340,56 @@ class MLLearningTestSuite:
             
             safe_print("✅ AdvancedMarketAnalyzer initialized")
             
-            # Test ML logger integration for dashboard display
+            # Test ML logger integration and check log files
             if hasattr(self.analyzer, 'ml_logger_active') and self.analyzer.ml_logger_active:
-                safe_print("🎯 ML Training Logger is active - dashboard integration ready")
-                safe_print("✅ ML Training Logger dashboard integration ready")
+                safe_print("🎯 ML Training Logger is active - checking log files...")
+                
+                # Find ML logger output directory
+                ml_log_dir = None
+                if (hasattr(self.analyzer, 'ml_logger_config') and 
+                    self.analyzer.ml_logger_config and
+                    hasattr(self.analyzer.ml_logger_config, 'storage')):
+                    storage_config = self.analyzer.ml_logger_config.storage
+                    if hasattr(storage_config, 'output_directory'):
+                        ml_log_dir = storage_config.output_directory
+                        safe_print(f"📁 ML Log Directory: {ml_log_dir}")
+                        
+                        # Check if directory exists and list files
+                        if os.path.exists(ml_log_dir):
+                            log_files = [f for f in os.listdir(ml_log_dir) 
+                                       if f.endswith(('.log', '.csv', '.json'))]
+                            safe_print(f"📄 Found {len(log_files)} log files:")
+                            for log_file in log_files[:5]:  # Show first 5 files
+                                file_path = os.path.join(ml_log_dir, log_file)
+                                file_size = os.path.getsize(file_path)
+                                safe_print(f"   📄 {log_file} ({file_size} bytes)")
+                                
+                                # Show preview of first file content
+                                if log_file.endswith('.log') and file_size > 0:
+                                    try:
+                                        with open(file_path, 'r', encoding='utf-8') as f:
+                                            first_lines = [f.readline().strip() for _ in range(3)]
+                                            safe_print(f"   📋 Preview: {first_lines[0][:100]}...")
+                                    except:
+                                        pass
+                        else:
+                            safe_print(f"⚠️ ML Log directory not found: {ml_log_dir}")
+                    else:
+                        safe_print("⚠️ No output_directory in storage config")
+                else:
+                    safe_print("⚠️ Cannot access ML logger storage config")
+                    
+                # Also check test data directory for any ML-related files
+                safe_print(f"📁 Checking test data directory: {self.test_data_path}")
+                if os.path.exists(self.test_data_path):
+                    all_files = os.listdir(self.test_data_path)
+                    ml_related_files = [f for f in all_files 
+                                      if any(keyword in f.lower() 
+                                           for keyword in ['ml', 'training', 'log', 'event'])]
+                    if ml_related_files:
+                        safe_print(f"📄 ML-related files in test directory: {ml_related_files}")
+                        
+                safe_print("✅ ML Training Logger file check completed")
             else:
                 safe_print("⚠️ ML Training Logger not active - using standard console output")
             
@@ -364,7 +432,7 @@ class MLLearningTestSuite:
                 
                 
                 # Logging optimized for learning phase monitoring
-                log_level="MINIMAL",  # Reduced spam for clean output
+                log_level="VERBOSE",  # Detailed logging for ML learning visibility
                 enable_console_output=True,
                 enable_file_output=True,
                 enable_csv_export=True,
@@ -431,9 +499,10 @@ class MLLearningTestSuite:
                         
                         safe_print("✅ Connected to unified system's ML Display Manager")
                         
-                        # Debug: verify ML logger is active
-                        if hasattr(self.unified_system.analyzer, 'ml_logger_active'):
-                            safe_print(f"🔍 ML Logger active: {self.unified_system.analyzer.ml_logger_active}")
+                        # Simple ML Logger status check
+                        analyzer = self.unified_system.analyzer
+                        ml_active = hasattr(analyzer, 'ml_logger_active') and analyzer.ml_logger_active
+                        safe_print(f"ML Logger: {'✅ ACTIVE' if ml_active else '❌ INACTIVE'}")
                         
                         # Force an initial update to verify connection
                         if hasattr(self.unified_system.analyzer, '_update_ml_display_metrics'):
@@ -906,7 +975,7 @@ class MLLearningTestSuite:
                 file_size = os.path.getsize(data_file)
 
             try:
-                result = await self._process_file_progressively(data_file)
+                result = await self._process_file_streaming(data_file)
                 return result
             except Exception as e:
                 import traceback
@@ -919,212 +988,117 @@ class MLLearningTestSuite:
             traceback.print_exc()
             return False
 
-    async def _process_file_progressively(self, data_file: str) -> bool:
-        """Processa il file in batch basati sulla memoria"""
+    async def _process_file_streaming(self, data_file: str) -> bool:
+        """Processa il file con stream processing - memoria costante, nessun batch loading"""
         
         try:
-            import psutil
-            import json  # Move JSON import to top
-            import threading
+            import json
             import time as time_module
-            import gc  # Move gc import to top for better performance
-            
-            process = psutil.Process()
-            
-            MEMORY_THRESHOLD = 50.0
+            import gc
             
             total_processed = 0
             total_analyses = 0
-            batch_number = 1
+            chunk_count = 0
             
-            safe_print(f"📖 Opening file for progressive reading: {data_file}")
+            safe_print(f"📖 Starting stream processing: {data_file}")
+            
+            # Check file size for progress estimation
+            file_size = os.path.getsize(data_file)
+            safe_print(f"📄 File size: {file_size / 1024 / 1024:.1f} MB")
+            
+            start_time = datetime.now()
             
             with open(data_file, 'r', encoding='utf-8') as f:
-                # Controlla se la prima riga è un header e la salta se necessario
+                # Skip header if present
                 first_line = f.readline()
                 if '"type": "backtest_start"' in first_line:
                     safe_print("📋 Skipping header line")
                 else:
-                    # Se non era header, torna all'inizio del file
-                    f.seek(0)
+                    f.seek(0)  # Reset to beginning if no header
                     safe_print("📋 No header found, processing from beginning")
                 
-                # Setup monitoraggio memoria in tempo reale
-                
-                # Variabili condivise per il monitoraggio
-                self.monitoring_active = True
-                total_ticks_loaded = 0
-                current_batch_size = 0
-                effective_memory = 0.0  # Memoria effettiva controllata per il threshold
-                
-                def memory_monitor():
-                    """Monitor memoria ogni secondo con feedback continuo - aggiornamento su singola riga"""
-                    while self.monitoring_active and not self.stop_requested:
-                        try:
-                            # Usa la stessa logica del controllo threshold
-                            process_memory = process.memory_percent()
-                            try:
-                                system_memory = psutil.virtual_memory().percent
-                                # Usa il valore più alto per sicurezza (stessa logica del controllo)
-                                effective_memory_current = max(system_memory, process_memory)
-                            except:
-                                effective_memory_current = process_memory
-                            
-                            # Aggiorna variabile globale
-                            nonlocal effective_memory
-                            effective_memory = effective_memory_current
-                            
-                            # Aggiornamento su singola riga con \r (ogni secondo)
-                            print(f"\r💾 Memory: {effective_memory:.1f}% | Batch ticks: {current_batch_size:,} | Total: {total_ticks_loaded:,}", end='', flush=True)
-                            time_module.sleep(1.0)
-                        except:
-                            break
-                
-                # Avvia thread di monitoraggio
-                monitor_thread = threading.Thread(target=memory_monitor, daemon=True)
-                monitor_thread.start()
-                safe_print("🔍 Started real-time memory monitoring (every 1 second)")
-                
-                # Main processing loop           
-                while True:
-                    # CHECK FOR STOP REQUEST AT BEGINNING OF MAIN LOOP
+                # Stream processing - one tick at a time
+                for line_number, line in enumerate(f, 1):
+                    # Check for stop request
                     if self.stop_requested:
-                        safe_print("🛑 Interruzione confermata - Uscita dal loop principale di elaborazione")
+                        safe_print(f"🛑 Stream processing interrupted at line {line_number}")
                         break
                     
-                    # FASE 1: Carica batch fino al 50% memoria
-                    if batch_number == 1:  # Print only for first batch
-                        print(f"\n\n📦 Starting batch loading process (memory threshold: {MEMORY_THRESHOLD}%)...")
-                    initial_memory = process.memory_percent()
+                    # Skip empty lines
+                    line = line.strip()
+                    if not line:
+                        continue
                     
-                    current_batch = []
-                    current_batch_size = 0  # Reset contatore batch
+                    # Quick filter for tick data
+                    if '"type": "tick"' not in line:
+                        continue
                     
-                    # OPTIMIZED: Read lines in chunks instead of one-by-one
-                    CHUNK_SIZE = 100000  # Read 100K lines at once for maximum I/O performance
-                    lines_buffer = []
-                    
-                    while True:
-                        # CHECK FOR STOP REQUEST BEFORE READING CHUNK
-                        if self.stop_requested:
-                            safe_print("🛑 Interruzione confermata - Interrotto caricamento file")
-                            break
+                    try:
+                        # Parse JSON and process immediately
+                        tick_data = json.loads(line)
                         
-                        # ULTRA-FAST: Read a chunk of lines if buffer is empty
-                        if not lines_buffer:
-                            # Use readlines() with size hint for maximum speed
-                            chunk_lines = f.readlines(CHUNK_SIZE * 100)  # Read more bytes at once
+                        # Convert to tick object
+                        tick_obj = self._convert_tick_data(tick_data)
+                        
+                        # Process tick immediately through unified system
+                        if self.unified_system and hasattr(self.unified_system, 'process_tick'):
+                            result = await self.unified_system.process_tick(
+                                timestamp=tick_obj.timestamp,
+                                price=tick_obj.price,
+                                volume=tick_obj.volume,
+                                bid=tick_obj.bid,
+                                ask=tick_obj.ask
+                            )
                             
-                            if not chunk_lines:  # Truly at end of file
-                                safe_print("📄 Reached end of file")
-                                break
+                            total_processed += 1
                             
-                            lines_buffer = chunk_lines
+                            if result and result.get('status') == 'success':
+                                total_analyses += 1
                         
-                        # Process lines from buffer
-                        lines_to_process = min(5000, len(lines_buffer))  # Process max 5000 lines at once
-                        current_lines = lines_buffer[:lines_to_process]
-                        lines_buffer = lines_buffer[lines_to_process:]
-                        
-                        # ULTRA-OPTIMIZED: Batch JSON parsing with list comprehension
-                        batch_ticks = []
-                        for line in current_lines:
-                            line = line.strip()
-                            if line and '"type": "tick"' in line:  # Quick pre-filter
-                                try:
-                                    tick_data = json.loads(line)
-                                    batch_ticks.append(self._convert_tick_data(tick_data))
-                                except json.JSONDecodeError:
-                                    continue
-                        
-                        # Add to current batch
-                        current_batch.extend(batch_ticks)
-                        current_batch_size += len(batch_ticks)
-                        total_ticks_loaded += len(batch_ticks)
-                        
-                        # OPTIMIZED: Check memory only every 10 batch cycles for speed
-                        batch_cycle_count = total_ticks_loaded // 5000  # Track cycles
-                        
-                        if self.stop_requested:
-                            safe_print("🛑 Interruzione confermata - Interrotto caricamento batch")
-                            break
-                        
-                        # Check memory only every 10 cycles (every ~100K ticks) for performance
-                        if batch_cycle_count % 10 == 0 and len(batch_ticks) > 0:
-                            try:
-                                system_memory = psutil.virtual_memory().percent
-                                process_memory = process.memory_percent()
-                                current_memory = max(system_memory, process_memory)
+                        # Progress reporting every 10K ticks
+                        if total_processed > 0 and total_processed % 10000 == 0:
+                            elapsed = (datetime.now() - start_time).total_seconds()
+                            rate = total_processed / elapsed if elapsed > 0 else 0
+                            safe_print(f"📈 Processed: {total_processed:,} ticks | Rate: {rate:.0f} ticks/sec | Analyses: {total_analyses:,}")
+                            
+                            # Trigger ML learning every 50K ticks
+                            if total_processed % 50000 == 0:
+                                chunk_count += 1
+                                safe_print(f"🧠 Triggering ML learning phase {chunk_count}...")
+                                await self._perform_ml_learning_phase()
                                 
-                                # Exit forzato al 50%
-                                if current_memory >= MEMORY_THRESHOLD:
-                                    print(f"\n🛑 MEMORY THRESHOLD REACHED! Stopping at {current_memory:.1f}%")
-                                    print(f"📊 System: {system_memory:.1f}%, Process: {process_memory:.1f}%")
-                                    print(f"📊 Loaded {current_batch_size:,} ticks in this batch")
-                                    break
-                            except Exception:
-                                current_memory = process.memory_percent()
-                                if current_memory >= MEMORY_THRESHOLD:
-                                    print(f"\n🛑 FALLBACK MEMORY CHECK! Stopping at {current_memory:.1f}%")
-                                    break
+                                # Gentle memory cleanup every 50K ticks
+                                gc.collect()
                     
-                    # Ferma il monitoraggio prima del processing
-                    self.monitoring_active = False
-                    print(f"\n🔍 Stopped memory monitoring for processing phase")
-                    print(f"🔄 Processing {len(current_batch):,} ticks...")
-                    
-                    if not current_batch:
-                        safe_print("✅ No more data to process")
-                        break
-                    
-                    final_memory = process.memory_percent()
-                    print(f"📊 Batch {batch_number} loaded: {len(current_batch):,} ticks (final memory: {final_memory:.1f}%)")
-                    
-                    # FASE 2: Processa il batch caricato
-                    safe_print(f"⚡ Processing batch {batch_number}...")
-                    batch_processed, batch_analyses = await self._process_batch_memory_safe(current_batch)
-                    
-                    total_processed += batch_processed
-                    total_analyses += batch_analyses
-                    
-                    safe_print(f"✅ Batch {batch_number} completed:")
-                    safe_print(f"   Processed: {batch_processed:,} ticks")
-                    safe_print(f"   Analyses: {batch_analyses:,}")
-                    safe_print(f"   Total: {total_processed:,} ticks, {total_analyses:,} analyses")
-                    
-                    # FASE 3: Libera memoria
-                    safe_print("🧹 Clearing batch from memory...")
-                    current_batch.clear()
-                    lines_buffer.clear() if 'lines_buffer' in locals() else None  # Clear file buffer too
-                    gc.collect()
-                    
-                    after_cleanup = process.memory_percent()
-                    safe_print(f"💾 Memory after cleanup: {after_cleanup:.1f}%")
-                    
-                    batch_number += 1
-                    
-                    # Riavvia monitoraggio per il prossimo batch se non è fine file
-                    if line:  # Se NON è fine file
-                        self.monitoring_active = True
-                        monitor_thread = threading.Thread(target=memory_monitor, daemon=True)
-                        monitor_thread.start()
-                        safe_print("🔍 Restarted memory monitoring for next batch")
-                    
-                    # Pausa breve per stabilizzazione
-                    await asyncio.sleep(1.0)
-                
-                # Assicurati che il monitoraggio sia fermato
-                self.monitoring_active = False
+                    except json.JSONDecodeError:
+                        # Skip invalid JSON lines
+                        continue
+                    except Exception as e:
+                        # Log error but continue processing
+                        if total_processed % 10000 == 0:  # Only log occasionally to avoid spam
+                            safe_print(f"⚠️ Error processing tick at line {line_number}: {e}")
+                        continue
             
-            safe_print(f"\n🎉 Progressive file processing completed!")
+            # Final statistics
+            elapsed = (datetime.now() - start_time).total_seconds()
+            final_rate = total_processed / elapsed if elapsed > 0 else 0
+            
+            safe_print(f"\n🎉 Stream processing completed!")
             safe_print(f"📊 Total processed: {total_processed:,} ticks")
             safe_print(f"🧠 Total analyses: {total_analyses:,}")
-            safe_print(f"📦 Total batches: {batch_number-1}")
+            safe_print(f"⏱️ Processing time: {elapsed:.1f} seconds")
+            safe_print(f"🚀 Average rate: {final_rate:.0f} ticks/second")
+            safe_print(f"🧠 ML learning phases: {chunk_count}")
             
-            return True
+            # Final ML training
+            if total_processed > 0:
+                safe_print("🎯 Starting final comprehensive training...")
+                await self._perform_final_training()
+            
+            return total_processed > 0
             
         except Exception as e:
-            safe_print(f"❌ Progressive file processing failed: {e}")
+            safe_print(f"❌ Stream processing failed: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -1373,20 +1347,317 @@ class MLLearningTestSuite:
     async def _process_ticks_standard(self, all_ticks: list) -> bool:
         """Processa tutti i tick usando il sistema reale (fallback senza monitoraggio memoria)"""
         
-        safe_print("🔄 Using real system batch processing (no memory monitoring)")
+        safe_print("🔄 Using standard tick processing (no memory monitoring)")
         
         try:
-            # Use the real system's process_batch method for all ticks
-            if self.unified_system and hasattr(self.unified_system, 'process_batch'):
-                processed_count, analysis_count = await self.unified_system.process_batch(all_ticks)
-                safe_print(f"✅ Standard processing completed: {processed_count:,} ticks, {analysis_count:,} analyses")
-                return True
-            else:
-                safe_print("❌ Unified system not available for standard processing")
+            # Process the provided ticks directly through unified system
+            if not self.unified_system or not hasattr(self.unified_system, 'process_tick'):
+                safe_print("❌ Unified system not available for tick processing")
                 return False
+            
+            processed_count = 0
+            analysis_count = 0
+            
+            for i, tick in enumerate(all_ticks):
+                if self.stop_requested:
+                    safe_print(f"🛑 Processing interrupted at tick {i+1}")
+                    break
+                
+                try:
+                    # Process tick through unified system
+                    result = await self.unified_system.process_tick(
+                        timestamp=getattr(tick, 'timestamp', datetime.now()),
+                        price=getattr(tick, 'price', 0.0),
+                        volume=getattr(tick, 'volume', 0),
+                        bid=getattr(tick, 'bid', None),
+                        ask=getattr(tick, 'ask', None)
+                    )
+                    
+                    processed_count += 1
+                    
+                    if result and result.get('status') == 'success':
+                        analysis_count += 1
+                    
+                    # Progress reporting every 5K ticks
+                    if processed_count > 0 and processed_count % 5000 == 0:
+                        progress = (processed_count / len(all_ticks)) * 100
+                        safe_print(f"📈 Progress: {progress:.1f}% | Processed: {processed_count:,} | Analyses: {analysis_count:,}")
+                
+                except Exception as e:
+                    safe_print(f"⚠️ Error processing tick {i}: {e}")
+                    continue
+            
+            safe_print(f"✅ Standard processing completed: {processed_count:,} ticks, {analysis_count:,} analyses")
+            return processed_count > 0
                 
         except Exception as e:
             safe_print(f"❌ Standard processing error: {e}")
+            return False
+    
+    async def _test_individual_ml_algorithms(self) -> bool:
+        """Test specifici per ogni algoritmo ML implementato"""
+        
+        try:
+            safe_print("\n🔬 TESTING INDIVIDUAL ML ALGORITHMS")
+            safe_print("="*50)
+            
+            if not self.analyzer or not hasattr(self.analyzer, 'asset_analyzers'):
+                safe_print("❌ No analyzer available for algorithm testing")
+                return False
+            
+            asset_analyzer = self.analyzer.asset_analyzers.get(self.symbol)
+            if not asset_analyzer or not hasattr(asset_analyzer, 'competitions'):
+                safe_print("❌ No asset analyzer or competitions available")
+                return False
+            
+            total_algorithms = 0
+            working_algorithms = 0
+            algorithm_results = {}
+            
+            # Test algorithms in each ModelType competition
+            for model_type, competition in asset_analyzer.competitions.items():
+                model_name = model_type.value if hasattr(model_type, 'value') else str(model_type)
+                safe_print(f"\n📊 Testing {model_name} algorithms...")
+                
+                if not hasattr(competition, 'algorithms') or not competition.algorithms:
+                    safe_print(f"   ⚠️ No algorithms found for {model_name}")
+                    continue
+                
+                model_results = {}
+                
+                # Test each algorithm in this competition
+                for alg_name, algorithm in competition.algorithms.items():
+                    total_algorithms += 1
+                    
+                    try:
+                        # Test individual algorithm
+                        result = await self._test_single_algorithm(algorithm, alg_name, model_name)
+                        model_results[alg_name] = result
+                        
+                        if result['working']:
+                            working_algorithms += 1
+                            safe_print(f"   ✅ {alg_name}: {result['accuracy']:.1%} accuracy, {result['predictions']} predictions")
+                        else:
+                            safe_print(f"   ❌ {alg_name}: {result['error']}")
+                            
+                    except Exception as e:
+                        safe_print(f"   ⚠️ {alg_name}: Test failed - {e}")
+                        model_results[alg_name] = {
+                            'working': False,
+                            'error': str(e),
+                            'accuracy': 0.0,
+                            'predictions': 0
+                        }
+                
+                algorithm_results[model_name] = model_results
+            
+            # Summary statistics
+            success_rate = (working_algorithms / total_algorithms * 100) if total_algorithms > 0 else 0
+            
+            safe_print(f"\n📈 ML ALGORITHM TEST SUMMARY:")
+            safe_print(f"   Total algorithms tested: {total_algorithms}")
+            safe_print(f"   Working algorithms: {working_algorithms}")
+            safe_print(f"   Success rate: {success_rate:.1f}%")
+            
+            # Detailed breakdown by model type
+            safe_print(f"\n📊 Breakdown by Model Type:")
+            for model_name, results in algorithm_results.items():
+                working = sum(1 for r in results.values() if r['working'])
+                total = len(results)
+                avg_accuracy = sum(r['accuracy'] for r in results.values() if r['working']) / max(working, 1)
+                
+                safe_print(f"   {model_name}: {working}/{total} working ({working/total*100:.1f}%) - Avg accuracy: {avg_accuracy:.1%}")
+            
+            # Determine overall success (at least 70% algorithms working)
+            overall_success = success_rate >= 70.0
+            
+            if overall_success:
+                safe_print(f"\n✅ Individual ML algorithm test PASSED ({success_rate:.1f}% success rate)")
+            else:
+                safe_print(f"\n⚠️ Individual ML algorithm test needs attention (only {success_rate:.1f}% working)")
+            
+            return overall_success
+            
+        except Exception as e:
+            safe_print(f"❌ Individual ML algorithm testing failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    async def _test_single_algorithm(self, algorithm, alg_name: str, model_name: str) -> dict:
+        """Test un singolo algoritmo ML"""
+        
+        result = {
+            'working': False,
+            'error': None,
+            'accuracy': 0.0,
+            'predictions': 0,
+            'last_prediction': None,
+            'training_status': 'unknown'
+        }
+        
+        try:
+            # Check if algorithm exists and is initialized
+            if algorithm is None:
+                result['error'] = 'Algorithm is None'
+                return result
+            
+            # Check basic algorithm attributes
+            if hasattr(algorithm, 'accuracy'):
+                result['accuracy'] = float(algorithm.accuracy)
+            
+            if hasattr(algorithm, 'total_predictions'):
+                result['predictions'] = int(algorithm.total_predictions)
+            
+            # Check if algorithm has been trained
+            if hasattr(algorithm, 'is_trained'):
+                if callable(algorithm.is_trained):
+                    is_trained = algorithm.is_trained()
+                else:
+                    is_trained = bool(algorithm.is_trained)
+                result['training_status'] = 'trained' if is_trained else 'not_trained'
+            
+            # Try to get last prediction (if available)
+            if hasattr(algorithm, 'last_prediction'):
+                result['last_prediction'] = algorithm.last_prediction
+            
+            # Check algorithm-specific methods
+            algorithm_methods = []
+            if hasattr(algorithm, 'predict'):
+                algorithm_methods.append('predict')
+            if hasattr(algorithm, 'train'):
+                algorithm_methods.append('train')
+            if hasattr(algorithm, 'update'):
+                algorithm_methods.append('update')
+            
+            # Algorithm is considered working if:
+            # 1. It has basic methods
+            # 2. It has made at least some predictions OR has been trained
+            # 3. Accuracy is reasonable (if available)
+            
+            min_predictions = 5  # Minimum predictions to consider it working
+            min_accuracy = 0.3   # Minimum accuracy (30%) to avoid completely random
+            
+            has_methods = len(algorithm_methods) >= 2
+            has_activity = result['predictions'] >= min_predictions or result['training_status'] == 'trained'
+            has_quality = result['accuracy'] >= min_accuracy or result['predictions'] < min_predictions  # Don't penalize new algorithms
+            
+            if has_methods and (has_activity or result['training_status'] == 'trained'):
+                result['working'] = True
+                
+                # Additional quality check for algorithms with many predictions
+                if result['predictions'] >= 50 and result['accuracy'] < min_accuracy:
+                    result['working'] = False
+                    result['error'] = f'Low accuracy: {result["accuracy"]:.1%} after {result["predictions"]} predictions'
+            else:
+                reasons = []
+                if not has_methods:
+                    reasons.append(f'Missing methods (has: {", ".join(algorithm_methods)})')
+                if not has_activity:
+                    reasons.append(f'No activity ({result["predictions"]} predictions, {result["training_status"]})')
+                
+                result['error'] = '; '.join(reasons)
+            
+            return result
+            
+        except Exception as e:
+            result['error'] = f'Exception during testing: {str(e)}'
+            return result
+    
+    async def _test_algorithm_benchmark(self) -> bool:
+        """Benchmark comparativo tra algoritmi dello stesso ModelType"""
+        
+        try:
+            safe_print("\n🏆 ALGORITHM BENCHMARK COMPARISON")
+            safe_print("="*50)
+            
+            if not self.analyzer or not hasattr(self.analyzer, 'asset_analyzers'):
+                safe_print("❌ No analyzer available for benchmarking")
+                return False
+            
+            asset_analyzer = self.analyzer.asset_analyzers.get(self.symbol)
+            if not asset_analyzer or not hasattr(asset_analyzer, 'competitions'):
+                safe_print("❌ No asset analyzer or competitions available")
+                return False
+            
+            benchmark_results = {}
+            total_comparisons = 0
+            successful_comparisons = 0
+            
+            # Benchmark algorithms within each ModelType
+            for model_type, competition in asset_analyzer.competitions.items():
+                model_name = model_type.value if hasattr(model_type, 'value') else str(model_type)
+                
+                if not hasattr(competition, 'algorithms') or len(competition.algorithms) < 2:
+                    safe_print(f"⚠️ {model_name}: Need at least 2 algorithms for comparison")
+                    continue
+                
+                safe_print(f"\n📊 Benchmarking {model_name} algorithms:")
+                
+                # Get algorithm performance data
+                alg_performances = []
+                for alg_name, algorithm in competition.algorithms.items():
+                    perf = {
+                        'name': alg_name,
+                        'accuracy': getattr(algorithm, 'accuracy', 0.0),
+                        'predictions': getattr(algorithm, 'total_predictions', 0),
+                        'algorithm': algorithm
+                    }
+                    alg_performances.append(perf)
+                
+                # Sort by accuracy (descending)
+                alg_performances.sort(key=lambda x: x['accuracy'], reverse=True)
+                
+                # Display ranking
+                safe_print(f"   🥇 Algorithm Rankings:")
+                for i, perf in enumerate(alg_performances, 1):
+                    medal = ["🥇", "🥈", "🥉"][min(i-1, 2)] if i <= 3 else f"#{i}"
+                    safe_print(f"     {medal} {perf['name']}: {perf['accuracy']:.1%} ({perf['predictions']} predictions)")
+                
+                # Check if there's a clear winner (>10% accuracy difference)
+                if len(alg_performances) >= 2:
+                    best = alg_performances[0]
+                    second = alg_performances[1]
+                    
+                    if best['accuracy'] > second['accuracy'] + 0.10:  # 10% difference
+                        safe_print(f"   ✅ Clear winner: {best['name']} outperforms by {(best['accuracy'] - second['accuracy']):.1%}")
+                        successful_comparisons += 1
+                    elif best['predictions'] >= 50 and second['predictions'] >= 50:  # Both have enough data
+                        safe_print(f"   📊 Close competition: {best['name']} vs {second['name']} ({(best['accuracy'] - second['accuracy']):.1%} difference)")
+                        successful_comparisons += 1
+                    else:
+                        safe_print(f"   ⏳ Insufficient data for reliable comparison")
+                
+                total_comparisons += 1
+                benchmark_results[model_name] = alg_performances
+            
+            # Overall benchmark summary
+            benchmark_success = (successful_comparisons / total_comparisons * 100) if total_comparisons > 0 else 0
+            
+            safe_print(f"\n📈 BENCHMARK SUMMARY:")
+            safe_print(f"   Model types compared: {total_comparisons}")
+            safe_print(f"   Successful comparisons: {successful_comparisons}")
+            safe_print(f"   Benchmark success rate: {benchmark_success:.1f}%")
+            
+            # Identify top-performing algorithms across all model types
+            all_algorithms = []
+            for results in benchmark_results.values():
+                all_algorithms.extend(results)
+            
+            # Top 5 algorithms overall
+            all_algorithms.sort(key=lambda x: x['accuracy'], reverse=True)
+            top_algorithms = all_algorithms[:5]
+            
+            safe_print(f"\n🏆 TOP 5 ALGORITHMS OVERALL:")
+            for i, alg in enumerate(top_algorithms, 1):
+                safe_print(f"   {i}. {alg['name']}: {alg['accuracy']:.1%} accuracy ({alg['predictions']} predictions)")
+            
+            return benchmark_success >= 60.0  # At least 60% of comparisons should be meaningful
+            
+        except Exception as e:
+            safe_print(f"❌ Algorithm benchmarking failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     async def _test_persistence(self) -> bool:

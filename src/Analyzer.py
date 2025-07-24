@@ -1060,16 +1060,31 @@ init_universal_encoding(silent=False)
 # ================== UTILS ML MODULES IMPORTS ==================
 
 try:
-    from src.utils.adaptive_trainer import AdaptiveTrainer, TrainingConfig
-    from src.utils.data_preprocessing import AdvancedDataPreprocessor, PreprocessingConfig
-    from src.utils.training_monitor import TrainingMonitor, MonitorConfig
-    from src.utils.analyzer_ml_integration import EnhancedLSTMTrainer
+    # Try absolute import first
+    try:
+        from src.utils.adaptive_trainer import AdaptiveTrainer, TrainingConfig
+        from src.utils.data_preprocessing import AdvancedDataPreprocessor, PreprocessingConfig
+        from src.utils.training_monitor import TrainingMonitor, MonitorConfig
+        from src.utils.analyzer_ml_integration import EnhancedLSTMTrainer
+    except ImportError:
+        # Fallback to relative import if running from different location
+        import sys
+        import os
+        # Add parent directory to path
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from utils.adaptive_trainer import AdaptiveTrainer, TrainingConfig
+        from utils.data_preprocessing import AdvancedDataPreprocessor, PreprocessingConfig
+        from utils.training_monitor import TrainingMonitor, MonitorConfig
+        from utils.analyzer_ml_integration import EnhancedLSTMTrainer
+    
     # OptimizedLSTM and LSTMConfig are now defined directly in this file
     UTILS_ML_AVAILABLE = True
-    safe_print("✅ Utils ML modules imported successfully")
+    safe_print("✅ Utils ML modules imported successfully - OptimizedLSTM will be used!")
 except ImportError as e:
     UTILS_ML_AVAILABLE = False
     safe_print(f"⚠️ Utils ML modules not available: {e}")
+    import traceback
+    safe_print(f"📋 Import error details:\n{traceback.format_exc()}")
 
 # ================== ML TRAINING LOGGER IMPORTS ==================
 
@@ -10849,7 +10864,7 @@ class AssetAnalyzer:
                     dropout_rate=config['dropout']
                 )
                 self.ml_models[model_name] = OptimizedLSTM(lstm_config)
-                safe_print(f"✅ Using OptimizedLSTM for {model_name}")
+                self._log(f"✅ Using OptimizedLSTM for {model_name}", "model_creation", "info")
             else:
                 # Fallback al vecchio AdvancedLSTM
                 self.ml_models[model_name] = AdvancedLSTM(

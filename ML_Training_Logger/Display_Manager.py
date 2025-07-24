@@ -560,10 +560,8 @@ class DisplayManager:
         
         # Resolve AUTO mode to appropriate mode based on capabilities
         if self.display_config.terminal_mode == TerminalMode.AUTO:
-            if self.capabilities.supports_cursor_control and self.capabilities.supports_ansi:
-                self.display_config.terminal_mode = TerminalMode.DASHBOARD
-            else:
-                self.display_config.terminal_mode = TerminalMode.SCROLL
+            # Always default to SCROLL mode since DASHBOARD is removed
+            self.display_config.terminal_mode = TerminalMode.SCROLL
         
         # Initialize renderer
         self.renderer = TreeProgressRenderer(self.display_config, self.capabilities)
@@ -724,14 +722,9 @@ class DisplayManager:
         
         self.is_running = True
         
-        # Clear screen and setup fixed display if terminal supports it and in DASHBOARD mode
-        if (self.capabilities.supports_cursor_control and 
-            self.display_config.terminal_mode == TerminalMode.DASHBOARD):
-            self._clear_screen()
-            self._show_initial_fixed_display()
-        else:
-            print(f"{TreeSymbols.SUCCESS} ML Training Logger Display Started")
-            print("=" * 60)
+        # DASHBOARD mode has been removed - always use standard SCROLL mode startup
+        print(f"{TreeSymbols.SUCCESS} ML Training Logger Display Started")
+        print("=" * 60)
     
     def stop(self):
         """Ferma display manager"""
@@ -781,16 +774,38 @@ class DisplayManager:
         with self.display_lock:
             self.recent_events.append(event)
             
-            # Format event for display
-            event_line = self.renderer.render_event(event)
-            
-            if self.capabilities.supports_cursor_control and self.initial_display_shown:
-                # For fixed display, events scroll normally in the log area
-                # No cursor manipulation needed - just print and it will scroll naturally
-                print(event_line)
+            # SCROLL MODE: Pure scrolling text without dashboard formatting
+            if self.display_config.terminal_mode == TerminalMode.SCROLL:
+                # Simple format: [timestamp] EVENT_TYPE: message
+                timestamp = event.timestamp.strftime("%H:%M:%S")
+                
+                # Handle event_type whether it's string or enum
+                if hasattr(event.event_type, 'value') and not isinstance(event.event_type, str):
+                    event_type = str(event.event_type.value).upper()
+                else:
+                    event_type = str(event.event_type).upper()
+                
+                # Get clean message without emojis and tree symbols
+                if hasattr(event, 'data') and isinstance(event.data, dict):
+                    message = event.data.get('message', str(event.data))
+                else:
+                    message = str(event.data) if event.data else event_type
+                
+                # Pure text format
+                clean_line = f"[{timestamp}] {event_type}: {message}"
+                print(clean_line)
+                
             else:
-                # Fallback to traditional display
-                print(event_line)
+                # Other modes: use full renderer formatting
+                event_line = self.renderer.render_event(event)
+                
+                if self.capabilities.supports_cursor_control and self.initial_display_shown:
+                    # For fixed display, events scroll normally in the log area
+                    # No cursor manipulation needed - just print and it will scroll naturally
+                    print(event_line)
+                else:
+                    # Fallback to traditional display
+                    print(event_line)
             
             sys.stdout.flush()
     
@@ -798,6 +813,10 @@ class DisplayManager:
         """Visualizza status completo"""
         if self.display_config.terminal_mode == TerminalMode.SILENT:
             return
+        
+        # SCROLL MODE: No dashboard status updates
+        if self.display_config.terminal_mode == TerminalMode.SCROLL:
+            return  # Skip dashboard updates in pure scroll mode
         
         with self.display_lock:
             status_output = self.renderer.render_full_status(self.current_metrics)

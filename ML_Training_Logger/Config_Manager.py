@@ -35,7 +35,6 @@ class OutputFormat(Enum):
 
 class TerminalMode(Enum):
     """Modalità di visualizzazione terminale"""
-    DASHBOARD = "dashboard"     # Update in-place con sezioni fisse
     SCROLL = "scroll"          # Output tradizionale scorrevole
     SILENT = "silent"          # Solo file output
     AUTO = "auto"             # Detect capabilities
@@ -62,13 +61,7 @@ class DisplaySettings:
     show_performance_metrics: bool = True
     color_enabled: bool = True
     
-    # Dashboard layout settings
-    dashboard_width: int = 80
-    dashboard_height: int = 25
-    progress_section_height: int = 4
-    champions_section_height: int = 6
-    events_section_height: int = 10
-    metrics_section_height: int = 5
+    # Removed dashboard layout settings since DASHBOARD mode is eliminated
 
 
 @dataclass
@@ -750,7 +743,7 @@ class AdvancedConfigManager:
         # Terminal capabilities optimization
         terminal_caps = system_info.get('terminal_capabilities', {})
         if terminal_caps.get('supports_ansi', False) and terminal_caps.get('supports_colors', False):
-            optimized_config.display.terminal_mode = TerminalMode.DASHBOARD
+            optimized_config.display.terminal_mode = TerminalMode.SCROLL
             optimized_config.display.color_enabled = True
         else:
             optimized_config.display.terminal_mode = TerminalMode.SCROLL
@@ -896,7 +889,7 @@ class ConfigProfiler:
         
         # CPU overhead estimation
         cpu_overhead = 5  # Base overhead
-        if config.display.terminal_mode == TerminalMode.DASHBOARD:
+        if config.display.terminal_mode == TerminalMode.SCROLL:
             cpu_overhead += 1 / config.display.refresh_rate_seconds  # More frequent updates = more CPU
         if config.performance.enable_async_processing:
             cpu_overhead -= 1  # Async reduces blocking
@@ -926,7 +919,7 @@ class ConfigProfiler:
         if analysis['estimated_cpu_overhead_percent'] > 10:
             analysis['recommendations'].append("Consider increasing refresh_rate_seconds or reducing enabled_event_types")
         
-        if config.display.terminal_mode == TerminalMode.DASHBOARD and analysis['estimated_cpu_overhead_percent'] > 15:
+        if config.display.terminal_mode == TerminalMode.SCROLL and analysis['estimated_cpu_overhead_percent'] > 15:
             analysis['recommendations'].append("Consider switching to SCROLL mode for better performance")
         
         if not config.performance.enable_async_processing and len(config.event_filter.enabled_event_types) > 8:
@@ -968,9 +961,9 @@ class ConfigProfiler:
             issues.append(f"Estimated disk usage ({estimated_disk:.1f}MB/h) exceeds constraint ({max_disk_mb}MB/h)")
         
         # Terminal capabilities
-        if (config.display.terminal_mode == TerminalMode.DASHBOARD and 
+        if (config.display.terminal_mode == TerminalMode.SCROLL and 
             not system_constraints.get('supports_ansi', True)):
-            issues.append("DASHBOARD mode requires ANSI terminal support")
+            issues.append("SCROLL mode requires ANSI terminal support")
         
         if (config.display.color_enabled and 
             not system_constraints.get('supports_colors', True)):
@@ -996,7 +989,7 @@ class ConfigTemplates:
     def for_development() -> MLTrainingLoggerConfig:
         """Configurazione per sviluppo"""
         config = create_debug_config()
-        config.display.terminal_mode = TerminalMode.DASHBOARD
+        config.display.terminal_mode = TerminalMode.SCROLL
         config.storage.json_indent = 4
         config.event_filter.event_rate_limits = {}  # No rate limiting in dev
         return config
