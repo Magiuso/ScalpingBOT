@@ -8223,28 +8223,20 @@ class RollingWindowTrainer:
         # CREA TRAINER PROTETTO CON GESTIONE ERRORI
         try:
             if UTILS_ML_AVAILABLE:
-                # Import EnhancedLSTMTrainer here to avoid circular import at module level
-                from src.utils.analyzer_ml_integration import EnhancedLSTMTrainer
+                # Use AdaptiveTrainer as primary trainer with LSTM optimizations
+                from src.utils.adaptive_trainer import AdaptiveTrainer, create_adaptive_trainer_config
                 
-                # Usa il nuovo EnhancedLSTMTrainer se disponibile
-                input_size = getattr(model, 'input_size', 64)  # Fallback value
-                hidden_size = getattr(model, 'hidden_size', 256)  # Fallback value
-                num_layers = getattr(model, 'num_layers', 3)  # Fallback value
-                output_size = getattr(model, 'output_size', 1)  # Fallback value
-                
-                protected_trainer = EnhancedLSTMTrainer(
-                    input_size=input_size,
-                    hidden_size=hidden_size,
-                    num_layers=num_layers,
-                    output_size=output_size,
-                    model_type="support_resistance",  # Default type
-                    optimization_profile="stable_training"
+                config = create_adaptive_trainer_config(
+                    initial_learning_rate=1e-3,
+                    max_grad_norm=1.0,
+                    early_stopping_patience=15
                 )
-                safe_print("✅ Using EnhancedLSTMTrainer")
+                protected_trainer = AdaptiveTrainer(model, config)
+                safe_print("✅ Using AdaptiveTrainer with LSTM-specific fixes")
             else:
-                # Fallback al vecchio trainer
+                # Fallback to OptimizedLSTMTrainer only if utils not available
                 protected_trainer = OptimizedLSTMTrainer(model)
-                safe_print("⚠️ Using legacy OptimizedLSTMTrainer")
+                safe_print("⚠️ Using legacy OptimizedLSTMTrainer (fallback)")
         except Exception as trainer_error:
             self._store_training_event('trainer_creation_failed', {
                 **training_info,
@@ -8292,21 +8284,9 @@ class RollingWindowTrainer:
                     safe_print(f"🔍 DEBUG: Trainer type: {type(protected_trainer).__name__}")
                     safe_print(f"🔍 DEBUG: X shape: {X.shape}, y shape: {y.shape}")
                     
-                    # Training batch con protezione - uso getattr per evitare errori statici
-                    if hasattr(protected_trainer, 'fit'):
-                        # EnhancedLSTMTrainer with fit method
-                        safe_print(f"🔍 DEBUG: Using fit method")
-                        fit_method = getattr(protected_trainer, 'fit')
-                        batch_result = fit_method(X, y, epochs=epochs_in_batch)
-                    elif hasattr(protected_trainer, 'train_model_protected'):
-                        # OptimizedLSTMTrainer with train_model_protected method
-                        safe_print(f"🔍 DEBUG: Using train_model_protected method")
-                        train_method = getattr(protected_trainer, 'train_model_protected')
-                        batch_result = train_method(X, y, epochs=epochs_in_batch)
-                    else:
-                        # Fallback error
-                        safe_print(f"🔍 DEBUG: No training method found!")
-                        raise AttributeError(f"Trainer {type(protected_trainer).__name__} has no compatible training method")
+                    # Training batch - both trainers support train_model_protected method
+                    safe_print(f"🔍 DEBUG: Using train_model_protected method")
+                    batch_result = protected_trainer.train_model_protected(X, y, epochs=epochs_in_batch)
                     
                     safe_print(f"🔍 DEBUG: Training batch result: {batch_result.get('training_completed', 'NO TRAINING_COMPLETED')}")
                     safe_print(f"🔍 DEBUG: Result keys: {list(batch_result.keys())}")

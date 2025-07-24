@@ -41,10 +41,10 @@ warnings.filterwarnings('ignore')
 class TrainingConfig:
     """Configurazione per AdaptiveTrainer"""
     
-    # Core training settings - ANTI-OVERFITTING
-    initial_learning_rate: float = 2e-4     # RIDOTTO da 2e-3 per maggiore stabilità
-    min_learning_rate: float = 1e-6        # RIDOTTO da 1e-4 per fine-tuning più fine
-    max_learning_rate: float = 1e-3        # RIDOTTO da 1e-1 per prevenire instabilità
+    # Core training settings - OPTIMIZED FOR FINANCIAL DATA
+    initial_learning_rate: float = 1e-3     # AUMENTATO da 2e-4 per financial data convergence
+    min_learning_rate: float = 1e-5        # AUMENTATO da 1e-6 per better fine-tuning
+    max_learning_rate: float = 5e-3        # AUMENTATO da 1e-3 per adaptive learning
     
     # Batch size settings - ANTI-OVERFITTING
     initial_batch_size: int = 32         # RIDOTTO da 128 per prevenire overfitting
@@ -63,10 +63,10 @@ class TrainingConfig:
     lr_factor: float = 0.5  # RIDOTTO da 0.75 per riduzione più aggressiva
     lr_cooldown: int = 5   # AUMENTATO da 2 per maggiore stabilità
     
-    # Training stability - POTENZIATA
+    # Training stability - OPTIMIZED FOR LSTM
     gradient_accumulation_steps: int = 4  # AUMENTATO da 1 per batch virtuali più grandi
-    max_grad_norm: float = 0.5           # RIDOTTO da 1.0 per maggiore stabilità
-    warmup_steps: int = 50               # RIDOTTO da 100 per learning più rapido
+    max_grad_norm: float = 1.0           # AUMENTATO da 0.5 per permettere apprendimento LSTM
+    warmup_steps: int = 100              # AUMENTATO da 50 per stabilizzare LSTM
     
     # Mixed precision
     use_mixed_precision: bool = True
@@ -83,9 +83,9 @@ class TrainingConfig:
     swa_start_epoch: int = 5
     swa_lr: float = 1e-4
     
-    # Stability thresholds
-    loss_explosion_threshold: float = 10.0
-    gradient_explosion_threshold: float = 100.0
+    # Stability thresholds - RELAXED FOR FINANCIAL DATA
+    loss_explosion_threshold: float = 50.0      # AUMENTATO da 10.0 per financial volatility
+    gradient_explosion_threshold: float = 10.0  # RIDOTTO da 100.0 per early detection
     nan_detection_enabled: bool = True
 
 
@@ -352,27 +352,42 @@ class AdaptiveTrainer:
         print(f"🚀 AdaptiveTrainer initialized: LR={config.initial_learning_rate}, BS={config.initial_batch_size}, AMP={config.use_mixed_precision}")
     
     def _create_optimizer(self) -> torch.optim.Optimizer:
-        """Crea optimizer ottimizzato"""
+        """Crea optimizer ottimizzato con differential learning rates per LSTM"""
         
-        # Separate parameter groups for different components
-        lstm_params = []
+        # Separate parameter groups with LSTM-specific handling
+        lstm_weight_hh_params = []  # Hidden-to-hidden weights (most critical)
+        lstm_other_params = []      # Other LSTM parameters
         attention_params = []
         other_params = []
         
         for name, param in self.model.named_parameters():
-            if 'lstm' in name.lower():
-                lstm_params.append(param)
+            if 'weight_hh' in name or ('lstm' in name.lower() and 'hh' in name):
+                # Critical LSTM hidden-to-hidden parameters
+                lstm_weight_hh_params.append(param)
+                print(f"🎯 LSTM weight_hh parameter found: {name}")
+            elif 'lstm' in name.lower():
+                lstm_other_params.append(param)
             elif 'attention' in name.lower() or 'attn' in name.lower():
                 attention_params.append(param)
             else:
                 other_params.append(param)
         
-        # Parameter groups with different learning rates
+        # Parameter groups with differential learning rates
         param_groups = []
         
-        if lstm_params:
+        # LSTM weight_hh gets 10x higher learning rate (like OptimizedLSTMTrainer)
+        if lstm_weight_hh_params:
             param_groups.append({
-                'params': lstm_params,
+                'params': lstm_weight_hh_params,
+                'lr': self.config.initial_learning_rate * 10.0,  # 10x LR for weight_hh
+                'weight_decay': 1e-5  # Lower weight decay for critical params
+            })
+            print(f"✅ Differential LR: weight_hh={self.config.initial_learning_rate * 10.0:.2e}")
+        
+        # Other LSTM parameters get standard rate
+        if lstm_other_params:
+            param_groups.append({
+                'params': lstm_other_params,
                 'lr': self.config.initial_learning_rate,
                 'weight_decay': 1e-4
             })
@@ -436,9 +451,9 @@ class AdaptiveTrainer:
                 # Backward pass with gradient scaling
                 self.scaler.scale(loss).backward()
                 
-                # Gradient clipping
+                # LSTM-specific gradient clipping with selective fixes
                 self.scaler.unscale_(self.optimizer)
-                grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
+                grad_norm = self._apply_lstm_gradient_fixes()
                 
                 # Optimizer step
                 self.scaler.step(self.optimizer)
@@ -463,8 +478,8 @@ class AdaptiveTrainer:
                 loss = criterion(output, target)
                 loss.backward()
                 
-                # Gradient clipping
-                grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
+                # LSTM-specific gradient clipping with selective fixes
+                grad_norm = self._apply_lstm_gradient_fixes()
                 
                 self.optimizer.step()
             
@@ -476,7 +491,7 @@ class AdaptiveTrainer:
             self.loss_tracker.update(
                 train_loss=loss.item(),
                 learning_rate=current_lr,
-                grad_norm=grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm
+                grad_norm=float(grad_norm) if isinstance(grad_norm, (int, float)) else float(grad_norm.item())
             )
             
             # Check for instability
@@ -504,7 +519,7 @@ class AdaptiveTrainer:
             
             # Logging
             if self.global_step % self.config.log_frequency == 0:
-                self._log_training_progress(loss.item(), current_lr, grad_norm.item())
+                self._log_training_progress(loss.item(), current_lr, float(grad_norm) if isinstance(grad_norm, (int, float)) else float(grad_norm.item()))
             
             # Save checkpoint
             if self.global_step % self.config.save_frequency == 0:
@@ -542,10 +557,20 @@ class AdaptiveTrainer:
                 
                 if self.scaler is not None:
                     with autocast('cuda'):
-                        output, _ = self.model(data)
+                        model_output = self.model(data)
+                        # Handle tuple output from LSTM
+                        if isinstance(model_output, tuple):
+                            output = model_output[0]
+                        else:
+                            output = model_output
                         loss = criterion(output, target)
                 else:
-                    output, _ = self.model(data)
+                    model_output = self.model(data)
+                    # Handle tuple output from LSTM
+                    if isinstance(model_output, tuple):
+                        output = model_output[0]
+                    else:
+                        output = model_output
                     loss = criterion(output, target)
                 
                 val_losses.append(loss.item())
@@ -591,6 +616,61 @@ class AdaptiveTrainer:
             return True
         
         return False
+    
+    def _apply_lstm_gradient_fixes(self) -> float:
+        """
+        Applica gradient fixes specifici per LSTM come in OptimizedLSTMTrainer:
+        - Selective clipping per weight_hh parameters
+        - Gradient noise injection per vanishing gradients
+        - Standard clipping per altri parametri
+        """
+        try:
+            weight_hh_fixed = 0
+            total_grad_count = 0
+            min_grad_norm = float('inf')
+            max_grad_norm = 0.0
+            
+            # SELECTIVE CLIPPING + GRADIENT NOISE per parametri weight_hh
+            for name, param in self.model.named_parameters():
+                if param.grad is not None:
+                    total_grad_count += 1
+                    param_grad_norm = float(param.grad.norm().item())
+                    
+                    # Fix per weight_hh parameters (critical LSTM params)
+                    if 'weight_hh' in name:
+                        if param_grad_norm < 1e-6:  # Vanishing gradient detected
+                            # Gradient noise injection
+                            noise = torch.randn_like(param.grad) * 1e-6
+                            param.grad.data += noise
+                            weight_hh_fixed += 1
+                        
+                        # Selective clipping with lower threshold for weight_hh
+                        if param_grad_norm > self.config.max_grad_norm * 0.5:
+                            param.grad.data = param.grad.data * (self.config.max_grad_norm * 0.5) / param_grad_norm
+                    
+                    min_grad_norm = min(min_grad_norm, float(param.grad.norm().item()))
+                    max_grad_norm = max(max_grad_norm, float(param.grad.norm().item()))
+            
+            # Log gradient health (rate limited)
+            if total_grad_count > 0:
+                zero_grad_ratio = (min_grad_norm < 1e-8) * 100.0  # Simplified check
+                if weight_hh_fixed > 0:
+                    print(f"🔧 LSTM gradient fixes applied: {weight_hh_fixed} weight_hh parameters fixed")
+            
+            # Standard gradient clipping for all parameters
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
+            
+            if torch.isnan(grad_norm) or torch.isinf(grad_norm):
+                print("❌ Invalid gradient norm detected")
+                raise ValueError("Gradient norm non valida")
+            
+            return float(grad_norm) if isinstance(grad_norm, (int, float)) else float(grad_norm.item())
+            
+        except Exception as clipping_error:
+            print(f"❌ Errore durante LSTM gradient fixes: {clipping_error}")
+            # Fallback to standard clipping
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
+            return float(grad_norm) if isinstance(grad_norm, (int, float)) else float(grad_norm.item())
     
     def _log_training_progress(self, loss: float, lr: float, grad_norm: float):
         """Log progresso training"""
@@ -660,6 +740,65 @@ class AdaptiveTrainer:
                 'trainable_params': sum(p.numel() for p in self.model.parameters() if p.requires_grad)
             }
         }
+    
+    def train_model_protected(self, X: np.ndarray, y: np.ndarray, epochs: int = 100) -> Dict[str, Any]:
+        """
+        Interfaccia compatibile con OptimizedLSTMTrainer per drop-in replacement
+        """
+        import torch
+        from torch.utils.data import TensorDataset, DataLoader
+        
+        try:
+            # Convert numpy to torch tensors
+            device = next(self.model.parameters()).device
+            X_tensor = torch.FloatTensor(X).to(device)
+            y_tensor = torch.FloatTensor(y).to(device)
+            
+            # Create data loader
+            dataset = TensorDataset(X_tensor, y_tensor)
+            data_loader = DataLoader(dataset, batch_size=self.config.initial_batch_size, shuffle=True)
+            
+            # Create criterion
+            criterion = torch.nn.MSELoss()
+            
+            # Training loop
+            training_metrics = []
+            best_loss = float('inf')
+            
+            for epoch in range(epochs):
+                step_result = self.train_step(data_loader, criterion)
+                
+                current_loss = step_result['loss']
+                training_metrics.append({
+                    'epoch': epoch,
+                    'loss': current_loss,
+                    'lr': step_result['learning_rate'],
+                    'grad_norm': step_result['grad_norm']
+                })
+                
+                best_loss = min(best_loss, current_loss)
+                
+                # Early stopping check
+                if step_result.get('early_stopping_triggered', False):
+                    print(f"🛑 Early stopping at epoch {epoch}")
+                    break
+            
+            return {
+                'training_completed': True,
+                'final_loss': best_loss,
+                'epochs_completed': len(training_metrics),
+                'training_metrics': training_metrics,
+                'message': f'Training completed successfully in {len(training_metrics)} epochs'
+            }
+            
+        except Exception as e:
+            return {
+                'training_completed': False,
+                'final_loss': float('inf'),
+                'epochs_completed': 0,
+                'training_metrics': [],
+                'message': f'Training failed: {str(e)}'
+            }
     
     def load_checkpoint(self, checkpoint_path: str) -> bool:
         """Carica checkpoint"""
