@@ -41,10 +41,10 @@ warnings.filterwarnings('ignore')
 class TrainingConfig:
     """Configurazione per AdaptiveTrainer"""
     
-    # Core training settings - OPTIMIZED FOR FINANCIAL DATA
-    initial_learning_rate: float = 1e-3     # AUMENTATO da 2e-4 per financial data convergence
-    min_learning_rate: float = 1e-5        # AUMENTATO da 1e-6 per better fine-tuning
-    max_learning_rate: float = 5e-3        # AUMENTATO da 1e-3 per adaptive learning
+    # Core training settings - AGGRESSIVE LEARNING FOR REAL TRADING
+    initial_learning_rate: float = 1e-2     # MOLTO PIÙ ALTO per forzare apprendimento
+    min_learning_rate: float = 5e-5        # Più alto per evitare plateau
+    max_learning_rate: float = 5e-2        # Molto più aggressivo
     
     # Batch size settings - ANTI-OVERFITTING
     initial_batch_size: int = 32         # RIDOTTO da 128 per prevenire overfitting
@@ -52,16 +52,16 @@ class TrainingConfig:
     max_batch_size: int = 128            # RIDOTTO da 2048 per stabilità
     batch_size_increment: int = 16       # RIDOTTO da 32 per incrementi graduali
     
-    # Early stopping - PIÙ AGGRESSIVO
-    early_stopping_patience: int = 15   # RIDOTTO da 20 per stop più rapido
-    early_stopping_min_delta: float = 1e-4  # AUMENTATO da 1e-6 per essere meno sensibile
+    # Early stopping - PERMETTERE APPRENDIMENTO PROFONDO
+    early_stopping_patience: int = 100   # MOLTO PIÙ ALTO per LSTM learning
+    early_stopping_min_delta: float = 1e-6  # PIÙ SENSIBILE per piccoli miglioramenti
     early_stopping_restore_best_weights: bool = True
     
-    # Learning rate scheduling - PIÙ REATTIVO
+    # Learning rate scheduling - OTTIMIZZATO PER APPRENDIMENTO REALE
     lr_scheduler_type: str = 'plateau'  # 'plateau', 'cosine', 'exponential', 'cyclic', 'adaptive'
-    lr_patience: int = 10  # RIDOTTO da 30 per reazione più rapida
-    lr_factor: float = 0.5  # RIDOTTO da 0.75 per riduzione più aggressiva
-    lr_cooldown: int = 5   # AUMENTATO da 2 per maggiore stabilità
+    lr_patience: int = 50   # MOLTO PIÙ ALTO per dare tempo al modello
+    lr_factor: float = 0.9  # MENO AGGRESSIVO nella riduzione
+    lr_cooldown: int = 20   # PIÙ STABILITÀ dopo riduzione LR
     
     # Training stability - OPTIMIZED FOR LSTM
     gradient_accumulation_steps: int = 4  # AUMENTATO da 1 per batch virtuali più grandi
@@ -752,7 +752,7 @@ class AdaptiveTrainer:
             }
         }
     
-    def train_model_protected(self, X: np.ndarray, y: np.ndarray, epochs: int = 100) -> Dict[str, Any]:
+    def train_model_protected(self, X: np.ndarray, y: np.ndarray, epochs: int = 1000) -> Dict[str, Any]:
         """
         Interfaccia compatibile con OptimizedLSTMTrainer per drop-in replacement
         """
