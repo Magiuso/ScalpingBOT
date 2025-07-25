@@ -37,4 +37,4 @@ Thumbs.db
 
 # Backup
 *.bak
-*.backup
+*.backuptest_analyzer_data/*.jsonl
