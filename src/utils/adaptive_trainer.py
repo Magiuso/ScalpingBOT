@@ -389,7 +389,7 @@ class AdaptiveTrainer:
             param_groups.append({
                 'params': lstm_other_params,
                 'lr': self.config.initial_learning_rate,
-                'weight_decay': 1e-4
+                'weight_decay': 5e-4  # INCREASED from 1e-4 for stronger L2 regularization
             })
         
         if attention_params:
@@ -403,7 +403,7 @@ class AdaptiveTrainer:
             param_groups.append({
                 'params': other_params,
                 'lr': self.config.initial_learning_rate * 2.0,
-                'weight_decay': 1e-4
+                'weight_decay': 5e-4  # INCREASED from 1e-4 for stronger L2 regularization
             })
         
         # Use AdamW optimizer
@@ -431,7 +431,18 @@ class AdaptiveTrainer:
         self.model.train()
         epoch_losses = []
         
-        for batch_idx, (data, target) in enumerate(data_loader):
+        for batch_idx, batch_data in enumerate(data_loader):
+            # print(f"🔍 DEBUG: batch_data type: {type(batch_data)}, length: {len(batch_data) if hasattr(batch_data, '__len__') else 'N/A'}")
+            
+            # Safe unpacking with validation
+            if len(batch_data) == 2:
+                data, target = batch_data
+            elif len(batch_data) == 3:
+                data, target, _ = batch_data  # Handle 3-element case
+                # print(f"🔍 DEBUG: Got 3-element batch, using first 2")
+            else:
+                raise ValueError(f"Unexpected batch structure: {len(batch_data)} elements")
+            
             # Move to device
             data, target = data.to(self.device), target.to(self.device)
             
@@ -758,30 +769,37 @@ class AdaptiveTrainer:
             dataset = TensorDataset(X_tensor, y_tensor)
             data_loader = DataLoader(dataset, batch_size=self.config.initial_batch_size, shuffle=True)
             
-            # Create criterion
-            criterion = torch.nn.MSELoss()
+            # Create criterion - HUBER LOSS per robustezza contro outliers
+            criterion = torch.nn.HuberLoss(delta=0.1)  # Più robusto di MSE per trading reale
             
             # Training loop
             training_metrics = []
             best_loss = float('inf')
             
             for epoch in range(epochs):
-                step_result = self.train_step(data_loader, criterion)
-                
-                current_loss = step_result['loss']
-                training_metrics.append({
-                    'epoch': epoch,
-                    'loss': current_loss,
-                    'lr': step_result['learning_rate'],
-                    'grad_norm': step_result['grad_norm']
-                })
-                
-                best_loss = min(best_loss, current_loss)
-                
-                # Early stopping check
-                if step_result.get('early_stopping_triggered', False):
-                    print(f"🛑 Early stopping at epoch {epoch}")
-                    break
+                try:
+                    step_result = self.train_step(data_loader, criterion)
+                    # print(f"🔍 DEBUG: train_step returned keys: {list(step_result.keys())}")
+                    
+                    current_loss = step_result['epoch_loss']
+                    training_metrics.append({
+                        'epoch': epoch,
+                        'loss': current_loss,
+                        'lr': step_result['current_lr'],
+                        'grad_norm': step_result.get('training_stats', {}).get('current_grad_norm', 0.0)
+                    })
+                    
+                    best_loss = min(best_loss, current_loss)
+                    
+                    # Early stopping check
+                    if step_result.get('early_stopping_triggered', False):
+                        print(f"🛑 Early stopping at epoch {epoch}")
+                        break
+                except Exception as step_error:
+                    import traceback
+                    # print(f"🔍 ERROR in train_step: {step_error}")
+                    # print(f"🔍 TRACEBACK: {traceback.format_exc()}")
+                    raise step_error
             
             return {
                 'training_completed': True,
@@ -792,6 +810,9 @@ class AdaptiveTrainer:
             }
             
         except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            # print(f"🔍 DETAILED ERROR: {error_details}")
             return {
                 'training_completed': False,
                 'final_loss': float('inf'),

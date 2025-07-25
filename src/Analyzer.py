@@ -234,7 +234,7 @@ class AnalyzerConfig:
     lstm_sequence_length: int = 30  # Lunghezza sequenza LSTM
     lstm_hidden_size: int = 256  # ANTI-OVERFITTING: Reduced from 512 to 256
     lstm_num_layers: int = 2     # ANTI-OVERFITTING: Reduced from 4 to 2 layers
-    lstm_dropout: float = 0.5    # ANTI-OVERFITTING: Increased from 0.3 to 0.5
+    lstm_dropout: float = 0.6    # ANTI-OVERFITTING: Increased from 0.5 to 0.6 for stronger regularization
     
     # ========== TECHNICAL INDICATORS ==========
     sma_periods: List[int] = field(default_factory=lambda: [5, 10, 20, 50])
@@ -390,7 +390,7 @@ class AnalyzerConfig:
         """Ottieni architettura per modelli ML"""
         architectures = {
             'LSTM_SupportResistance': {
-                'input_size': self.feature_vector_size,
+                'input_size': self.feature_vector_size * 8,  # 50 * 8 = 400 features (prices, volumes, sma, rsi, vwap, order_flow, buying_pressure, hvn)
                 'hidden_size': self.lstm_hidden_size,
                 'num_layers': self.lstm_num_layers,
                 'output_size': 2,  # S/R = 2 livelli
@@ -5030,7 +5030,18 @@ class OptimizedLSTM(nn.Module):
     
     def forward(self, x: torch.Tensor, hidden_states: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None) -> Tuple[torch.Tensor, List[Tuple[torch.Tensor, torch.Tensor]]]:
         """Forward pass dell'OptimizedLSTM"""
-        batch_size, seq_len, _ = x.shape
+        
+        # Handle both 2D and 3D input tensors
+        if x.dim() == 2:
+            # Convert 2D tensor to 3D: (batch, features) -> (batch, 1, features)
+            batch_size, features = x.shape
+            seq_len = 1
+            x = x.unsqueeze(1)  # Add sequence dimension
+            # safe_print(f"🔧 OptimizedLSTM: Converted 2D tensor {(batch_size, features)} to 3D {x.shape}")
+        elif x.dim() == 3:
+            batch_size, seq_len, _ = x.shape
+        else:
+            raise ValueError(f"OptimizedLSTM expects 2D or 3D input, got {x.dim()}D tensor with shape {x.shape}")
         
         # Initialize hidden states if not provided
         if hidden_states is None:
@@ -6903,33 +6914,76 @@ class RollingWindowTrainer:
         prices = data['prices']
         volumes = data['volumes']
         
-        # Parametri ottimizzati per support/resistance
+        # Parametri ottimizzati per support/resistance - REALISTICI PER TRADING
         window_size = 50
-        future_window = 20
+        future_window = 40  # AUMENTATO da 20 a 40 giorni per S/R a lungo termine
         
         X, y = [], []
         skipped_samples = 0
         
         for i in range(window_size, len(prices) - future_window):
-            # Features: prezzi, volumi, indicatori tecnici
+            # Features: prezzi, volumi, indicatori tecnici + VOLUME PROFILE
             price_features = prices[i-window_size:i]
             volume_features = volumes[i-window_size:i]
             sma_features = data['sma_20'][i-window_size:i]
             rsi_features = data['rsi'][i-window_size:i]
             
-            # Validazione NaN per ogni componente
+            # NUOVE FEATURES PER TRADING PROFITTEVOLE:
+            # Volume Profile - distribuzione volume per livello di prezzo
+            price_window = prices[i-window_size:i]
+            volume_window = volumes[i-window_size:i]
+            
+            # Volume-Weighted Average Price (VWAP)
+            vwap_window = np.sum(price_window * volume_window) / np.sum(volume_window) if np.sum(volume_window) > 0 else current_price
+            vwap_features = np.full(window_size, vwap_window)
+            
+            # Order Flow - compratori vs venditori
+            price_changes = np.diff(price_window, prepend=price_window[0])
+            volume_changes = np.diff(volume_window, prepend=volume_window[0])
+            
+            # Volume up/down (approssimazione order flow)
+            volume_up = np.where(price_changes > 0, volume_window, 0)
+            volume_down = np.where(price_changes < 0, volume_window, 0)
+            
+            # Cumulative Delta (net buying pressure)
+            cumulative_delta = np.cumsum(volume_up - volume_down)
+            
+            # High Volume Nodes (livelli con alto volume - supporti/resistenze naturali)
+            # Calcola i livelli di prezzo più tradati
+            price_levels = np.round(price_window / (current_price * 0.001)) * (current_price * 0.001)  # Round to 0.1% levels
+            volume_at_levels = {}
+            for j, level in enumerate(price_levels):
+                if level in volume_at_levels:
+                    volume_at_levels[level] += volume_window[j]
+                else:
+                    volume_at_levels[level] = volume_window[j]
+            
+            # Trova i 3 livelli con più volume (HVN - High Volume Nodes)
+            top_levels = sorted(volume_at_levels.items(), key=lambda x: x[1], reverse=True)[:3]
+            hvn_features = np.array([level[0] / current_price for level in top_levels] + [1.0] * (3 - len(top_levels)))[:3]
+            hvn_features = np.tile(hvn_features, window_size // 3 + 1)[:window_size]
+            
+            # Validazione NaN per ogni componente incluse NUOVE FEATURES
             if (np.isnan(price_features).any() or 
                 np.isnan(volume_features).any() or 
                 np.isnan(sma_features).any() or 
-                np.isnan(rsi_features).any()):
+                np.isnan(rsi_features).any() or
+                np.isnan(vwap_features).any() or
+                np.isnan(cumulative_delta).any() or
+                np.isnan(hvn_features).any()):
                 skipped_samples += 1
                 continue
             
+            # FEATURES AUMENTATE per trading profittevole: 50*8 = 400 features
             features = np.concatenate([
-                price_features,
-                volume_features,
-                sma_features,
-                rsi_features
+                price_features,              # 50 features
+                volume_features,             # 50 features  
+                sma_features,                # 50 features
+                rsi_features,                # 50 features
+                vwap_features,               # 50 features - VWAP
+                cumulative_delta,            # 50 features - Order Flow
+                volume_up,                   # 50 features - Buying pressure
+                hvn_features                 # 50 features - High Volume Nodes
             ])
             
             # TARGET per SUPPORT/RESISTANCE DETECTION
@@ -6942,9 +6996,10 @@ class RollingWindowTrainer:
                 skipped_samples += 1
                 continue
             
-            # Calcola livelli di supporto e resistenza
-            resistance = np.max(future_prices)
-            support = np.min(future_prices)
+            # Calcola livelli di supporto e resistenza - REALISTICI CON PERCENTILI
+            # Usa percentili invece di min/max per S/R più realistici nel trading
+            support = np.percentile(future_prices, 20)      # 20° percentile per support realistico
+            resistance = np.percentile(future_prices, 80)   # 80° percentile per resistance realistico
             
             # Normalizza i target relativi al prezzo corrente
             y_val = np.array([
@@ -6952,12 +7007,12 @@ class RollingWindowTrainer:
                 (resistance - current_price) / current_price    # Resistance level (positive)
             ])
             
-            # Aggiungi rumore per prevenire target identici
-            noise = np.random.normal(0, 0.001, size=y_val.shape)
+            # Aggiungi rumore per prevenire target identici - AUMENTATO PER REALISMO
+            noise = np.random.normal(0, 0.01, size=y_val.shape)  # AUMENTATO da 0.001 a 0.01
             y_val = y_val + noise
             
-            # Clamp estremi
-            y_val = np.clip(y_val, -0.1, 0.1)
+            # Clamp estremi - RANGE AUMENTATO PER TRADING REALE
+            y_val = np.clip(y_val, -0.3, 0.3)  # AUMENTATO da [-0.1,0.1] a [-0.3,0.3]
             
             X.append(features)
             y.append(y_val)
@@ -8327,7 +8382,7 @@ class RollingWindowTrainer:
                         epochs_without_improvement += epochs_in_batch
                     
                     # 🚨 OVERFITTING PROTECTION: Stop if loss too low
-                    if current_loss < 0.0001:
+                    if current_loss < 0.000001:  # Reduced from 0.0001 to allow deeper learning
                         training_info['overfitting_protection'] = {
                             'final_loss': current_loss,
                             'reason': 'Loss too low - potential overfitting',
@@ -8335,6 +8390,46 @@ class RollingWindowTrainer:
                         }
                         smart_print(f"🚨 OVERFITTING PROTECTION: Stopping training - loss too low ({current_loss:.6f})")
                         break
+                    
+                    # 🚨 PREDICTION-BASED EARLY STOPPING: Check if model predictions are becoming too perfect
+                    # Check if we have access to parent AssetAnalyzer for prediction monitoring
+                    parent_analyzer = None
+                    # Use getattr to safely access attributes without static analysis errors
+                    parent_analyzer = getattr(self, 'parent', None) or getattr(self, 'analyzer', None)
+                    
+                    if parent_analyzer and hasattr(parent_analyzer, 'prediction_monitoring'):
+                        # Get model type from training info if available
+                        model_name = training_info.get('model_name', 'unknown')
+                        # Try to determine model type from model name
+                        if 'support' in model_name.lower() or 'resistance' in model_name.lower():
+                            model_type_str = 'support_resistance'
+                        elif 'pattern' in model_name.lower():
+                            model_type_str = 'pattern_recognition'
+                        elif 'bias' in model_name.lower() or 'sentiment' in model_name.lower():
+                            model_type_str = 'bias_detection'
+                        elif 'trend' in model_name.lower():
+                            model_type_str = 'trend_analysis'
+                        elif 'volatility' in model_name.lower():
+                            model_type_str = 'volatility_prediction'
+                        elif 'momentum' in model_name.lower():
+                            model_type_str = 'momentum_analysis'
+                        else:
+                            model_type_str = 'unknown'
+                        
+                        recent_predictions = parent_analyzer.prediction_monitoring['predictions'].get(model_type_str, [])
+                        if len(recent_predictions) >= 50:
+                            # Check recent prediction confidence
+                            recent_confidences = [p['confidence'] for p in recent_predictions[-50:]]
+                            avg_confidence = np.mean(recent_confidences)
+                            
+                            if avg_confidence > 0.95:  # Suspiciously high confidence
+                                training_info['prediction_early_stop'] = {
+                                    'avg_confidence': avg_confidence,
+                                    'reason': 'Predictions too confident - possible overfitting',
+                                    'final_epoch': epoch_batch + epochs_in_batch
+                                }
+                                smart_print(f"🚨 PREDICTION EARLY STOP: Average confidence {avg_confidence:.1%} too high")
+                                break
                     
                     # Early stopping for no improvement
                     if epochs_without_improvement >= max_patience:
@@ -10430,6 +10525,15 @@ class AssetAnalyzer:
         
         # Learning phase tracking - USA CONFIG
         self.learning_phase = True
+        
+        # Prediction monitoring for validation phase (days 31-60)
+        self.prediction_monitoring = {
+            'start_timestamp': None,  # When learning phase ends
+            'predictions': defaultdict(list),  # Store predictions per model
+            'actuals': [],  # Store actual outcomes
+            'performance_metrics': defaultdict(dict),  # Performance per model
+            'overfitting_indicators': defaultdict(list)  # Track overfitting signs
+        }
         self.learning_start_time = datetime.now()
         self.min_learning_days = self.config.min_learning_days  # 🔧 CHANGED
         self.learning_progress = 0.0
@@ -11170,6 +11274,9 @@ class AssetAnalyzer:
                 # In backtesting mode, don't exit learning phase until explicitly told
                 if not is_backtesting:
                     self.learning_phase = False
+                    # Mark when we exit learning phase for validation monitoring
+                    self.prediction_monitoring['start_timestamp'] = datetime.now()
+                    smart_print(f"📊 Starting prediction monitoring phase - tracking overfitting indicators")
                     # Perform final comprehensive training
                     self._perform_final_training()
                 else:
@@ -11959,6 +12066,10 @@ class AssetAnalyzer:
                         analysis_output['predictions'][model_type.value] = result
                         analysis_output['confidence_levels'][model_type.value] = result.get('confidence', 0.5)
                         analysis_output['meta']['champions'][model_type.value] = champion
+                        
+                        # Track predictions for overfitting monitoring
+                        if self.prediction_monitoring['start_timestamp']:
+                            self._track_prediction_for_monitoring(model_type, result, market_data)
                     
                 except Exception as e:
                     self.logger.loggers['errors'].error(
@@ -17986,6 +18097,84 @@ class AssetAnalyzer:
                 
         except Exception as e:
             smart_print(f"❌ LSTM rollback error: {e}")
+    
+    def _track_prediction_for_monitoring(self, model_type: ModelType, prediction: Dict[str, Any], market_data: Dict[str, Any]) -> None:
+        """Track predictions for overfitting monitoring during validation phase (days 31-60)"""
+        
+        try:
+            # Store prediction with timestamp
+            prediction_record = {
+                'timestamp': datetime.now(),
+                'price': market_data.get('current_price', 0),
+                'prediction': prediction,
+                'confidence': prediction.get('confidence', 0)
+            }
+            
+            self.prediction_monitoring['predictions'][model_type.value].append(prediction_record)
+            
+            # Limit storage to last 1000 predictions per model
+            if len(self.prediction_monitoring['predictions'][model_type.value]) > 1000:
+                self.prediction_monitoring['predictions'][model_type.value] = \
+                    self.prediction_monitoring['predictions'][model_type.value][-1000:]
+            
+            # Check for overfitting indicators every 100 predictions
+            if len(self.prediction_monitoring['predictions'][model_type.value]) % 100 == 0:
+                self._check_overfitting_indicators(model_type)
+                
+        except Exception as e:
+            smart_print(f"❌ Error tracking prediction: {e}")
+    
+    def _check_overfitting_indicators(self, model_type: ModelType) -> None:
+        """Check for signs of overfitting in predictions"""
+        
+        try:
+            predictions = self.prediction_monitoring['predictions'][model_type.value][-100:]
+            
+            if len(predictions) < 50:
+                return
+            
+            # Check 1: Perfect predictions (suspiciously high confidence)
+            perfect_predictions = sum(1 for p in predictions if p['confidence'] > 0.95)
+            perfect_ratio = perfect_predictions / len(predictions)
+            
+            # Check 2: Low variance in predictions (memorization)
+            if model_type == ModelType.SUPPORT_RESISTANCE:
+                # Extract S/R levels and check variance
+                sr_levels = []
+                for p in predictions:
+                    if 'support_levels' in p['prediction']:
+                        sr_levels.extend(p['prediction']['support_levels'])
+                    if 'resistance_levels' in p['prediction']:
+                        sr_levels.extend(p['prediction']['resistance_levels'])
+                
+                if sr_levels:
+                    # Normalize by price
+                    normalized_levels = [level / p['price'] for level, p in zip(sr_levels[:len(predictions)], predictions)]
+                    variance = np.var(normalized_levels) if normalized_levels else 0
+                else:
+                    variance = 1.0  # Default to normal variance
+            else:
+                variance = 1.0  # For other models, skip this check
+            
+            # Store indicators
+            indicator = {
+                'timestamp': datetime.now(),
+                'perfect_ratio': perfect_ratio,
+                'prediction_variance': variance,
+                'sample_size': len(predictions)
+            }
+            
+            self.prediction_monitoring['overfitting_indicators'][model_type.value].append(indicator)
+            
+            # Alert if overfitting detected
+            if perfect_ratio > 0.8:  # More than 80% perfect predictions
+                smart_print(f"⚠️ OVERFITTING WARNING: {model_type.value} has {perfect_ratio:.1%} perfect predictions!")
+                
+            if variance < 0.001 and model_type == ModelType.SUPPORT_RESISTANCE:  
+                smart_print(f"⚠️ OVERFITTING WARNING: {model_type.value} predictions have very low variance ({variance:.6f})!")
+                
+        except Exception as e:
+            smart_print(f"❌ Error checking overfitting: {e}")
     
     def _document_optimal_config(self, loss: float, epoch: int) -> None:
         """Documenta la configurazione ottimale del training"""
