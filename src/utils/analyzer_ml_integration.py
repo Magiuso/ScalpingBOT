@@ -186,7 +186,7 @@ class OptimizedTrainingManager:
         val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
         
         # Training loop using train_step
-        criterion = torch.nn.MSELoss()
+        criterion = torch.nn.HuberLoss(delta=0.1)  # HUBER per robustezza con 15% noise
         epoch_results = []
         best_val_loss = float('inf')
         final_loss = float('inf')

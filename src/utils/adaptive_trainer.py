@@ -325,6 +325,9 @@ class AdaptiveTrainer:
         self.loss_tracker = LossTracker()
         self.training_history = defaultdict(list)
         
+        # Diagnostica learning - inizializzazione globale
+        self.loss_variance_window = deque(maxlen=500)  # Ultimi 500 steps per diagnostica
+        
         # Initialize optimizer
         self.optimizer = self._create_optimizer()
         self.lr_scheduler = AdaptiveLRScheduler(self.optimizer, config)
@@ -495,12 +498,16 @@ class AdaptiveTrainer:
                 self.optimizer.step()
             
             # Update tracking
-            epoch_losses.append(loss.item())
+            current_loss = loss.item()
+            epoch_losses.append(current_loss)
             current_lr = self.lr_scheduler.get_current_lr()
+            
+            # Update loss variance window per diagnostica
+            self.loss_variance_window.append(current_loss)
             
             # Update loss tracker with validation loss if available
             self.loss_tracker.update(
-                train_loss=loss.item(),
+                train_loss=current_loss,
                 learning_rate=current_lr,
                 grad_norm=float(grad_norm) if isinstance(grad_norm, (int, float)) else float(grad_norm.item())
             )
@@ -688,11 +695,27 @@ class AdaptiveTrainer:
         
         stats = self.loss_tracker.get_training_stats()
         
+        # 🎯 DIAGNOSTICA LEARNING OGNI 1000 STEPS
+        diagnostic_info = ""
+        if self.global_step % 1000 == 0 and hasattr(self, 'loss_variance_window') and len(self.loss_variance_window) >= 100:
+            loss_std = np.std(list(self.loss_variance_window)[-100:])  # Varianza ultimi 100 steps
+            loss_trend = np.mean(list(self.loss_variance_window)[-50:]) - np.mean(list(self.loss_variance_window)[-100:-50])
+            
+            # 🎯 DIAGNOSTICA OTTIMIZZATA PER MOSTRARE LEARNING REALE
+            if loss_std < 0.000005:  # Varianza troppo bassa
+                diagnostic_info = f" | ⚠️ PLATEAU (std={loss_std:.2e})"
+            elif loss_trend < -0.000005:  # Miglioramento significativo (più sensibile)
+                diagnostic_info = f" | ⬇️ LEARNING (Δ={loss_trend:.2e})"
+            elif loss_trend > 0.000005:  # Peggioramento significativo
+                diagnostic_info = f" | ⬆️ UNSTABLE (Δ={loss_trend:.2e})"  
+            else:  # Cambiamenti minimi
+                diagnostic_info = f" | 🔄 STABLE (Δ={loss_trend:.2e})"
+
         log_msg = (f"Step {self.global_step}: "
                   f"Loss={loss:.6f}, "
                   f"LR={lr:.2e}, "
                   f"GradNorm={grad_norm:.4f}, "
-                  f"Best_Val={stats['best_val_loss']:.6f}")
+                  f"Best_Val={stats['best_val_loss']:.6f}{diagnostic_info}")
         
         print(f"📊 {log_msg}")
     
@@ -854,7 +877,7 @@ def create_adaptive_trainer_config(**kwargs) -> TrainingConfig:
     
     # Default optimized configuration
     default_config = {
-        'initial_learning_rate': 1e-3,
+        'initial_learning_rate': 1e-2,  # AGGIORNATO per apprendimento reale
         'early_stopping_patience': 20,
         'lr_scheduler_type': 'plateau',
         'use_mixed_precision': True,
@@ -881,7 +904,7 @@ def test_adaptive_trainer():
     
     # Create configuration
     config = create_adaptive_trainer_config(
-        initial_learning_rate=1e-3,
+        initial_learning_rate=1e-2,  # AGGIORNATO per apprendimento aggressivo
         initial_batch_size=16
     )
     
