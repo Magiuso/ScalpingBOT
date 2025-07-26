@@ -310,6 +310,8 @@ class AdaptiveTrainer:
     def __init__(self, model: nn.Module, config: TrainingConfig, 
                  save_dir: Optional[str] = None):
         
+        # ⚡ FIX: Set model to train mode to ensure BatchNorm is initialized properly
+        model.train()
         self.model = model
         self.config = config
         self.save_dir = Path(save_dir) if save_dir else Path("./training_checkpoints")
@@ -449,6 +451,17 @@ class AdaptiveTrainer:
             # Move to device
             data, target = data.to(self.device), target.to(self.device)
             
+            # 🔧 CNN SHAPE FIX: Reshape input per CNN models
+            model_name = self.model.__class__.__name__
+            if 'CNN' in model_name or 'ConvNet' in model_name:
+                # CNN expects [batch_size, channels, sequence_length]
+                # Current data is [batch_size, features]
+                if len(data.shape) == 2:  # [batch, features]
+                    batch_size, features = data.shape
+                    # Reshape to [batch, 1, features] for Conv1d
+                    data = data.unsqueeze(1)  # Add channel dimension
+                    print(f"🔧 CNN input reshaped: [{batch_size}, {features}] → {data.shape}")
+            
             # Forward pass with mixed precision
             self.optimizer.zero_grad()
             
@@ -475,6 +488,12 @@ class AdaptiveTrainer:
             
             else:
                 # Standard training
+                # 🔧 CNN SHAPE FIX: Same fix for non-mixed precision path
+                model_name = self.model.__class__.__name__
+                if 'CNN' in model_name or 'ConvNet' in model_name:
+                    if len(data.shape) == 2:  # [batch, features]
+                        data = data.unsqueeze(1)  # Add channel dimension
+                
                 model_output = self.model(data)
                 # Handle tuple output from LSTM
                 if isinstance(model_output, tuple):
@@ -573,6 +592,12 @@ class AdaptiveTrainer:
             for data, target in validation_loader:
                 data, target = data.to(self.device), target.to(self.device)
                 
+                # 🔧 CNN SHAPE FIX: Reshape input per CNN models in validation
+                model_name = self.model.__class__.__name__
+                if 'CNN' in model_name or 'ConvNet' in model_name:
+                    if len(data.shape) == 2:  # [batch, features]
+                        data = data.unsqueeze(1)  # Add channel dimension
+                
                 if self.scaler is not None:
                     with autocast('cuda'):
                         model_output = self.model(data)
@@ -583,6 +608,12 @@ class AdaptiveTrainer:
                             output = model_output
                         loss = criterion(output, target)
                 else:
+                    # 🔧 CNN SHAPE FIX: Same for validation non-mixed precision
+                    model_name = self.model.__class__.__name__
+                    if 'CNN' in model_name or 'ConvNet' in model_name:
+                        if len(data.shape) == 2:  # [batch, features]
+                            data = data.unsqueeze(1)  # Add channel dimension
+                    
                     model_output = self.model(data)
                     # Handle tuple output from LSTM
                     if isinstance(model_output, tuple):
@@ -722,21 +753,35 @@ class AdaptiveTrainer:
     def _save_checkpoint(self):
         """Salva checkpoint del modello"""
         
-        checkpoint = {
-            'epoch': self.current_epoch,
-            'global_step': self.global_step,
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'best_val_loss': self.loss_tracker.best_val_loss,
-            'training_config': self.config.__dict__,
-            'training_history': dict(self.training_history)
-        }
-        
-        if self.swa_model is not None:
-            checkpoint['swa_model_state_dict'] = self.swa_model.state_dict()
-        
-        checkpoint_path = self.save_dir / f"checkpoint_step_{self.global_step}.pt"
-        torch.save(checkpoint, checkpoint_path)
+        # ⚡ FIX: Evita problemi di serializzazione con BatchNorm 
+        # Salva solo state_dict invece del modello completo
+        try:
+            checkpoint = {
+                'epoch': self.current_epoch,
+                'global_step': self.global_step,
+                'model_state_dict': self.model.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict(),
+                'best_val_loss': self.loss_tracker.best_val_loss,
+                'training_config': self.config.__dict__,
+                'training_history': dict(self.training_history)
+            }
+            
+            if self.swa_model is not None:
+                checkpoint['swa_model_state_dict'] = self.swa_model.state_dict()
+            
+            checkpoint_path = self.save_dir / f"checkpoint_step_{self.global_step}.pt"
+            torch.save(checkpoint, checkpoint_path)
+        except Exception as e:
+            # Se fallisce, proviamo senza optimizer state (può contenere riferimenti problematici)
+            print(f"⚠️ Checkpoint save failed, trying without optimizer state: {e}")
+            checkpoint_minimal = {
+                'epoch': self.current_epoch,
+                'global_step': self.global_step,
+                'model_state_dict': self.model.state_dict(),
+                'best_val_loss': self.loss_tracker.best_val_loss
+            }
+            checkpoint_path = self.save_dir / f"checkpoint_minimal_step_{self.global_step}.pt"
+            torch.save(checkpoint_minimal, checkpoint_path)
         
         # Save best model separately
         if self.loss_tracker.val_losses and self.loss_tracker.val_losses[-1] == self.loss_tracker.best_val_loss:
@@ -829,7 +874,8 @@ class AdaptiveTrainer:
                 'final_loss': best_loss,
                 'epochs_completed': len(training_metrics),
                 'training_metrics': training_metrics,
-                'message': f'Training completed successfully in {len(training_metrics)} epochs'
+                'message': f'Training completed successfully in {len(training_metrics)} epochs',
+                'status': 'success'  # ✅ AGGIUNTO: Chiave richiesta da Analyzer.py
             }
             
         except Exception as e:
@@ -841,7 +887,8 @@ class AdaptiveTrainer:
                 'final_loss': float('inf'),
                 'epochs_completed': 0,
                 'training_metrics': [],
-                'message': f'Training failed: {str(e)}'
+                'message': f'Training failed: {str(e)}',
+                'status': 'failed'  # ✅ AGGIUNTO: Chiave richiesta da Analyzer.py
             }
     
     def load_checkpoint(self, checkpoint_path: str) -> bool:
