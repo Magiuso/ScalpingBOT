@@ -7661,9 +7661,9 @@ class RollingWindowTrainer:
         prices = data['prices']
         volumes = data['volumes']
         
-        # Parametri ottimizzati per trend analysis
+        # Parametri ottimizzati per trend analysis - CONSISTENT con LSTM
         window_size = 100
-        future_window = 20
+        future_window = 1000  # 🚀 CONSISTENT con LSTM_SupportResistance per target variance alta
         
         if len(prices) < window_size + future_window:
             return np.array([]), np.array([])
@@ -8017,6 +8017,9 @@ class RollingWindowTrainer:
                 
                 # Normalizza il slope rispetto al prezzo corrente
                 normalized_slope = slope / current_price
+                
+                # 🚀 SCALE TARGET: Aumenta varianza per training reale come LSTM
+                normalized_slope = normalized_slope * 10000  # Scale per target variance più alta
                 
                 # Validazione target finale
                 if np.isnan(normalized_slope) or np.isinf(normalized_slope):
@@ -10752,37 +10755,39 @@ class AssetAnalyzer:
         """
         
         if 'RandomForest' in model_name:
-            # 🌲 PARAMETRI AVANZATI PER RANDOMFOREST
+            # 🚀 PARAMETRI ULTRA ANTI-OVERFITTING PER TRADING REALE
             param_distributions = {
-                'n_estimators': [80, 100, 120, 150],
-                'max_depth': [4, 5, 6, 7, 8],
-                'min_samples_split': [50, 80, 100, 120],
-                'min_samples_leaf': [20, 30, 40, 50],
-                'max_features': ['sqrt', 'log2', None],
+                'n_estimators': [50, 60, 70, 80],              # 🔧 RIDOTTO: Max 80 alberi
+                'max_depth': [2, 3, 4],                        # 🔧 SHALLOW: Max profondità 4
+                'min_samples_split': [150, 200, 250, 300],     # 🔧 AUMENTATO: Min 150 per split
+                'min_samples_leaf': [80, 100, 120, 150],       # 🔧 AUMENTATO: Min 80 per foglia
+                'max_features': ['sqrt'],                      # 🔧 SOLO sqrt per limitare features
                 'bootstrap': [True],
-                'max_samples': [0.6, 0.7, 0.8],
-                'min_weight_fraction_leaf': [0.0, 0.02, 0.05],
-                'max_leaf_nodes': [12, 16, 20, 24],
-                'ccp_alpha': [0.0, 0.01, 0.02]
+                'max_samples': [0.4, 0.5, 0.6],               # 🔧 RIDOTTO: Max 60% campioni
+                'min_weight_fraction_leaf': [0.05, 0.1, 0.15], # 🔧 AUMENTATO: Min 5% peso
+                'max_leaf_nodes': [6, 8, 10, 12],             # 🔧 RIDOTTO: Max 12 nodi
+                'ccp_alpha': [0.02, 0.05, 0.1]                # 🔧 AUMENTATO: Pruning più aggressivo
             }
             base_model = RandomForestRegressor(
                 random_state=42, n_jobs=-1, oob_score=True
             )
             
         elif 'GradientBoosting' in model_name:
-            # 📈 PARAMETRI ANTI-OVERFITTING PER GRADIENT BOOSTING  
+            # 🚀 PARAMETRI ULTRA ANTI-OVERFITTING PER TRADING REALE (V2)
             param_distributions = {
-                'n_estimators': [50, 80, 100, 120],        # Ridotti per evitare overfitting
-                'learning_rate': [0.01, 0.02, 0.03, 0.05], # Learning rate più bassi
-                'max_depth': [2, 3, 4],                     # Alberi più shallow
-                'min_samples_split': [100, 150, 200, 250], # Più campioni per split
-                'min_samples_leaf': [60, 80, 100, 120],    # Foglie più grandi
-                'subsample': [0.5, 0.6, 0.7, 0.8],        # Più subsample per diversità
-                'max_features': ['sqrt', 'log2'],          # Solo features limitate
-                'validation_fraction': [0.2, 0.25, 0.3],  # Più dati per validation
-                'n_iter_no_change': [5, 8, 10],           # Early stopping più aggressivo
-                'tol': [1e-3, 1e-2],                      # Toleranza più alta per stopping
-                'alpha': [0.9, 0.95, 0.99]                # Regolarizzazione più forte
+                'n_estimators': [30, 40, 50, 60],          # 🔧 RIDOTTO ANCORA: Max 60 alberi
+                'learning_rate': [0.001, 0.005, 0.01],    # 🔧 RIDOTTO ANCORA: Learning rate ultra ultrabasso
+                'max_depth': [1, 2],                       # 🔧 SHALLOW: Max profondità 2 
+                'min_samples_split': [250, 300, 350, 400], # 🔧 AUMENTATO: Min 250 per split
+                'min_samples_leaf': [120, 150, 180, 200], # 🔧 AUMENTATO: Min 120 per foglia
+                'subsample': [0.3, 0.4, 0.5],             # 🔧 RIDOTTO: Max 50% campioni
+                'max_features': ['sqrt'],                  # 🔧 SOLO sqrt per limitare features
+                'validation_fraction': [0.35, 0.4, 0.45], # 🔧 AUMENTATO: Min 35% validation
+                'n_iter_no_change': [1, 2, 3],            # 🔧 RIDOTTO: Early stopping ultra aggressivo
+                'tol': [1e-2, 2e-2, 5e-2],                # 🔧 AUMENTATO: Toleranza molto alta
+                'alpha': [0.99],                          # 🔧 FISSO: Solo regolarizzazione massima
+                'max_leaf_nodes': [4, 6, 8],              # 🔧 AGGIUNTO: Limitazione nodi foglia
+                'min_impurity_decrease': [0.03, 0.05, 0.07] # 🔧 AGGIUNTO: Soglia alta per split
             }
             base_model = GradientBoostingRegressor(
                 random_state=42, warm_start=False
@@ -11015,39 +11020,39 @@ class AssetAnalyzer:
             self.ml_models[model_name] = TransformerPredictor(**config)
         
         # Traditional ML models - OPTIMIZED v3.0 with better balance
-        # RandomForest con parametri bilanciati per migliore generalizzazione
+        # 🚀 RandomForest ANTI-OVERFITTING per TRADING REALE
         self.ml_models['RandomForest_Trend'] = RandomForestRegressor(
-            n_estimators=100,           # IMPROVED: More trees for better accuracy
-            max_depth=6,                # IMPROVED: Deeper for better patterns
-            min_samples_split=100,      # BALANCED: Reasonable split threshold
-            min_samples_leaf=30,        # IMPROVED: Lower leaf size for more granularity
-            max_features='log2',        # IMPROVED: Better feature selection
+            n_estimators=80,            # 🔧 RIDOTTO: Meno alberi per evitare memorizzazione
+            max_depth=3,                # 🔧 SHALLOW: Alberi meno profondi = più generalizzazione
+            min_samples_split=200,      # 🔧 AUMENTATO: Più campioni per split = meno overfitting
+            min_samples_leaf=100,       # 🔧 AUMENTATO: Foglie più grandi = meno dettagli
+            max_features='sqrt',        # 🔧 OTTIMALE: Solo radice quadrata delle features
             bootstrap=True,
             oob_score=True,            
             random_state=42,
             n_jobs=-1,
-            max_samples=0.6,            # BALANCED: More data per tree
-            min_weight_fraction_leaf=0.05, # BALANCED: 5% weight in leaf
-            max_leaf_nodes=16,          # BALANCED: More leaf nodes allowed
-            ccp_alpha=0.01              # MILD: Less aggressive pruning
+            max_samples=0.5,            # 🔧 RIDOTTO: Solo 50% dati per albero = più diversità
+            min_weight_fraction_leaf=0.1, # 🔧 AUMENTATO: 10% peso minimo = foglie più bilanciate
+            max_leaf_nodes=8,           # 🔧 RIDOTTO: Massimo 8 nodi foglia = alberi semplici
+            ccp_alpha=0.05              # 🔧 AUMENTATO: Pruning aggressivo per ridurre complessità
         )
         
-        # GradientBoosting ANTI-OVERFITTING ottimizzato
+        # 🚀 GradientBoosting ULTRA ANTI-OVERFITTING per TRADING REALE (V2)
         self.ml_models['GradientBoosting_Trend'] = GradientBoostingRegressor(
-            n_estimators=100,           # ANTI-OVERFITTING: Ridotto da 200 a 100
-            learning_rate=0.02,         # ANTI-OVERFITTING: Ridotto da 0.05 a 0.02
-            max_depth=3,                # ANTI-OVERFITTING: Ridotto da 4 a 3
-            min_samples_split=150,      # ANTI-OVERFITTING: Aumentato da 80 a 150
-            min_samples_leaf=80,        # ANTI-OVERFITTING: Aumentato da 40 a 80
-            subsample=0.6,              # ANTI-OVERFITTING: Ridotto da 0.8 a 0.6
-            max_features='sqrt',        # OPTIMAL: Square root of features
+            n_estimators=50,            # 🔧 RIDOTTO ANCORA: Meno alberi per evitare memorizzazione
+            learning_rate=0.005,        # 🔧 RIDOTTO ANCORA: Learning rate ultra basso
+            max_depth=2,                # 🔧 SHALLOW: Alberi meno profondi = più generalizzazione
+            min_samples_split=300,      # 🔧 AUMENTATO: Ancora più campioni per split
+            min_samples_leaf=150,       # 🔧 AUMENTATO: Foglie ancora più grandi
+            subsample=0.4,              # 🔧 RIDOTTO: Solo 40% dati per albero = massima diversità
+            max_features='sqrt',        # 🔧 OTTIMALE: Solo radice quadrata delle features
             random_state=42,
-            validation_fraction=0.25,   # ANTI-OVERFITTING: Aumentato da 0.2 a 0.25
-            n_iter_no_change=5,         # ANTI-OVERFITTING: Ridotto da 10 a 5
-            tol=1e-3,                   # ANTI-OVERFITTING: Aumentato da 1e-4 a 1e-3
-            alpha=0.95,                 # ANTI-OVERFITTING: Aumentato da 0.9 a 0.95
-            max_leaf_nodes=20,          # ANTI-OVERFITTING: Aggiunto limite
-            min_impurity_decrease=0.01, # ANTI-OVERFITTING: Aggiunta regolarizzazione
+            validation_fraction=0.4,    # 🔧 AUMENTATO: 40% dati per validation = controllo massimo
+            n_iter_no_change=2,         # 🔧 RIDOTTO: Early stopping ultra aggressivo
+            tol=1e-2,                   # 🔧 AUMENTATO: Toleranza alta per stopping precoce
+            alpha=0.99,                 # 🔧 AUMENTATO: Regolarizzazione massima
+            max_leaf_nodes=6,           # 🔧 RIDOTTO DRASTICAMENTE: Come RandomForest ma ancora meno!
+            min_impurity_decrease=0.05, # 🔧 AUMENTATO DRASTICAMENTE: Soglia molto alta per split
             warm_start=False            # Fresh start each time
         )
         
@@ -13687,10 +13692,37 @@ class AssetAnalyzer:
                 raise InsufficientDataError(required=100, available=len(prices), operation="RandomForest_Trend")
             
             try:
-                # Feature engineering per trend
-                features = self._prepare_trend_features(prices, volumes)
+                # 🚀 USA _prepare_trend_dataset per IDENTICHE features al training
+                # Prepara dati come nel training dataset
+                data_dict = {
+                    'prices': prices,
+                    'volumes': volumes,
+                    'sma_20': np.convolve(prices, np.ones(20)/20, mode='same'),
+                    'sma_50': np.convolve(prices, np.ones(50)/50, mode='same'),
+                    'returns': np.diff(prices, prepend=prices[0]) / prices
+                }
                 
-                # Verifica che il modello sia stato trainato
+                # Calcola RSI
+                if len(prices) >= 14:
+                    price_changes = np.diff(prices, prepend=prices[0])
+                    gains = np.where(price_changes > 0, price_changes, 0)
+                    losses = np.where(price_changes < 0, -price_changes, 0)
+                    avg_gains = np.convolve(gains, np.ones(14)/14, mode='same')
+                    avg_losses = np.convolve(losses, np.ones(14)/14, mode='same')
+                    rs = avg_gains / (avg_losses + 1e-10)
+                    data_dict['rsi'] = 100 - (100 / (1 + rs))
+                else:
+                    data_dict['rsi'] = np.full_like(prices, 50.0)
+                
+                # Usa _prepare_trend_dataset per una singola prediction
+                X, _ = self._prepare_trend_dataset(data_dict)
+                if len(X) == 0:
+                    raise InsufficientDataError(required=100, available=len(prices), operation="RandomForest_Trend dataset")
+                
+                # Usa l'ultimo sample (più recente) per prediction
+                features = X[-1]  # Prendi l'ultima row del dataset
+                
+                # Verifica che il modello sia stato trainato  
                 # Prediction
                 trend_prediction = model.predict(features.reshape(1, -1))[0]
                 
@@ -16741,197 +16773,6 @@ class AssetAnalyzer:
             "confidence": overall_confidence # Già float
         }
         
-    def _prepare_trend_features(self, prices: np.ndarray, volumes: np.ndarray) -> np.ndarray:
-        """Prepara features per trend analysis CON CACHE - OTTIMIZZATO"""
-        
-        safe_print("🔄 Preparando trend features con cache...")
-        
-        # Pre-allocazione features array per performance
-        n_features = 12  # Numero totale features calcolate
-        features = np.zeros(n_features, dtype=np.float32)
-        feature_idx = 0
-        
-        # Cache valori comuni per evitare ricalcoli
-        n_prices = len(prices)
-        n_volumes = len(volumes)
-        current_price = float(prices[-1]) if n_prices > 0 else 0.0
-        
-        try:
-            # 🚀 USA CACHED INDICATORS
-            sma_10 = self.cached_indicators['sma'](prices, 10)
-            sma_20 = self.cached_indicators['sma'](prices, 20)
-            sma_50 = self.cached_indicators['sma'](prices, 50)
-            rsi = self.cached_indicators['rsi'](prices, 14)
-            macd, macd_signal, macd_hist = self.cached_indicators['macd'](prices)
-            atr = self.cached_indicators['atr'](prices, prices, prices, 14)
-            
-            safe_print("✅ Trend indicators calcolati con cache")
-            
-        except Exception as e:
-            safe_print(f"❌ Errore cache trend features: {e}")
-            
-            # Fallback manuale
-            sma_10 = ta.SMA(prices, timeperiod=10) if n_prices >= 10 else np.full_like(prices, current_price) # type: ignore
-            sma_20 = ta.SMA(prices, timeperiod=20) if n_prices >= 20 else np.full_like(prices, current_price) # type: ignore
-            sma_50 = ta.SMA(prices, timeperiod=50) if n_prices >= 50 else np.full_like(prices, current_price) # type: ignore
-            rsi = ta.RSI(prices, timeperiod=14) if n_prices >= 14 else np.full_like(prices, 50.0) # type: ignore
-            macd, macd_signal, macd_hist = ta.MACD(prices) if n_prices >= 26 else (np.zeros_like(prices), np.zeros_like(prices), np.zeros_like(prices)) # type: ignore
-            atr = ta.ATR(prices, prices, prices, timeperiod=14) if n_prices >= 14 else np.full_like(prices, 0.01) # type: ignore
-        
-        # Moving averages ratios - evita ricalcoli
-        sma_arrays = [(10, sma_10), (20, sma_20), (50, sma_50)]
-        for period, sma_values in sma_arrays:
-            if n_prices >= period and len(sma_values) > 0:
-                sma_current = float(sma_values[-1])
-                if sma_current != 0:
-                    features[feature_idx] = (current_price - sma_current) / sma_current
-                # else: già 0.0 da pre-allocazione
-            feature_idx += 1
-        
-        # Price position relative to range - OTTIMIZZATO: calcola min/max una volta
-        if n_prices >= 20:
-            # Usa view invece di slice copy per calcoli statistici
-            lookback_20 = min(20, n_prices)
-            start_idx = n_prices - lookback_20
-            
-            # Calcola min/max in un passaggio senza creare copie
-            high_20 = float(np.max(prices[start_idx:]))
-            low_20 = float(np.min(prices[start_idx:]))
-            
-            if high_20 > low_20:
-                features[feature_idx] = (current_price - low_20) / (high_20 - low_20)
-            else:
-                features[feature_idx] = 0.5
-        else:
-            features[feature_idx] = 0.5
-        feature_idx += 1
-        
-        # RSI normalized
-        if len(rsi) > 0:
-            rsi_value = float(rsi[-1])
-            if not np.isnan(rsi_value):
-                features[feature_idx] = rsi_value / 100.0
-            else:
-                features[feature_idx] = 0.5
-        else:
-            features[feature_idx] = 0.5
-        feature_idx += 1
-        
-        # MACD normalized
-        if len(macd) > 0:
-            macd_value = float(macd[-1])
-            if not np.isnan(macd_value) and current_price != 0:
-                features[feature_idx] = macd_value / current_price
-            # else: già 0.0 da pre-allocazione
-        feature_idx += 1
-        
-        # Trend slopes - OTTIMIZZATO: pre-alloca x arrays
-        x_10 = np.arange(10, dtype=np.float32) if n_prices >= 10 else None
-        x_20 = np.arange(20, dtype=np.float32) if n_prices >= 20 else None
-        
-        for lookback, x_array in [(10, x_10), (20, x_20)]:
-            if n_prices >= lookback and x_array is not None:
-                try:
-                    # Usa view invece di slice copy
-                    start_idx = n_prices - lookback
-                    y_view = prices[start_idx:]  # View, non copy
-                    
-                    slope, _ = np.polyfit(x_array, y_view, 1)
-                    y_mean = float(np.mean(y_view))
-                    
-                    if y_mean != 0:
-                        features[feature_idx] = slope / y_mean
-                    # else: già 0.0 da pre-allocazione
-                except:
-                    pass  # già 0.0 da pre-allocazione
-            feature_idx += 1
-        
-        # Volatility - OTTIMIZZATO: evita copie multiple
-        if n_prices >= 21:
-            try:
-                # Calcola returns in-place per evitare copie
-                start_idx = n_prices - 21
-                price_slice = prices[start_idx:]  # View
-                
-                # Pre-alloca array returns
-                returns = np.empty(20, dtype=np.float32)
-                valid_returns = 0
-                
-                # Calcola returns evitando copie
-                for i in range(20):
-                    if price_slice[i] != 0:
-                        returns[valid_returns] = (price_slice[i+1] - price_slice[i]) / price_slice[i]
-                        if np.isfinite(returns[valid_returns]):
-                            valid_returns += 1
-                
-                if valid_returns > 0:
-                    # Usa solo la parte valida dell'array
-                    features[feature_idx] = float(np.std(returns[:valid_returns]))
-                # else: già 0.0 da pre-allocazione
-            except:
-                pass  # già 0.0 da pre-allocazione
-        feature_idx += 1
-        
-        # Volume analysis - OTTIMIZZATO: evita slicing multipli
-        if n_volumes >= 20:
-            try:
-                # Calcola volumi medi una volta senza creare copie
-                recent_sum = 0.0
-                older_sum = 0.0
-                
-                # Ultimi 5 volumi
-                for i in range(n_volumes - 5, n_volumes):
-                    recent_sum += volumes[i]
-                
-                # Ultimi 20 volumi 
-                for i in range(n_volumes - 20, n_volumes):
-                    older_sum += volumes[i]
-                
-                recent_volume = recent_sum / 5.0
-                older_volume = older_sum / 20.0
-                
-                if older_volume != 0:
-                    features[feature_idx] = recent_volume / older_volume
-                else:
-                    features[feature_idx] = 1.0
-            except:
-                features[feature_idx] = 1.0
-        else:
-            features[feature_idx] = 1.0
-        feature_idx += 1
-        
-        # Price acceleration - OTTIMIZZATO: accessi diretti agli indici
-        if n_prices >= 10:
-            try:
-                price_current = current_price
-                price_5_ago = float(prices[n_prices - 6])  # -6 perché -1 è current
-                price_10_ago = float(prices[n_prices - 11])  # -11 perché -1 è current
-                
-                if price_5_ago != 0 and price_10_ago != 0:
-                    recent_change = (price_current - price_5_ago) / price_5_ago
-                    older_change = (price_5_ago - price_10_ago) / price_10_ago
-                    features[feature_idx] = recent_change - older_change
-                # else: già 0.0 da pre-allocazione
-            except:
-                pass  # già 0.0 da pre-allocazione
-        feature_idx += 1
-        
-        # ADX using cache if possible
-        try:
-            adx = ta.ADX(prices, prices, prices, timeperiod=14) if n_prices >= 14 else np.full_like(prices, 50.0) # type: ignore
-            if len(adx) > 0:
-                adx_value = float(adx[-1])
-                if not np.isnan(adx_value):
-                    features[feature_idx] = adx_value / 100.0
-                else:
-                    features[feature_idx] = 0.5
-            else:
-                features[feature_idx] = 0.5
-        except:
-            features[feature_idx] = 0.5
-        
-        safe_print(f"✅ Trend features OTTIMIZZATO: {len(features)} features")
-        return features
     
     def _estimate_confidence_rf(self, model: RandomForestRegressor, features: np.ndarray) -> np.ndarray:
         """Stima confidence per RandomForest"""
@@ -17139,43 +16980,68 @@ class AssetAnalyzer:
     
     def _prepare_gb_trend_features(self, prices: np.ndarray, volumes: np.ndarray, 
                                  market_data: Dict[str, Any]) -> np.ndarray:
-        """Prepara features per GradientBoosting trend analysis"""
+        """🚀 GradientBoosting usa SOLO _prepare_trend_dataset (IDENTICO a RandomForest)"""
         
-        # Similar to basic trend features but with some additions
-        features = []
+        # 🚀 USA ESATTAMENTE _prepare_trend_dataset senza features aggiuntive
+        # Identico a RandomForest per evitare overfitting
+        data_dict = {
+            'prices': prices,
+            'volumes': volumes,
+            'sma_20': np.convolve(prices, np.ones(20)/20, mode='same'),
+            'sma_50': np.convolve(prices, np.ones(50)/50, mode='same'),
+            'returns': np.diff(prices, prepend=prices[0]) / prices
+        }
         
-        # All basic trend features
-        basic_features = self._prepare_trend_features(prices, volumes)
-        features.extend(basic_features)
-        
-        # Additional GB-specific features
-        
-        # Hurst exponent approximation (trend persistence)
-        if len(prices) >= 50:
-            hurst = self._calculate_hurst_exponent(prices[-50:])
-            features.append(hurst)
+        # Calcola RSI
+        if len(prices) >= 14:
+            price_changes = np.diff(prices, prepend=prices[0])
+            gains = np.where(price_changes > 0, price_changes, 0)
+            losses = np.where(price_changes < 0, -price_changes, 0)
+            avg_gains = np.convolve(gains, np.ones(14)/14, mode='same')
+            avg_losses = np.convolve(losses, np.ones(14)/14, mode='same')
+            rs = avg_gains / (avg_losses + 1e-10)
+            data_dict['rsi'] = 100 - (100 / (1 + rs))
         else:
-            features.append(0.5)
+            data_dict['rsi'] = np.full_like(prices, 50.0)
         
-        # Fractal dimension (market complexity)
-        if len(prices) >= 30:
-            fractal_dim = self._calculate_fractal_dimension(prices[-30:])
-            features.append(fractal_dim)
+        # 🚀 USA _prepare_trend_dataset per IDENTICHE 38 features al training
+        X, _ = self._prepare_trend_dataset(data_dict)
+        if len(X) > 0:
+            # Usa l'ultimo sample (più recente) per prediction
+            return X[-1]  # Prendi l'ultima row del dataset (38 features)
         else:
-            features.append(1.5)
+            # Fallback: usa features base se dataset prep fallisce
+            return np.zeros(38)  # 38 features standard
         
-        # Market efficiency ratio
-        if len(prices) >= 20:
-            efficiency = self._calculate_efficiency_ratio(prices[-20:])
-            features.append(efficiency)
-        else:
-            features.append(0.5)
+        # 🚫 COMMENTATE: Additional GB-specific features (causavano overfitting!)
+        # PROBLEMA: features extra non presenti nel training dataset
         
-        # Microstructure features
-        features.append(market_data.get('spread_percentage', 0))
-        features.append(market_data.get('volume_momentum', 0))
-        
-        return np.array(features)
+        # # Hurst exponent approximation (trend persistence)
+        # if len(prices) >= 50:
+        #     hurst = self._calculate_hurst_exponent(prices[-50:])
+        #     features.append(hurst)
+        # else:
+        #     features.append(0.5)
+        # 
+        # # Fractal dimension (market complexity)
+        # if len(prices) >= 30:
+        #     fractal_dim = self._calculate_fractal_dimension(prices[-30:])
+        #     features.append(fractal_dim)
+        # else:
+        #     features.append(1.5)
+        # 
+        # # Market efficiency ratio
+        # if len(prices) >= 20:
+        #     efficiency = self._calculate_efficiency_ratio(prices[-20:])
+        #     features.append(efficiency)
+        # else:
+        #     features.append(0.5)
+        # 
+        # # Microstructure features
+        # features.append(market_data.get('spread_percentage', 0))
+        # features.append(market_data.get('volume_momentum', 0))
+        # 
+        # return np.array(features)  # 🚫 COMMENTATO: Restituiva 42+ features!
     
     def _estimate_confidence_gb(self, model: GradientBoostingRegressor, features: np.ndarray) -> float:
         """Stima confidence per GradientBoosting"""
