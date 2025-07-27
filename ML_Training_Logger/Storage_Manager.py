@@ -550,21 +550,29 @@ class StorageManager:
         Returns:
             bool: True se evento memorizzato con successo
         """
+        print(f"🔥 DEBUG: StorageManager.store_event called with event_type={event.event_type}, severity={event.severity}")
+        print(f"🔥 DEBUG: enable_file_output={self.storage_config.enable_file_output}")
+        
         if not self.storage_config.enable_file_output:
+            print(f"🔥 DEBUG: File output disabled, returning True")
             return True
         
         # Add to buffer
+        print(f"🔥 DEBUG: Adding event to buffer...")
         if self.event_buffer.add_event(event):
             self.pending_events_count += 1
+            print(f"🔥 DEBUG: Event added to buffer, pending_events_count={self.pending_events_count}")
             
             # Check for critical events that need immediate flush
             if (self.storage_config.flush_on_critical and 
                 event.severity == EventSeverity.CRITICAL):
+                print(f"🔥 DEBUG: Critical event detected, flushing immediately...")
                 self._flush_pending_events()
-            
+            else:
+                print(f"🔥 DEBUG: Non-critical event, will flush later...")
             return True
         else:
-            # Buffer full
+            print(f"🔥 DEBUG: Failed to add event to buffer!")
             self.stats['write_errors'] += 1
             return False
     
@@ -590,6 +598,7 @@ class StorageManager:
     
     def _writer_loop(self):
         """Loop di scrittura asincrono"""
+        print(f"🔥 DEBUG: Writer loop STARTED! flush_interval={self.storage_config.flush_interval_seconds}s, is_running={self.is_running}")
         
         while self.is_running and not self.stop_event.is_set():
             try:
@@ -603,6 +612,7 @@ class StorageManager:
                 )
                 
                 if should_flush and self.pending_events_count > 0:
+                    print(f"🔥 DEBUG: Should flush! time_since_flush={time_since_flush:.1f}s, pending_events={self.pending_events_count}")
                     self._flush_pending_events()
                 
                 # Sleep briefly to avoid busy waiting
@@ -612,25 +622,34 @@ class StorageManager:
                 print(f"Error in writer loop: {e}")
                 self.stats['write_errors'] += 1
                 time.sleep(1.0)
+        
+        print(f"🔥 DEBUG: Writer loop STOPPED! is_running={self.is_running}")
 
     def _flush_pending_events(self):
         """Flush eventi in attesa di scrittura"""
+        print(f"🔥 DEBUG: _flush_pending_events called, pending_events_count={self.pending_events_count}")
         
         if self.pending_events_count == 0:
+            print(f"🔥 DEBUG: No pending events to flush")
             return
         
         try:
             # Get events from buffer
             events = self.event_buffer.get_events()
+            print(f"🔥 DEBUG: Got {len(events)} events from buffer")
             
             if not events:
+                print(f"🔥 DEBUG: Event buffer returned empty list")
                 return
             
             # Write to all active formats
+            print(f"🔥 DEBUG: Writing to {len(self.active_writers)} active writers")
             for format_type, writer in self.active_writers.items():
                 try:
+                    print(f"🔥 DEBUG: Writing {len(events)} events to {format_type.value} writer")
                     bytes_written = writer.write_events_batch(events)
                     writer.flush()
+                    print(f"🔥 DEBUG: Wrote {bytes_written} bytes to {format_type.value}")
                     
                     # Update statistics
                     self.stats['events_by_format'][format_type.value] += len(events)
@@ -641,7 +660,9 @@ class StorageManager:
                     self.rotation_manager.update_file_size(format_type, self.session_id, bytes_written)
                     
                 except Exception as e:
-                    print(f"Error writing to {format_type.value}: {e}")
+                    print(f"❌ ERROR writing to {format_type.value}: {e}")
+                    import traceback
+                    traceback.print_exc()
                     self.stats['write_errors'] += 1
             
             # Update global statistics

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Test CNN Pattern Recognizer Model
-==================================
-Test individuale per CNN_PatternRecognizer usando dati reali dal backtest
+Test LSTM TrendPrediction Model
+===============================
+Test individuale per LSTM_TrendPrediction usando dati reali dal backtest
 """
 
 import sys
@@ -12,7 +12,6 @@ import pandas as pd
 import json
 import asyncio
 from datetime import datetime
-import torch
 import traceback
 from pathlib import Path
 
@@ -39,20 +38,20 @@ safe_print("✅ UnifiedAnalyzerSystem loaded successfully - REAL SYSTEM ONLY")
 # Initialize encoding
 init_universal_encoding(silent=True)
 
-class CNNPatternRecognizerTester:
-    """Test specifico per CNN_PatternRecognizer usando IDENTICAL struttura test_backtest"""
+class LSTMTrendPredictionTester:
+    """Test specifico per LSTM_TrendPrediction usando IDENTICAL struttura test_backtest"""
     
     def __init__(self):
         self.test_data_path = "./test_analyzer_data"
         self.symbol = "USTEC"
-        self.model_name = "CNN_PatternRecognizer"
+        self.model_name = "LSTM_TrendPrediction"
         self.results = {}
         
         # IDENTICAL to test_backtest
         self.unified_system = None
         self.analyzer = None
         
-    def load_real_data(self, limit: int = 100000):
+    def load_real_data(self, limit: int = 50000):
         """Carica dati reali dal file backtest"""
         safe_print(f"📂 Loading real backtest data from {self.test_data_path}")
         
@@ -92,7 +91,7 @@ class CNNPatternRecognizerTester:
 
     async def setup_unified_system(self):
         """Setup UnifiedAnalyzerSystem IDENTICAL to test_backtest"""
-        safe_print("\n🔧 Setting up UnifiedAnalyzerSystem (IDENTICAL to test_backtest)...")
+        safe_print("\\n🔧 Setting up UnifiedAnalyzerSystem (IDENTICAL to test_backtest)...")
         
         try:
             # Create IDENTICAL config to test_backtest
@@ -103,7 +102,7 @@ class CNNPatternRecognizerTester:
                 
                 # Learning phase specific settings (IDENTICAL)
                 learning_phase_enabled=True,
-                max_tick_buffer_size=100000,  # Increased buffer for 100K ticks
+                max_tick_buffer_size=50000,  # Match data limit
                 min_learning_days=1,         # Reduced for test
                 
                 # Logging optimized for learning phase monitoring (IDENTICAL)
@@ -176,33 +175,33 @@ class CNNPatternRecognizerTester:
             safe_print(f"⚠️ ML learning phase error: {e}")
 
     async def _perform_final_training(self):
-        """Train ONLY CNN_PatternRecognizer model - SPECIFIC to this test"""
+        """Train ONLY LSTM_TrendPrediction model - SPECIFIC to this test"""
         try:
             # Usa l'analyzer dell'unified system (AdvancedMarketAnalyzer)
             if self.unified_system and hasattr(self.unified_system, 'analyzer') and self.unified_system.analyzer:
                 analyzer = self.unified_system.analyzer
                 asset_symbol = getattr(self.unified_system.config, 'asset_symbol', self.symbol)
                 
-                safe_print("🎯 Training ONLY CNN_PatternRecognizer model...")
+                safe_print("🎯 Training ONLY LSTM_TrendPrediction model...")
                 
                 # Get the asset analyzer
                 if hasattr(analyzer, 'asset_analyzers') and asset_symbol in analyzer.asset_analyzers:
                     asset_analyzer = analyzer.asset_analyzers[asset_symbol]
                     
-                    # Train only CNN_PatternRecognizer model
+                    # Train only LSTM_TrendPrediction model
                     if hasattr(asset_analyzer, '_retrain_algorithm'):
                         from src.Analyzer import ModelType
                         
                         # Get the algorithm from the competition
-                        pattern_competition = asset_analyzer.competitions.get(ModelType.PATTERN_RECOGNITION)
-                        if pattern_competition and 'CNN_PatternRecognizer' in pattern_competition.algorithms:
-                            algorithm = pattern_competition.algorithms['CNN_PatternRecognizer']
+                        trend_competition = asset_analyzer.competitions.get(ModelType.TREND_ANALYSIS)
+                        if trend_competition and 'LSTM_TrendPrediction' in trend_competition.algorithms:
+                            algorithm = trend_competition.algorithms['LSTM_TrendPrediction']
                             
-                            safe_print("🔄 Retraining CNN_PatternRecognizer algorithm...")
+                            safe_print("🔄 Retraining LSTM_TrendPrediction algorithm...")
                             
                             # DIAGNOSTIC: Check training data quality
                             if hasattr(asset_analyzer, 'tick_data') and len(asset_analyzer.tick_data) > 0:
-                                safe_print("\n📊 DIAGNOSTIC: Checking training data quality...")
+                                safe_print("\\n📊 DIAGNOSTIC: Checking training data quality...")
                                 prices = [t.get('price', 0) for t in list(asset_analyzer.tick_data)[-1000:]]
                                 if prices:
                                     import numpy as np
@@ -211,12 +210,12 @@ class CNNPatternRecognizerTester:
                                     safe_print(f"   Price Range: [{np.min(price_array):.2f}, {np.max(price_array):.2f}]")
                                     safe_print(f"   Unique prices: {len(np.unique(price_array))}")
                             
-                            asset_analyzer._retrain_algorithm(ModelType.PATTERN_RECOGNITION, 'CNN_PatternRecognizer', algorithm)
+                            asset_analyzer._retrain_algorithm(ModelType.TREND_ANALYSIS, 'LSTM_TrendPrediction', algorithm)
                             
-                            safe_print("✅ CNN_PatternRecognizer training completed")
+                            safe_print("✅ LSTM_TrendPrediction training completed")
                             
                             # Verify model actually learned something
-                            safe_print("\n🔍 Verifying model learning...")
+                            safe_print("\\n🔍 Verifying model learning...")
                             if hasattr(algorithm, 'final_score'):
                                 safe_print(f"   Final Score: {algorithm.final_score}")
                             if hasattr(algorithm, 'accuracy'):
@@ -225,25 +224,33 @@ class CNNPatternRecognizerTester:
                                 safe_print(f"   Total Predictions: {algorithm.total_predictions}")
                             
                             # Check if model is in ml_models
-                            if hasattr(asset_analyzer, 'ml_models') and 'CNN_PatternRecognizer' in asset_analyzer.ml_models:
-                                model = asset_analyzer.ml_models['CNN_PatternRecognizer']
-                                safe_print(f"   Model State: {model.training}")
+                            if hasattr(asset_analyzer, 'ml_models') and 'LSTM_TrendPrediction' in asset_analyzer.ml_models:
+                                model = asset_analyzer.ml_models['LSTM_TrendPrediction']
+                                safe_print(f"   Model Type: {model.__class__.__name__}")
                                 
                                 # Test a prediction
                                 try:
-                                    import torch
-                                    # CNN 1D expects [batch, channels, sequence_length] for pattern dataset (window_size * 4 = 200)
-                                    test_input = torch.randn(1, 1, 200)  # 200 features from pattern dataset
-                                    with torch.no_grad():
-                                        output = model(test_input)
-                                    safe_print(f"   Test Prediction Shape: {output.shape}")
-                                    safe_print(f"   Test Prediction Values: {output.numpy().flatten()[:5]}...")  # Show first 5
+                                    import numpy as np
+                                    # LSTM expects 3D array [batch_size, sequence_length, features]
+                                    # Use sequence_length=100 (same as training) and features based on model
+                                    sequence_length = 100
+                                    n_features = 5  # Basic LSTM trend features
+                                    test_input = np.random.randn(1, sequence_length, n_features)
+                                    
+                                    # Check if model uses AdaptiveTrainer wrapper
+                                    if hasattr(model, 'predict'):
+                                        output = model.predict(test_input)
+                                        if isinstance(output, tuple):
+                                            output = output[0]  # Handle tuple return
+                                        safe_print(f"   Test Prediction: {output[0] if hasattr(output, '__len__') else output:.6f}")
+                                    else:
+                                        safe_print("   ⚠️ Model doesn't have predict method")
                                 except Exception as e:
                                     safe_print(f"   ⚠️ Test prediction failed: {e}")
                             
-                            return {"status": "success", "message": "CNN_PatternRecognizer training completed"}
+                            return {"status": "success", "message": "LSTM_TrendPrediction training completed"}
                         else:
-                            safe_print("❌ CNN_PatternRecognizer algorithm not found in competition")
+                            safe_print("❌ LSTM_TrendPrediction algorithm not found in competition")
                             return {"status": "error", "message": "Algorithm not found"}
                     else:
                         safe_print("❌ Asset analyzer doesn't have _retrain_algorithm method")
@@ -261,7 +268,7 @@ class CNNPatternRecognizerTester:
 
     async def test_model_training(self, ticks):
         """Test model training IDENTICAL to test_backtest approach"""
-        safe_print(f"\n🧪 Testing {self.model_name} using test_backtest methodology...")
+        safe_print(f"\\n🧪 Testing {self.model_name} using test_backtest methodology...")
         
         try:
             # Process some ticks to get data (IDENTICAL to test_backtest)
@@ -292,7 +299,7 @@ class CNNPatternRecognizerTester:
                 )
                 processed_count += 1
                 
-                # Trigger ML learning every 20K ticks (for 100K total)
+                # Trigger ML learning every 20K ticks (for 50K total)
                 if processed_count % 20000 == 0:
                     safe_print(f"🧠 Triggering ML learning phase...")
                     await self._perform_ml_learning_phase()
@@ -304,7 +311,7 @@ class CNNPatternRecognizerTester:
             result = await self._perform_final_training()
             
             # CRITICAL: Force exit from learning phase to enable predictions!
-            safe_print("\n🚀 FORCING EXIT FROM LEARNING PHASE to enable predictions...")
+            safe_print("\\n🚀 FORCING EXIT FROM LEARNING PHASE to enable predictions...")
             if self.analyzer and hasattr(self.analyzer, 'asset_analyzers'):
                 asset_analyzer = self.analyzer.asset_analyzers.get(self.symbol)
                 if asset_analyzer:
@@ -312,7 +319,7 @@ class CNNPatternRecognizerTester:
                     safe_print("✅ Learning phase set to False - predictions enabled!")
                     
                     # Process additional ticks to generate predictions
-                    safe_print("\n📊 Processing additional ticks to generate predictions...")
+                    safe_print("\\n📊 Processing additional ticks to generate predictions...")
                     predictions_count = 0
                     for i in range(min(1000, len(ticks) - processed_count)):
                         tick_data = ticks[processed_count + i]
@@ -339,19 +346,12 @@ class CNNPatternRecognizerTester:
                             predictions_count += 1
                             if predictions_count == 1:
                                 safe_print(f"✅ First prediction generated: {list(analysis_result['predictions'].keys())}")
-                                # Show pattern prediction details
-                                if 'pattern_recognition' in analysis_result['predictions']:
-                                    pattern_pred = analysis_result['predictions']['pattern_recognition']
-                                    # Check for detected patterns
-                                    if 'detected_patterns' in pattern_pred and pattern_pred['detected_patterns']:
-                                        first_pattern = pattern_pred['detected_patterns'][0]
-                                        safe_print(f"   Pattern Detected: {first_pattern.get('pattern', 'No pattern')}")
-                                        safe_print(f"   Pattern Confidence: {first_pattern.get('confidence', 0):.2%}")
-                                        safe_print(f"   Direction: {first_pattern.get('direction', 'neutral')}")
-                                    else:
-                                        safe_print(f"   Pattern Detected: No patterns detected")
-                                        safe_print(f"   Overall Confidence: {pattern_pred.get('confidence', 0):.2%}")
-                                        safe_print(f"   Method: {pattern_pred.get('method', 'Unknown')}")
+                                # Show trend prediction details
+                                if 'trend_analysis' in analysis_result['predictions']:
+                                    trend_pred = analysis_result['predictions']['trend_analysis']
+                                    safe_print(f"   Trend Direction: {trend_pred.get('trend_direction', 'neutral')}")
+                                    safe_print(f"   Trend Strength: {trend_pred.get('trend_strength', 0):.2%}")
+                                    safe_print(f"   Confidence: {trend_pred.get('confidence', 0):.2%}")
                         
                         if predictions_count >= 10:  # Generate at least 10 predictions
                             break
@@ -367,7 +367,7 @@ class CNNPatternRecognizerTester:
 
     async def check_model_status(self):
         """Check model status IDENTICAL to test_backtest approach"""
-        safe_print(f"\n🔍 Checking {self.model_name} status...")
+        safe_print(f"\\n🔍 Checking {self.model_name} status...")
         
         try:
             if (self.unified_system and 
@@ -411,8 +411,8 @@ class CNNPatternRecognizerTester:
             return False
 
     async def test_model(self):
-        """Testa il modello CNN_PatternRecognizer usando IDENTICAL struttura test_backtest"""
-        safe_print("\n" + "="*80)
+        """Testa il modello LSTM_TrendPrediction usando IDENTICAL struttura test_backtest"""
+        safe_print("\\n" + "="*80)
         safe_print(f"🧪 TESTING {self.model_name} - IDENTICAL to test_backtest")
         safe_print("="*80)
         
@@ -422,7 +422,7 @@ class CNNPatternRecognizerTester:
                 self.results = {"status": "error", "message": "Failed to setup unified system"}
                 return self.results
             
-            # 2. Load real data (reduced to 50K for faster test)
+            # 2. Load real data (50K for faster test)
             ticks = self.load_real_data(limit=50000)
             if not ticks:
                 self.results = {"status": "error", "message": "No ticks loaded"}
@@ -439,7 +439,7 @@ class CNNPatternRecognizerTester:
                 self.results = {"status": "error", "message": "Model status check failed"}
                 return self.results
             
-            safe_print(f"\n✅ {self.model_name} test completed successfully!")
+            safe_print(f"\\n✅ {self.model_name} test completed successfully!")
             self.results = {
                 "status": "success", 
                 "message": "Test completed successfully",
@@ -447,7 +447,7 @@ class CNNPatternRecognizerTester:
             }
             
         except Exception as e:
-            safe_print(f"\n❌ Test failed: {e}")
+            safe_print(f"\\n❌ Test failed: {e}")
             traceback.print_exc()
             self.results = {"status": "error", "message": str(e)}
             
@@ -455,7 +455,7 @@ class CNNPatternRecognizerTester:
         
     def print_summary(self):
         """Stampa un riepilogo dei risultati"""
-        safe_print("\n" + "="*80)
+        safe_print("\\n" + "="*80)
         safe_print("📊 TEST SUMMARY")
         safe_print("="*80)
         
@@ -474,8 +474,9 @@ class CNNPatternRecognizerTester:
 
 async def main():
     """Main function IDENTICAL to test_backtest style"""
-    safe_print("🚀 Starting CNN Pattern Recognizer Model Test")
+    safe_print("🚀 Starting LSTM TrendPrediction Model Test")
     safe_print("   Using IDENTICAL structure to test_backtest")
+    safe_print("   🧠 LSTM with AdaptiveTrainer for neural network optimization!")
     safe_print(f"📅 Timestamp: {datetime.now()}")
     
     if not ANALYZER_AVAILABLE:
@@ -483,11 +484,11 @@ async def main():
         safe_print("   This is likely due to numpy/talib compatibility issues")
         return
     
-    tester = CNNPatternRecognizerTester()
+    tester = LSTMTrendPredictionTester()
     await tester.test_model()
     tester.print_summary()
     
-    safe_print("\n✅ Test completed!")
+    safe_print("\\n✅ Test completed!")
 
 if __name__ == "__main__":
     import asyncio

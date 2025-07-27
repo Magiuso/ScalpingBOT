@@ -21,14 +21,14 @@ sys.path.insert(0, current_dir)  # Add ScalpingBOT root
 sys.path.insert(0, os.path.join(current_dir, 'src'))  # Add src/
 sys.path.insert(0, os.path.join(current_dir, 'ML_Training_Logger'))  # Add ML_Training_Logger/
 
-print(f"🔧 Added to Python path:")
+print(f"[WRENCH] Added to Python path:")
 print(f"   - {current_dir}")
 print(f"   - {os.path.join(current_dir, 'src')}")
 print(f"   - {os.path.join(current_dir, 'ML_Training_Logger')}")
 
 def test_ml_logger_import():
     """Test 1: Verifica che ML_Training_Logger sia importabile"""
-    print("🧪 Test 1: ML_Training_Logger Import")
+    print("[TEST] Test 1: ML_Training_Logger Import")
     
     try:
         from ML_Training_Logger.Unified_ConfigManager import UnifiedConfigManager
@@ -48,7 +48,7 @@ def test_ml_logger_import():
 
 def test_analyzer_import():
     """Test 2: Verifica che Analyzer.py sia importabile con ML_Training_Logger"""
-    print("\n🧪 Test 2: Analyzer.py Import with ML_Training_Logger")
+    print("\n[TEST] Test 2: Analyzer.py Import with ML_Training_Logger")
     
     try:
         from src.Analyzer import AdvancedMarketAnalyzer, AnalyzerConfig
@@ -58,7 +58,7 @@ def test_analyzer_import():
         
     except SystemExit as e:
         print(f"❌ Analyzer.py failed to start: {e}")
-        print("💡 This indicates ML_Training_Logger integration failed")
+        print("[EMOJI] This indicates ML_Training_Logger integration failed")
         return False
     except ImportError as e:
         print(f"❌ Import error in Analyzer.py: {e}")
@@ -70,7 +70,7 @@ def test_analyzer_import():
 
 def test_analyzer_config_integration():
     """Test 3: Verifica che AnalyzerConfig abbia i campi ML_Training_Logger"""
-    print("\n🧪 Test 3: AnalyzerConfig ML_Training_Logger Integration")
+    print("\n[TEST] Test 3: AnalyzerConfig ML_Training_Logger Integration")
     
     try:
         from src.Analyzer import AnalyzerConfig
@@ -117,7 +117,7 @@ def test_analyzer_config_integration():
 
 def test_analyzer_initialization():
     """Test 4: Verifica che AdvancedMarketAnalyzer si inizializzi con ML_Training_Logger"""
-    print("\n🧪 Test 4: AdvancedMarketAnalyzer Initialization")
+    print("\n[TEST] Test 4: AdvancedMarketAnalyzer Initialization")
     
     try:
         from src.Analyzer import AdvancedMarketAnalyzer
@@ -179,7 +179,7 @@ def test_analyzer_initialization():
 
 def test_event_emission():
     """Test 5: Verifica che gli eventi ML siano emessi correttamente"""
-    print("\n🧪 Test 5: ML Event Emission")
+    print("\n[TEST] Test 5: ML Event Emission")
     
     try:
         from src.Analyzer import AdvancedMarketAnalyzer
@@ -232,7 +232,7 @@ def test_event_emission():
 
 def test_display_manager_updates():
     """Test 6: Verifica che il display manager riceva aggiornamenti"""
-    print("\n🧪 Test 6: Display Manager Updates")
+    print("\n[TEST] Test 6: Display Manager Updates")
     
     try:
         from src.Analyzer import AdvancedMarketAnalyzer
@@ -261,7 +261,7 @@ def test_display_manager_updates():
 
 def run_all_tests():
     """Esegue tutti i test di integrazione"""
-    print("🚀 ML_Training_Logger Integration Test Suite")
+    print("[EMOJI] ML_Training_Logger Integration Test Suite")
     print("=" * 60)
     
     tests = [
@@ -281,19 +281,19 @@ def run_all_tests():
             if test_func():
                 passed += 1
             else:
-                print(f"🔴 Test {i} FAILED")
+                print(f"[EMOJI] Test {i} FAILED")
         except Exception as e:
-            print(f"🔴 Test {i} CRASHED: {e}")
+            print(f"[EMOJI] Test {i} CRASHED: {e}")
             traceback.print_exc()
         
         # Brief pause between tests
         time.sleep(1)
     
     print("\n" + "=" * 60)
-    print(f"📊 Test Results: {passed}/{total} tests passed")
+    print(f"[EMOJI] Test Results: {passed}/{total} tests passed")
     
     if passed == total:
-        print("🎉 ALL TESTS PASSED! ML_Training_Logger integration is working correctly!")
+        print("[EMOJI] ALL TESTS PASSED! ML_Training_Logger integration is working correctly!")
         return True
     else:
         print(f"❌ {total - passed} tests failed. Please check the integration.")
@@ -301,18 +301,18 @@ def run_all_tests():
 
 def main():
     """Main test execution"""
-    print(f"🕒 Starting ML_Training_Logger integration tests at {datetime.now()}")
-    print(f"🐍 Python version: {sys.version}")
-    print(f"📁 Working directory: {os.getcwd()}")
+    print(f"[EMOJI] Starting ML_Training_Logger integration tests at {datetime.now()}")
+    print(f"[EMOJI] Python version: {sys.version}")
+    print(f"[EMOJI] Working directory: {os.getcwd()}")
     
-    # 🔍 DEBUG: Check directory structure
-    print("📂 Directory contents:")
+    # [EMOJI] DEBUG: Check directory structure
+    print("[EMOJI] Directory contents:")
     for item in os.listdir('.'):
         item_path = os.path.join('.', item)
         item_type = 'DIR' if os.path.isdir(item_path) else 'FILE'
         print(f"   {item_type}: {item}")
 
-    print("\n🔍 Checking specific directories:")
+    print("\n[EMOJI] Checking specific directories:")
     print(f"   src/ exists: {os.path.exists('src')}")
     print(f"   ML_Training_Logger/ exists: {os.path.exists('ML_Training_Logger')}")
 
@@ -338,7 +338,7 @@ def main():
         print("\n⚠️ Test interrupted by user")
         sys.exit(2)
     except Exception as e:
-        print(f"\n💥 Unexpected error during testing: {e}")
+        print(f"\n[EMOJI] Unexpected error during testing: {e}")
         traceback.print_exc()
         sys.exit(3)
 

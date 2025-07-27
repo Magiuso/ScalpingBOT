@@ -120,7 +120,8 @@ class EventFilterSettings:
     # Source filtering
     enabled_sources: List[str] = field(default_factory=lambda: [
         "AdvancedMarketAnalyzer",
-        "UnifiedAnalyzerSystem"
+        "UnifiedAnalyzerSystem",
+        "Manual"  # 🔧 FIX: Allow manual events from _emit_ml_event
     ])
     disabled_sources: List[str] = field(default_factory=list)
     
@@ -128,7 +129,7 @@ class EventFilterSettings:
     event_rate_limits: Dict[str, float] = field(default_factory=lambda: {
         "learning_progress": 0.1,    # 🔧 SPAM FIX: Era 1.0 -> 10x meno frequente (1 ogni 10 sec)
         "champion_change": 0.0,      # No limit (eventi rari)
-        "model_training": 0.05,      # 🔧 SPAM FIX: Era 0.5 -> 10x meno frequente (1 ogni 20 sec)
+        "model_training": 0.0,       # 🔧 RATE LIMIT DISABLED: No limit per debug eventi (era 0.05)
         "performance_metrics": 0.01, # 🔧 SPAM FIX: Era 0.1 -> 10x meno frequente (1 ogni 100 sec)
         "prediction_generated": 1.0, # 🔧 SPAM FIX: Era 10.0 -> 10x meno frequente (1 al secondo)
         "overfitting_debug": 0.05,   # 🔧 NUOVO: Rate limit per debug overfitting (1 ogni 20 sec)

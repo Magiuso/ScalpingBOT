@@ -398,8 +398,8 @@ class AnalyzerConfig:
             },
             'LSTM_Sequences': {
                 'input_size': 200,  # ✅ FIXED: window_size * 4 = 50 * 4 = 200 features
-                'hidden_size': self.lstm_hidden_size * 2,
-                'num_layers': self.lstm_num_layers + 1,
+                'hidden_size': self.lstm_hidden_size,  # 🚀 OPTIMIZED: 256 (not 512) for better generalization
+                'num_layers': self.lstm_num_layers,    # 🚀 OPTIMIZED: 2 layers (not 3) for faster training
                 'output_size': 5,  # ✅ FIXED: 5 pattern types (classical, cnn, lstm, transformer, ensemble)
                 'dropout': self.lstm_dropout
             },
@@ -407,25 +407,25 @@ class AnalyzerConfig:
                 'input_size': 200,  # ✅ FIXED: 200 features per compatibilità con _prepare_bias_dataset
                 'hidden_size': self.lstm_hidden_size // 2,
                 'num_layers': self.lstm_num_layers - 1,
-                'output_size': 3,  # Bias = 3 categorie
+                'output_size': 6,  # 🚀 FIXED: 6 output dal bias dataset (non 3)
                 'dropout': self.lstm_dropout
             },
             'LSTM_TrendPrediction': {
-                'input_size': 12,
+                'input_size': 23,               # 🚀 FIXED: 23 features da _prepare_trend_dataset (verified from debug)
                 'hidden_size': self.lstm_hidden_size,
                 'num_layers': self.lstm_num_layers,
-                'output_size': 3,  # Trend = 3 direzioni
+                'output_size': 1,               # 🚀 FIXED: Regressione (1 valore continuo) non classificazione
                 'dropout': self.lstm_dropout
             },
             'LSTM_Volatility': {
-                'input_size': self.feature_vector_size,
+                'input_size': 6,  # Fixed: volatility dataset has exactly 6 features
                 'hidden_size': self.lstm_hidden_size // 2,
                 'num_layers': self.lstm_num_layers - 1,
                 'output_size': 1,  # Volatility = 1 valore
                 'dropout': self.lstm_dropout
             },
             'Neural_Momentum': {
-                'input_size': self.feature_vector_size,
+                'input_size': 250,  # Fixed: momentum dataset has 250 features (5 x window_size)
                 'hidden_size': self.lstm_hidden_size // 2,
                 'num_layers': 2,
                 'output_size': 4,  # 4 momentum indicators
@@ -11880,6 +11880,27 @@ class AssetAnalyzer:
                     )
                     
                     if result['status'] == 'success':
+                        print(f"🔥 DEBUG: _perform_final_training SUCCESS for {model_name}, about to emit event")
+                        print(f"🔥 DEBUG: self.parent = {getattr(self, 'parent', 'NO PARENT')}")
+                        print(f"🔥 DEBUG: parent has _emit_ml_event = {hasattr(getattr(self, 'parent', None), '_emit_ml_event') if hasattr(self, 'parent') else False}")
+                        
+                        # 🔥 CRITICAL: Emit MODEL_TRAINING event for ML Logger system  
+                        if hasattr(self, 'parent') and self.parent and hasattr(self.parent, '_emit_ml_event'):
+                            training_duration = result.get('training_time', 0)
+                            training_summary = f"{model_name} final training completed - Score: {result.get('test_score', 0.5):.3f}, Duration: {training_duration:.1f}s"
+                            training_data = {
+                                'algorithm_name': model_name,
+                                'model_type': model_type.value,
+                                'test_score': result.get('test_score', 0.5),
+                                'duration_seconds': training_duration,
+                                'status': 'success',
+                                'training_type': 'final_training'
+                            }
+                            self.parent._emit_ml_event('MODEL_TRAINING', training_data, summary=training_summary)
+                            print(f"🔥 DEBUG: Event emitted for {model_name} via parent")
+                        else:
+                            print(f"🔥 DEBUG: CANNOT emit event - parent issue")
+                        
                         # Aggiorna algoritmo con score più realistici
                         for competition in self.competitions.values():
                             if model_name in competition.algorithms:
@@ -11922,6 +11943,7 @@ class AssetAnalyzer:
                         algorithm: AlgorithmPerformance):
         """Riaddestra un algoritmo specifico - VERSIONE PULITA"""
         
+        print(f"🔥 DEBUG: _retrain_algorithm CALLED for {algorithm_name}")
         retraining_start = datetime.now()
         
         # Store retraining attempt for future slave module processing
@@ -12001,7 +12023,29 @@ class AssetAnalyzer:
                 'success': result['status'] == 'success'
             })
             
+            print(f"🔥 DEBUG: _retrain_algorithm result status = '{result['status']}'")
+            print(f"🔥 DEBUG: result keys = {list(result.keys())}")
+            
             if result['status'] == 'success':
+                print(f"🔥 DEBUG: Training SUCCESS for {algorithm_name}, about to emit event")
+                print(f"🔥 DEBUG: self.parent = {getattr(self, 'parent', 'NO PARENT')}")
+                print(f"🔥 DEBUG: parent has _emit_ml_event = {hasattr(getattr(self, 'parent', None), '_emit_ml_event') if hasattr(self, 'parent') else False}")
+                
+                # 🔥 CRITICAL: Emit MODEL_TRAINING event for ML Logger system via parent
+                if hasattr(self, 'parent') and self.parent and hasattr(self.parent, '_emit_ml_event'):
+                    training_summary = f"{algorithm_name} training completed - Score: {result.get('test_score', 0.5):.3f}, Duration: {retraining_duration:.1f}s"
+                    training_data = {
+                        'algorithm_name': algorithm_name,
+                        'model_type': model_type.value,
+                        'test_score': result.get('test_score', 0.5),
+                        'duration_seconds': retraining_duration,
+                        'status': 'success'
+                    }
+                    self.parent._emit_ml_event('MODEL_TRAINING', training_data, summary=training_summary)
+                    print(f"🔥 DEBUG: Event emitted for {algorithm_name} via parent")
+                else:
+                    print(f"❌ DEBUG: Cannot emit event - no parent or parent._emit_ml_event not available")
+                
                 # Reset contatori negativi
                 algorithm.reality_check_failures = 0
                 algorithm.emergency_stop_triggered = False
@@ -13770,33 +13814,81 @@ class AssetAnalyzer:
                 raise InsufficientDataError(required=50, available=len(prices), operation="LSTM_TrendPrediction")
             
             try:
-                # Prepara sequenza per LSTM
-                lstm_features = self._prepare_lstm_trend_features(prices, volumes)
+                # 🚀 USA _prepare_trend_dataset per IDENTICHE features al training
+                # Prepara dati come nel training dataset
+                data_dict = {
+                    'prices': prices,
+                    'volumes': volumes,
+                    'sma_20': np.convolve(prices, np.ones(20)/20, mode='same'),
+                    'sma_50': np.convolve(prices, np.ones(50)/50, mode='same'),
+                    'returns': np.diff(prices, prepend=prices[0]) / prices
+                }
+                
+                # Calcola RSI
+                if len(prices) >= 14:
+                    price_changes = np.diff(prices, prepend=prices[0])
+                    gains = np.where(price_changes > 0, price_changes, 0)
+                    losses = np.where(price_changes < 0, -price_changes, 0)
+                    avg_gains = np.convolve(gains, np.ones(14)/14, mode='same')
+                    avg_losses = np.convolve(losses, np.ones(14)/14, mode='same')
+                    rs = avg_gains / (avg_losses + 1e-10)
+                    data_dict['rsi'] = 100 - (100 / (1 + rs))
+                else:
+                    data_dict['rsi'] = np.full_like(prices, 50.0)
+                
+                # Usa _prepare_trend_dataset per una singola prediction
+                X, _ = self._prepare_trend_dataset(data_dict)
+                if len(X) > 0:
+                    # Usa l'ultimo sample (più recente) per prediction
+                    trend_features = X[-1]  # 23 features (verified from debug)
+                else:
+                    # Fallback: usa features base se dataset prep fallisce
+                    trend_features = np.zeros(23)  # 23 features standard
                 
                 with torch.no_grad():
-                    input_tensor = torch.FloatTensor(lstm_features).unsqueeze(0)
+                    # LSTM needs 3D input: [batch_size, sequence_length, features]
+                    # Reshape 23 features to sequence format for LSTM
+                    input_tensor = torch.FloatTensor(trend_features).unsqueeze(0).unsqueeze(0)  # [1, 1, 23]
                     trend_output = model(input_tensor)
-                    trend_probs = torch.softmax(trend_output, dim=-1).numpy().flatten()
+                    if isinstance(trend_output, tuple):
+                        trend_output = trend_output[0]  # Handle tuple return from AdaptiveTrainer
+                    
+                    # 🚀 FIXED: Regressione - trend_output è un valore continuo, non probabilità
+                    trend_slope = trend_output.numpy().flatten()[0]  # Singolo valore di slope
                 
             except Exception as e:
                 raise PredictionError("LSTM_TrendPrediction", f"LSTM trend prediction failed: {str(e)}")
             
-            # Output più dettagliato: [strong_down, weak_down, sideways, weak_up, strong_up]
-            trend_labels = ["strong_down", "weak_down", "sideways", "weak_up", "strong_up"]
-            trend_idx = np.argmax(trend_probs)
-            trend_detail = trend_labels[trend_idx]
+            # 🚀 FIXED: Converti valore continuo slope in direzioni discrete
+            # trend_slope è il valore di regressione (slope normalizzato)
             
-            # Semplifica in 3 categorie principali
-            if "down" in trend_detail:
-                simple_direction = "downtrend"
-            elif "up" in trend_detail:
+            # Definisci soglie per classificazione trend
+            strong_threshold = 0.02  # 2% slope = strong trend
+            weak_threshold = 0.005   # 0.5% slope = weak trend
+            
+            if trend_slope > strong_threshold:
+                trend_detail = "strong_up"
                 simple_direction = "uptrend"
+            elif trend_slope > weak_threshold:
+                trend_detail = "weak_up"
+                simple_direction = "uptrend"
+            elif trend_slope < -strong_threshold:
+                trend_detail = "strong_down"
+                simple_direction = "downtrend"
+            elif trend_slope < -weak_threshold:
+                trend_detail = "weak_down"
+                simple_direction = "downtrend"
             else:
+                trend_detail = "sideways"
                 simple_direction = "sideways"
+            
+            # Calcola confidence basata sull'intensità del slope
+            trend_confidence = min(0.95, abs(trend_slope) / strong_threshold * 0.8)
+            trend_confidence = max(0.1, trend_confidence)  # Minimo 10% confidence
             
             # Calcola trend projection
             try:
-                trend_projection = self._project_trend(prices, simple_direction, trend_probs[trend_idx])
+                trend_projection = self._project_trend(prices, simple_direction, trend_confidence)
             except Exception as e:
                 # Fallback per projection
                 trend_projection = {"error": f"Projection failed: {str(e)}"}
@@ -13804,11 +13896,11 @@ class AssetAnalyzer:
             return {
                 "trend_direction": simple_direction,
                 "trend_detail": trend_detail,
-                "trend_strength": float(trend_probs[trend_idx]),
-                "confidence": float(trend_probs[trend_idx]),
+                "trend_strength": float(trend_confidence),
+                "confidence": float(trend_confidence),
                 "trend_projection": trend_projection,
-                "probabilities": {trend_labels[i]: float(trend_probs[i]) for i in range(len(trend_labels))},
-                "method": "LSTM_Deep_Learning"
+                "trend_slope": float(trend_slope),  # 🚀 ADDED: Valore slope originale per debug
+                "method": "LSTM_Deep_Learning_Regression"
             }
         
         elif algorithm_name == "GradientBoosting_Trend":
@@ -19331,6 +19423,10 @@ class AdvancedMarketAnalyzer:
 
             # Create ML Logger config for main system asset
             self.ml_logger_config = MLTrainingLoggerConfig.create_preset('standard')
+            
+            # 🔧 CRITICAL FIX: Force synchronous processing to ensure callbacks work
+            self.ml_logger_config.performance.enable_async_processing = False
+            print(f"🔥 DEBUG: Forced enable_async_processing = {self.ml_logger_config.performance.enable_async_processing}")
 
             # Import ML Training Logger components
             from ML_Training_Logger.Event_Collector import EventCollector
@@ -19346,6 +19442,11 @@ class AdvancedMarketAnalyzer:
             self.ml_event_collector.start()
             self.ml_display_manager.start()
             self.ml_storage_manager.start()
+            
+            # 🔧 CRITICAL FIX: Connect Event Collector to Storage Manager
+            # This ensures all events are automatically saved to CSV/JSON files
+            self.ml_event_collector.add_callback(self.ml_storage_manager.store_event)
+            self._safe_log('system', 'info', "🔗 Event Collector → Storage Manager connection established")
             
             self.ml_logger_active = True
             self._safe_log('system', 'info', "✅ ML Training Logger initialized successfully")
@@ -19719,9 +19820,14 @@ class AdvancedMarketAnalyzer:
             for buffer_deque in self._events_buffer.values():
                 buffer_deque.clear()
     
-    def _emit_ml_event(self, event_type: str, event_data: Dict) -> None:
+    def _emit_ml_event(self, event_type: str, event_data: Dict, summary: str = "") -> None:
         """Emit event to ML Training Logger if active"""
+        print(f"🔥 DEBUG: AdvancedMarketAnalyzer._emit_ml_event called with type='{event_type}', data={event_data}")
+        print(f"🔥 DEBUG: ml_logger_active={getattr(self, 'ml_logger_active', 'MISSING')}")
+        print(f"🔥 DEBUG: ml_event_collector={getattr(self, 'ml_event_collector', 'MISSING')}")
+        
         if not self.ml_logger_active or not self.ml_event_collector:
+            print(f"🔥 DEBUG: ML Logger not active or event collector missing, returning")
             return
             
         try:
@@ -19761,7 +19867,9 @@ class AdvancedMarketAnalyzer:
             )
 
             # Emit the event
-            self.ml_event_collector.emit_event(ml_event)
+            print(f"🔥 DEBUG: About to emit_event - Type: {event_type}, Data: {enhanced_event_data}")
+            result = self.ml_event_collector.emit_event(ml_event)
+            print(f"🔥 DEBUG: emit_event result: {result}")
         except Exception as e:
             # Fallback silenzioso se ML Logger fallisce
             pass

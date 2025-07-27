@@ -527,6 +527,8 @@ class EventCollector:
         Returns:
             bool: True se evento accettato
         """
+        print(f"🔥 DEBUG: EventCollector.emit_event called with event_type={event.event_type}")
+        
         # Set session ID if not present
         if not event.session_id:
             event.session_id = self.session_id
@@ -534,6 +536,7 @@ class EventCollector:
         # Apply filters
         if not self._should_process_event(event):
             self.stats['total_events_filtered'] += 1
+            print(f"🔥 DEBUG: Event FILTERED by _should_process_event")
             return False
         
         # Apply rate limiting
@@ -542,11 +545,13 @@ class EventCollector:
         
         if not self.rate_limiter.is_allowed(event_type_str, rate_limit):
             self.stats['total_events_rate_limited'] += 1
+            print(f"🔥 DEBUG: Event RATE LIMITED for {event_type_str}, limit={rate_limit}")
             return False
         
         # Add to buffer
         if not self.event_buffer.add_event(event):
             # Buffer full - could implement emergency handling here
+            print(f"🔥 DEBUG: Event buffer FULL!")
             return False
         
         # Update statistics
@@ -557,9 +562,14 @@ class EventCollector:
         self.stats['events_by_source'][source_str] += 1
         self.stats['last_event_time'] = event.timestamp
         
+        print(f"🔥 DEBUG: Event added to buffer, async_processing={self.config.performance.enable_async_processing}")
+        
         # Trigger callbacks if synchronous processing
         if not self.config.performance.enable_async_processing:
+            print(f"🔥 DEBUG: Triggering callbacks synchronously...")
             self._trigger_callbacks(event)
+        else:
+            print(f"🔥 DEBUG: Async processing enabled, callbacks will be triggered in background thread")
         
         return True
     
