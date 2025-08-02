@@ -78,14 +78,14 @@ class AssetAnalyzer:
         self.mt5_adapter = MT5Adapter()
         
         # FASE 5 - ML: Initialize algorithm bridge and competitions
-        from src.ml.integration.algorithm_bridge import create_algorithm_bridge
+        from ScalpingBOT_Restauro.src.ml.integration.algorithm_bridge import create_algorithm_bridge
         self.algorithm_bridge = create_algorithm_bridge(
             ml_models={},  # Will be populated with actual models
             logger=None    # Will use default logger
         )
         
         # 🔧 COMPLETE COMPETITION SYSTEM: Initialize full competition framework
-        from src.ml.models.competition import ChampionPreserver, RealityChecker, EmergencyStopSystem, AlgorithmCompetition
+        from ScalpingBOT_Restauro.src.ml.models.competition import ChampionPreserver, RealityChecker, EmergencyStopSystem, AlgorithmCompetition
         
         # Initialize competition dependencies with correct signatures
         self.champion_preserver = ChampionPreserver(

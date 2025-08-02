@@ -13,6 +13,7 @@ ESTRATTO e REFACTORIZZATO da src/Analyzer.py:19170-20562 (1,392 linee).
 
 import os
 import threading
+import time
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Set
 from collections import deque
@@ -79,12 +80,40 @@ class AdvancedMarketAnalyzer:
         # System state
         self.is_running = False
         
-        # Event buffers for compatibility
-        self.events_buffer = {
-            'tick_processed': deque(maxlen=1000),
-            'prediction_generated': deque(maxlen=500),
-            'champion_changes': deque(maxlen=100),
-            'emergency_stops': deque(maxlen=50)
+        # Event buffers with performance-based sizing
+        self.events_buffer = self._create_performance_based_buffers()
+    
+    def _create_performance_based_buffers(self) -> Dict[str, deque]:
+        """Create event buffers with sizes based on expected event frequency"""
+        
+        # HIGH FREQUENCY EVENTS (many per second)
+        high_freq_size = 5000   # ~1 hour of events at 1/sec
+        
+        # MEDIUM FREQUENCY EVENTS (several per minute) 
+        medium_freq_size = 1000  # ~1 hour of events at 1/4min
+        
+        # LOW FREQUENCY EVENTS (few per hour/day)
+        low_freq_size = 100     # ~1 day of events
+        
+        # RARE EVENTS (occasional)
+        rare_freq_size = 50     # ~1 week of events
+        
+        return {
+            # HIGH FREQUENCY: Every tick, every prediction
+            'tick_processed': deque(maxlen=high_freq_size),
+            'prediction_generated': deque(maxlen=high_freq_size),
+            
+            # MEDIUM FREQUENCY: Batch operations, training cycles
+            'training_completed': deque(maxlen=medium_freq_size),
+            'validation_completed': deque(maxlen=medium_freq_size),
+            
+            # LOW FREQUENCY: Model updates, system changes
+            'champion_changes': deque(maxlen=low_freq_size),
+            'model_updates': deque(maxlen=low_freq_size),
+            
+            # RARE EVENTS: Emergencies, critical issues
+            'emergency_stops': deque(maxlen=rare_freq_size),
+            'system_failures': deque(maxlen=rare_freq_size)
         }
     
     def add_asset(self, asset: str) -> AssetAnalyzer:
@@ -423,6 +452,262 @@ class AdvancedMarketAnalyzer:
             events.sort(key=lambda x: x['timestamp'], reverse=True)
         
         return events[-limit:] if limit else events
+    
+    def train_models_on_batch(self, batch_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Train ML models on batch data"""
+        batch_size = batch_data.get('count', 0)
+        ticks = batch_data.get('ticks', [])
+        
+        if not ticks:
+            raise ValueError("No tick data provided for training")
+        
+        print(f"🎓 AdvancedMarketAnalyzer: Training on {batch_size:,} ticks...")
+        
+        # Train each active asset analyzer with REAL ML models
+        training_results = {}
+        with self.assets_lock:
+            for asset, analyzer in self.asset_analyzers.items():
+                try:
+                    # Filter ticks for this asset
+                    asset_ticks = [tick for tick in ticks if tick.get('symbol') == asset]
+                    if asset_ticks:
+                        print(f"  🧠 Training {asset} with {len(asset_ticks):,} ticks")
+                        
+                        # REAL ML TRAINING - Call actual competition system
+                        training_start = time.time()
+                        
+                        # Train each model type in the competition system
+                        for model_type, competition in analyzer.competitions.items():
+                            print(f"    🏆 Training {model_type.value} models...")
+                            
+                            # Get available algorithms for this model type
+                            available_algorithms = analyzer.algorithm_bridge.get_available_algorithms(model_type)
+                            if not available_algorithms:
+                                raise RuntimeError(f"No algorithms available for {model_type.value}")
+                            
+                            # Train each algorithm with the batch data
+                            for algorithm_name in available_algorithms:
+                                try:
+                                    print(f"      🔧 Training {algorithm_name}...")
+                                    
+                                    # Convert batch ticks to training format for this algorithm
+                                    training_data = self._prepare_training_data(asset_ticks, algorithm_name, model_type)
+                                    
+                                    # Execute REAL algorithm via bridge to generate training predictions
+                                    algorithm_result = analyzer.algorithm_bridge.execute_algorithm(
+                                        model_type, algorithm_name, training_data
+                                    )
+                                    
+                                    # Convert to prediction format
+                                    prediction_obj = analyzer.algorithm_bridge.convert_to_prediction(
+                                        algorithm_result, asset, model_type
+                                    )
+                                    
+                                    # Submit prediction to competition for performance tracking
+                                    competition.submit_prediction(
+                                        algorithm_name, 
+                                        prediction_obj.prediction_data, 
+                                        prediction_obj.confidence,
+                                        prediction_obj.validation_criteria,
+                                        {'training_mode': True, 'batch_training': True}
+                                    )
+                                    
+                                    print(f"      ✅ {algorithm_name} trained successfully")
+                                    
+                                except Exception as algo_error:
+                                    print(f"      ❌ {algorithm_name} training failed: {algo_error}")
+                                    # Continue with other algorithms
+                        
+                        training_time = time.time() - training_start
+                        training_results[asset] = {
+                            'status': 'completed',
+                            'algorithms_trained': len(available_algorithms),
+                            'training_time_seconds': training_time,
+                            'ticks_processed': len(asset_ticks)
+                        }
+                        print(f"  ✅ {asset} training completed in {training_time:.2f}s")
+                        
+                except Exception as e:
+                    print(f"  ❌ Training failed for {asset}: {e}")
+                    # FAIL FAST - propagate error instead of mock result
+                    raise RuntimeError(f"Real ML training failed for {asset}: {e}")
+        
+        # Log training event
+        training_event = {
+            'timestamp': datetime.now().isoformat(),
+            'event_type': 'training_completed',
+            'batch_size': batch_size,
+            'assets_trained': len(training_results),
+            'results': training_results
+        }
+        self.events_buffer['training_completed'].append(training_event)
+        
+        print(f"✅ Training completed for {len(training_results)} assets")
+        return training_results
+    
+    def validate_models_on_batch(self, batch_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Generate predictions using trained models"""
+        batch_size = batch_data.get('count', 0)
+        ticks = batch_data.get('ticks', [])
+        
+        if not ticks:
+            raise ValueError("No tick data provided for validation")
+        
+        print(f"🔮 AdvancedMarketAnalyzer: Generating predictions on {batch_size:,} ticks...")
+        
+        # Generate REAL predictions using trained models
+        all_predictions = []
+        with self.assets_lock:
+            for asset, analyzer in self.asset_analyzers.items():
+                try:
+                    # Filter ticks for this asset
+                    asset_ticks = [tick for tick in ticks if tick.get('symbol') == asset]
+                    if asset_ticks:
+                        print(f"  🔮 Generating predictions for {asset} with {len(asset_ticks):,} ticks")
+                        
+                        # REAL PREDICTIONS - Use trained models via competition system
+                        prediction_start = time.time()
+                        
+                        # Generate predictions for each model type
+                        for model_type, competition in analyzer.competitions.items():
+                            try:
+                                # Get current champion algorithm for this model type
+                                champion_algorithm = competition.get_champion_algorithm()
+                                if not champion_algorithm:
+                                    print(f"      ⚠️ No champion for {model_type.value} - skipping predictions")
+                                    continue
+                                
+                                print(f"    🏆 Using {champion_algorithm} for {model_type.value} predictions...")
+                                
+                                # Prepare prediction data
+                                prediction_data = self._prepare_prediction_data(asset_ticks, champion_algorithm, model_type)
+                                
+                                # Execute REAL predictions via algorithm bridge
+                                algorithm_result = analyzer.algorithm_bridge.execute_algorithm(
+                                    model_type, champion_algorithm, prediction_data
+                                )
+                                
+                                # Convert to standard prediction format
+                                prediction_obj = analyzer.algorithm_bridge.convert_to_prediction(
+                                    algorithm_result, asset, model_type
+                                )
+                                
+                                all_predictions.append({
+                                    'asset': asset,
+                                    'timestamp': prediction_obj.timestamp.isoformat(),
+                                    'model_type': model_type.value,
+                                    'algorithm': champion_algorithm,
+                                    'prediction_data': prediction_obj.prediction_data,
+                                    'confidence': prediction_obj.confidence,
+                                    'prediction_id': prediction_obj.id,
+                                    'batch_id': f"batch_{batch_size}"
+                                })
+                                
+                                print(f"      ✅ 1 prediction generated by {champion_algorithm}")
+                                
+                            except Exception as model_error:
+                                print(f"      ❌ Prediction failed for {model_type.value}: {model_error}")
+                                # Continue with other model types
+                        
+                        prediction_time = time.time() - prediction_start
+                        print(f"  ✅ {asset} predictions completed in {prediction_time:.2f}s")
+                        
+                except Exception as e:
+                    print(f"  ❌ Prediction failed for {asset}: {e}")
+                    # FAIL FAST - propagate error instead of mock result
+                    raise RuntimeError(f"Real prediction generation failed for {asset}: {e}")
+        
+        # Log validation event
+        validation_event = {
+            'timestamp': datetime.now().isoformat(),
+            'event_type': 'validation_completed',
+            'batch_size': batch_size,
+            'predictions_generated': len(all_predictions),
+            'assets_validated': len(self.asset_analyzers)
+        }
+        self.events_buffer['validation_completed'].append(validation_event)
+        
+        print(f"✅ Generated {len(all_predictions)} predictions")
+        return all_predictions
+    
+    def _prepare_training_data(self, asset_ticks: List[Dict[str, Any]], algorithm_name: str, model_type: ModelType) -> Dict[str, Any]:
+        """Prepare training data for ML algorithms from tick data"""
+        if not asset_ticks:
+            raise ValueError("No asset ticks provided for training data preparation")
+        
+        # Extract price and volume data
+        prices = []
+        volumes = []
+        timestamps = []
+        
+        for tick in asset_ticks:
+            if 'price' in tick and 'volume' in tick and 'timestamp' in tick:
+                prices.append(float(tick['price']))
+                volumes.append(float(tick['volume']))
+                timestamps.append(tick['timestamp'])
+        
+        if not prices:
+            raise ValueError("No valid price data found in ticks")
+        
+        # Create training dataset with features
+        training_data = {
+            'features': {
+                'prices': prices,
+                'volumes': volumes,
+                'timestamps': timestamps
+            },
+            'metadata': {
+                'algorithm_name': algorithm_name,
+                'model_type': model_type.value,
+                'data_points': len(prices),
+                'start_time': timestamps[0] if timestamps else None,
+                'end_time': timestamps[-1] if timestamps else None
+            }
+        }
+        
+        return training_data
+    
+    def _prepare_prediction_data(self, asset_ticks: List[Dict[str, Any]], champion_algorithm: str, model_type: ModelType) -> Dict[str, Any]:
+        """Prepare prediction data for ML algorithms from tick data"""
+        if not asset_ticks:
+            raise ValueError("No asset ticks provided for prediction data preparation")
+        
+        # Extract recent price and volume data for prediction
+        recent_prices = []
+        recent_volumes = []
+        recent_timestamps = []
+        
+        # Use last 100 ticks for prediction context
+        prediction_window = min(100, len(asset_ticks))
+        recent_ticks = asset_ticks[-prediction_window:]
+        
+        for tick in recent_ticks:
+            if 'price' in tick and 'volume' in tick and 'timestamp' in tick:
+                recent_prices.append(float(tick['price']))
+                recent_volumes.append(float(tick['volume']))
+                recent_timestamps.append(tick['timestamp'])
+        
+        if not recent_prices:
+            raise ValueError("No valid recent price data found for predictions")
+        
+        # Create prediction dataset
+        prediction_data = {
+            'features': {
+                'recent_prices': recent_prices,
+                'recent_volumes': recent_volumes,
+                'recent_timestamps': recent_timestamps,
+                'current_price': recent_prices[-1] if recent_prices else 0.0,
+                'current_volume': recent_volumes[-1] if recent_volumes else 0.0
+            },
+            'metadata': {
+                'champion_algorithm': champion_algorithm,
+                'model_type': model_type.value,
+                'prediction_window': prediction_window,
+                'prediction_time': datetime.now().isoformat()
+            }
+        }
+        
+        return prediction_data
 
 
 # Factory function

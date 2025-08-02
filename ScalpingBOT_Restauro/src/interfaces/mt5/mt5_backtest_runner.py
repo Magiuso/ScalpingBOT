@@ -30,6 +30,7 @@ from ScalpingBOT_Restauro.src.monitoring.events.event_collector import EventColl
 
 # Import MT5 adapter for clean interface
 from .mt5_adapter import MT5Adapter, MT5Tick
+from .mt5_utils import calculate_price_from_bid_ask, parse_mt5_timestamp
 
 
 @dataclass
@@ -338,9 +339,11 @@ class MT5DataExporter:
                 raise ValueError(f"Invalid bid price: {tick_bid} at timestamp {tick_time}")
             spread_percentage = (tick_ask - tick_bid) / tick_bid
             
-            # Fix last price: use mid price if last is 0
-            if tick_last == 0 and tick_bid > 0 and tick_ask > 0:
-                tick_last = (tick_bid + tick_ask) / 2
+            # Fix last price using consolidated logic
+            try:
+                tick_last = calculate_price_from_bid_ask(tick_last, tick_bid, tick_ask)
+            except ValueError:
+                raise ValueError(f"Cannot determine price for export: last={tick_last}, bid={tick_bid}, ask={tick_ask}")
             
             # Calculate M5 tick volume when real volume is 0
             tick_datetime = datetime.fromtimestamp(tick_time)
@@ -639,22 +642,20 @@ class MT5BacktestRunner:
         
         self.logger.info(f"Loaded {len(tick_data_list)} ticks from CSV")
         
-        # Process ticks
+        # Process ticks using new batch architecture
         ticks_processed = 0
-        batch_buffer = []
+        BATCH_SIZE = 100000
         
-        for tick_dict in tick_data_list:
-            batch_buffer.append(tick_dict)
+        # Process in 100K batches
+        for i in range(0, len(tick_data_list), BATCH_SIZE):
+            batch = tick_data_list[i:i + BATCH_SIZE]
+            print(f"🔄 Processing CSV batch: {len(batch):,} ticks")
             
-            if len(batch_buffer) >= self.config.batch_size:
-                self._process_tick_batch(batch_buffer, analyzer_system)
-                ticks_processed += len(batch_buffer)
-                batch_buffer.clear()
-        
-        # Process remaining ticks
-        if batch_buffer:
-            self._process_tick_batch(batch_buffer, analyzer_system)
-            ticks_processed += len(batch_buffer)
+            # Use training mode for CSV processing
+            self._train_models_on_batch(batch, analyzer_system)
+            ticks_processed += len(batch)
+            
+            print(f"✅ CSV batch completed: {len(batch):,} ticks processed")
         
         self.total_ticks_processed = ticks_processed
         self.logger.info(f"CSV backtest completed: {ticks_processed} ticks processed")
@@ -671,220 +672,206 @@ class MT5BacktestRunner:
         return self._process_jsonl_file(jsonl_file, analyzer_system)
     
     def _process_jsonl_file(self, jsonl_file: str, analyzer_system) -> bool:
-        """Process JSONL file with 30-day training + 30-day validation phases"""
+        """Process JSONL file: read 100K ticks → process batch → repeat"""
         
         if not os.path.exists(jsonl_file):
             raise FileNotFoundError(f"File not found: {jsonl_file}")
         
-        self.logger.info(f"Processing JSONL file: {jsonl_file}")
-        
-        # Initialize phase tracking
-        ticks_processed = 0
-        batch_buffer = []
-        is_historical_data = False
-        first_ticks_checked = False
-        ticks_for_date_check = []
+        print(f"📂 Opening JSONL file: {jsonl_file}")
+        file_size = os.path.getsize(jsonl_file) / (1024*1024*1024)  # GB
+        print(f"📊 File size: {file_size:.2f} GB")
         
         # Phase management variables
-        training_phase = True  # Start with training phase
-        validation_phase = False
         training_start_date = None
         validation_start_date = None
-        training_days = 30  # From config
+        training_days = 30
         total_training_ticks = 0
         total_validation_ticks = 0
+        total_ticks_processed = 0
         
-        # Performance tracking
-        last_progress_time = time.time()
-        last_progress_ticks = 0
+        # Batch configuration
+        BATCH_SIZE = 100000
+        batch_number = 0
+        
+        processing_start_time = time.time()
         
         try:
+            print("📖 Starting batch-based processing...")
             with open(jsonl_file, 'r', encoding='utf-8') as f:
-                for line_num, line in enumerate(f, 1):
-                    line = line.strip()
-                    if not line:
-                        continue
+                
+                while True:
+                    batch_number += 1
+                    current_batch = []
+                    lines_read_in_batch = 0
                     
-                    try:
-                        tick_data = json.loads(line)
-                    except json.JSONDecodeError as e:
-                        raise ValueError(f"Invalid JSON at line {line_num}: {e}")
+                    print(f"\n🔍 BATCH #{batch_number}: Reading next {BATCH_SIZE:,} ticks...")
+                    batch_read_start = time.time()
                     
-                    # Process header line and detect historical data
-                    if tick_data.get('type') == 'backtest_start':
-                        # Log important backtest info
-                        start_time = tick_data.get('start_time', 'unknown')
-                        end_time = tick_data.get('end_time', 'unknown')
-                        total_ticks = tick_data.get('total_ticks', 'unknown')
-                        self.logger.info(f"📊 Backtest data range: {start_time} to {end_time} ({total_ticks} ticks)")
-                        continue
-                    
-                    # Process tick
-                    if tick_data.get('type') == 'tick':
-                        # Parse timestamp to determine phase
-                        timestamp_str = tick_data.get('timestamp')
-                        if not timestamp_str:
-                            raise ValueError("Missing timestamp in tick data")
+                    # Read exactly 100K ticks (or until file ends)
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        
+                        lines_read_in_batch += 1
+                        
+                        # Real-time reading progress every 10K ticks
+                        if len(current_batch) > 0 and len(current_batch) % 10000 == 0:
+                            remaining = BATCH_SIZE - len(current_batch)
+                            elapsed = time.time() - batch_read_start
+                            rate = len(current_batch) / elapsed if elapsed > 0 else 0
+                            print(f"  📚 Reading: {len(current_batch):,}/100K ticks ({remaining:,} remaining) | {rate:,.0f} ticks/sec")
                         
                         try:
-                            tick_timestamp = datetime.strptime(timestamp_str, '%Y.%m.%d %H:%M:%S')
-                        except ValueError as e:
-                            raise ValueError(f"Invalid timestamp format '{timestamp_str}': {e}")
+                            tick_data = json.loads(line)
+                        except json.JSONDecodeError as e:
+                            raise ValueError(f"Invalid JSON at line {lines_read_in_batch}: {e}")
                         
-                        # Initialize phase dates on first tick
-                        if training_start_date is None:
-                            training_start_date = tick_timestamp
-                            validation_start_date = training_start_date + timedelta(days=training_days)
-                            self.logger.info(f"📚 TRAINING PHASE: {training_start_date.strftime('%Y-%m-%d')} to {validation_start_date.strftime('%Y-%m-%d')} (30 days)")
-                            self.logger.info(f"🧪 VALIDATION PHASE: {validation_start_date.strftime('%Y-%m-%d')} onwards (30 days)")
-                            
-                            # Set historical mode for training
-                            if hasattr(analyzer_system, 'set_historical_mode'):
-                                analyzer_system.set_historical_mode(True)
+                        # Process header
+                        if tick_data.get('type') == 'backtest_start':
+                            start_time = tick_data.get('start_time', 'unknown')
+                            end_time = tick_data.get('end_time', 'unknown')
+                            total_ticks = tick_data.get('total_ticks', 'unknown')
+                            print(f"📊 Backtest data: {start_time} to {end_time} ({total_ticks} ticks)")
+                            continue
                         
-                        # Determine current phase
-                        if validation_start_date is None:
-                            raise RuntimeError("Phase dates not initialized - logic error")
-                        
-                        if tick_timestamp < validation_start_date:
-                            # TRAINING PHASE
-                            if not training_phase:
-                                training_phase = True
-                                validation_phase = False
-                                self.logger.info("📚 Entering TRAINING PHASE")
-                            
-                            total_training_ticks += 1
+                        # Add tick to batch
+                        if tick_data.get('type') == 'tick':
+                            # Initialize phase dates on first tick
                             if training_start_date is None:
-                                raise RuntimeError("Training start date not initialized")
-                            current_training_day = (tick_timestamp - training_start_date).days + 1
+                                timestamp_str = tick_data.get('timestamp')
+                                if timestamp_str:
+                                    first_tick_time = parse_mt5_timestamp(timestamp_str)
+                                    training_start_date = first_tick_time
+                                    validation_start_date = training_start_date + timedelta(days=training_days)
+                                    print(f"📚 TRAINING PHASE: {training_start_date.strftime('%Y-%m-%d')} to {validation_start_date.strftime('%Y-%m-%d')}")
+                                    print(f"🧪 VALIDATION PHASE: {validation_start_date.strftime('%Y-%m-%d')} onwards")
                             
-                            # Progress feedback every 100K training ticks
-                            if total_training_ticks % 100000 == 0:
-                                self.logger.info(f"📚 Training progress: {total_training_ticks:,} ticks | Day {current_training_day} of 30")
-                        
-                        else:
-                            # VALIDATION PHASE
-                            if not validation_phase:
-                                training_phase = False
-                                validation_phase = True
-                                self.logger.info("🧪 Entering VALIDATION PHASE - Models will make predictions")
-                                # Switch to validation mode
-                                if hasattr(analyzer_system, 'set_validation_mode'):
-                                    analyzer_system.set_validation_mode(True)
+                            current_batch.append(tick_data)
                             
-                            total_validation_ticks += 1
-                            if validation_start_date is None:
-                                raise RuntimeError("Validation start date not initialized")
-                            current_validation_day = (tick_timestamp - validation_start_date).days + 1
-                            
-                            # Progress feedback every 100K validation ticks
-                            if total_validation_ticks % 100000 == 0:
-                                self.logger.info(f"🧪 Validation progress: {total_validation_ticks:,} ticks | Day {current_validation_day} of 30")
-                        
-                        batch_buffer.append(tick_data)
-                        
-                        # Process in batches
-                        if len(batch_buffer) >= self.config.batch_size:
-                            self._process_tick_batch(batch_buffer, analyzer_system)
-                            ticks_processed += len(batch_buffer)
-                            
-                            # Real-time performance feedback every second
-                            current_time = time.time()
-                            if current_time - last_progress_time >= 1.0:  # Every second
-                                ticks_this_second = ticks_processed - last_progress_ticks
-                                phase_name = "Training" if training_phase else "Validation"
-                                self.logger.info(f"⚡ {phase_name}: {ticks_this_second:,} ticks/sec | Total: {ticks_processed:,}")
-                                last_progress_time = current_time
-                                last_progress_ticks = ticks_processed
-                            
-                            batch_buffer.clear()
-                
-                # Process remaining ticks
-                if batch_buffer:
-                    self._process_tick_batch(batch_buffer, analyzer_system)
-                    ticks_processed += len(batch_buffer)
+                            # Stop when batch is full
+                            if len(current_batch) >= BATCH_SIZE:
+                                break
+                    
+                    # Check if we have any ticks to process
+                    if not current_batch:
+                        print("📄 End of file reached")
+                        break
+                    
+                    batch_read_time = time.time() - batch_read_start
+                    print(f"✅ Read complete: {len(current_batch):,} ticks in {batch_read_time:.2f}s")
+                    
+                    # Determine batch phase (training or validation)
+                    batch_phase = self._determine_batch_phase(current_batch, validation_start_date)
+                    
+                    # Process the batch
+                    print(f"🔄 Processing BATCH #{batch_number} ({batch_phase} phase)...")
+                    batch_process_start = time.time()
+                    
+                    if batch_phase == "training":
+                        # Training: only train models, no predictions
+                        self._train_models_on_batch(current_batch, analyzer_system)
+                        total_training_ticks += len(current_batch)
+                    else:
+                        # Validation: use trained models for predictions
+                        self._validate_models_on_batch(current_batch, analyzer_system) 
+                        total_validation_ticks += len(current_batch)
+                    
+                    batch_process_time = time.time() - batch_process_start
+                    total_ticks_processed += len(current_batch)
+                    
+                    print(f"✅ BATCH #{batch_number} completed:")
+                    print(f"   📊 {len(current_batch):,} ticks processed in {batch_process_time:.2f}s")
+                    print(f"   🎯 Phase: {batch_phase}")
+                    print(f"   📈 Total progress: {total_ticks_processed:,} ticks")
+                    
+                    # Memory cleanup every 5 batches
+                    if batch_number % 5 == 0:
+                        import gc
+                        gc.collect()
+                        print(f"🧹 Memory cleanup after batch #{batch_number}")
             
-            self.total_ticks_processed = ticks_processed
+            # Final summary
+            total_time = time.time() - processing_start_time
+            print(f"\n✅ Batch processing completed!")
+            print(f"📊 Total batches processed: {batch_number}")
+            print(f"📊 Total ticks: {total_ticks_processed:,} in {total_time:.1f}s")
+            print(f"📚 Training ticks: {total_training_ticks:,}")
+            print(f"🧪 Validation ticks: {total_validation_ticks:,}")
             
-            # Final phase summary
-            self.logger.info(f"✅ 60-day backtest completed: {ticks_processed:,} total ticks processed")
-            self.logger.info(f"📚 Training phase: {total_training_ticks:,} ticks processed (first 30 days)")
-            self.logger.info(f"🧪 Validation phase: {total_validation_ticks:,} ticks processed (last 30 days)")
-            
-            if total_training_ticks > 0 and total_validation_ticks > 0:
-                self.logger.info("📊 Models have been trained and validated with historical data")
-            elif total_training_ticks > 0:
-                self.logger.info("📚 Models have been trained - validation phase incomplete")
-            else:
-                raise RuntimeError("No training data processed - insufficient data range")
-            
+            self.total_ticks_processed = total_ticks_processed
             return True
             
         except Exception as e:
-            self.logger.error(f"Error processing JSONL file: {e}")
-            raise RuntimeError(f"JSONL processing failed: {e}")
+            print(f"❌ Error in batch processing: {e}")
+            raise RuntimeError(f"Batch processing failed: {e}")
     
-    def _process_tick_batch(self, tick_batch: List[Dict], analyzer_system):
-        """Process a batch of ticks"""
+    
+    def _determine_batch_phase(self, batch: List[Dict], validation_start_date) -> str:
+        """Determine if batch is training or validation phase"""
+        if not batch or validation_start_date is None:
+            return "training"
         
-        for tick_data in tick_batch:
-            try:
-                # Extract tick data fields and feed to analyzer - FAIL FAST format conversion
-                if not hasattr(analyzer_system, 'process_tick'):
-                    raise AttributeError("analyzer_system missing process_tick method")
-                
-                # Parse timestamp
-                timestamp_str = tick_data.get('timestamp')
-                if not timestamp_str:
-                    raise ValueError("Missing required field 'timestamp' in tick data")
-                
-                # Parse timestamp format: "2025.01.01 00:00:01"
-                try:
-                    timestamp = datetime.strptime(timestamp_str, '%Y.%m.%d %H:%M:%S')
-                except ValueError as e:
-                    raise ValueError(f"Invalid timestamp format '{timestamp_str}': {e}")
-                
-                # Extract required fields - FAIL FAST if missing
-                asset = tick_data.get('symbol')
-                if not asset:
-                    raise ValueError("Missing required field 'symbol' in tick data")
-                
-                price = tick_data.get('last')
-                if price is None:
-                    raise ValueError("Missing required field 'last' in tick data")
-                
-                # Handle zero last price - use mid price
-                if price == 0:
-                    bid = tick_data.get('bid', 0)
-                    ask = tick_data.get('ask', 0)
-                    if bid > 0 and ask > 0:
-                        price = (bid + ask) / 2
-                    else:
-                        raise ValueError(f"Cannot determine price: last={price}, bid={bid}, ask={ask}")
-                
-                volume = tick_data.get('volume')
-                if volume is None:
-                    raise ValueError("Missing required field 'volume' in tick data")
-                
-                # Volume of 0 is now acceptable (will use M5 tick count)
-                
-                # Optional fields
-                bid = tick_data.get('bid')
-                ask = tick_data.get('ask')
-                
-                # Call analyzer with correct signature
-                analyzer_system.process_tick(
-                    asset=asset,
-                    timestamp=timestamp,
-                    price=float(price),
-                    volume=float(volume),
-                    bid=float(bid) if bid is not None else None,
-                    ask=float(ask) if ask is not None else None
-                )
-                    
-            except Exception as e:
-                self.logger.error(f"Error processing tick: {e}")
-                raise RuntimeError(f"Tick processing failed: {e}")
+        # Check timestamp of middle tick in batch
+        middle_tick = batch[len(batch) // 2]
+        timestamp_str = middle_tick.get('timestamp')
+        if timestamp_str:
+            tick_time = parse_mt5_timestamp(timestamp_str)
+            return "training" if tick_time < validation_start_date else "validation"
+        
+        return "training"
+    
+    def _train_models_on_batch(self, batch: List[Dict], analyzer_system):
+        """Train ML models on batch data (no predictions)"""
+        print(f"🎓 Training models with {len(batch):,} ticks...")
+        
+        # Convert batch to training data format
+        training_data = self._convert_batch_to_ml_data(batch)
+        
+        # FAIL FAST - analyzer MUST have train_on_batch method
+        if not hasattr(analyzer_system, 'train_on_batch'):
+            raise AttributeError("analyzer_system missing required method 'train_on_batch' - cannot train models")
+        
+        # Train models on batch data
+        print(f"🧠 Training ML models on {len(training_data['ticks'])} ticks...")
+        result = analyzer_system.train_on_batch(training_data)
+        print(f"✅ ML training completed: {result if result else 'models updated'}")
+    
+    def _validate_models_on_batch(self, batch: List[Dict], analyzer_system):
+        """Use trained models to make predictions on batch"""
+        print(f"🧪 Validating models with {len(batch):,} ticks...")
+        
+        # Convert batch to validation data format
+        validation_data = self._convert_batch_to_ml_data(batch)
+        
+        # FAIL FAST - analyzer MUST have validate_on_batch method  
+        if not hasattr(analyzer_system, 'validate_on_batch'):
+            raise AttributeError("analyzer_system missing required method 'validate_on_batch' - cannot validate models")
+        
+        # Generate predictions using trained models
+        print(f"🔮 Generating predictions with trained models...")
+        predictions = analyzer_system.validate_on_batch(validation_data)
+        print(f"✅ Generated {len(predictions) if predictions else 0} predictions")
+    
+    def _convert_batch_to_ml_data(self, batch: List[Dict]) -> Dict[str, Any]:
+        """Convert tick batch to ML training/validation format"""
+        ml_data = {
+            'ticks': [],
+            'timestamps': [],
+            'prices': [],
+            'volumes': [],
+            'count': len(batch)
+        }
+        
+        for tick_data in batch:
+            if tick_data.get('type') == 'tick':
+                ml_data['ticks'].append(tick_data)
+                ml_data['timestamps'].append(tick_data.get('timestamp'))
+                ml_data['prices'].append(tick_data.get('last', 0))
+                ml_data['volumes'].append(tick_data.get('volume', 0))
+        
+        return ml_data
+    
     
     def _load_csv_data(self, csv_file: str, symbol: str) -> List[Dict[str, Any]]:
         """Load tick data from CSV file - FAIL FAST version"""

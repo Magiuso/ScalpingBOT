@@ -164,7 +164,7 @@ class UnifiedAnalyzerSystem:
             return self.mt5_backtest_runner
         
         # Use migrated backtest runner
-        from src.interfaces.mt5.mt5_backtest_runner import create_backtest_config
+        from ScalpingBOT_Restauro.src.interfaces.mt5.mt5_backtest_runner import create_backtest_config
         
         backtest_config = create_backtest_config(
             symbol=symbol,
@@ -513,6 +513,112 @@ class UnifiedAnalyzerSystem:
                     health['issues'].append(f'High system error rate: {error_rate:.1%}')
         
         return health
+    
+    def train_on_batch(self, batch_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Train ML models on a batch of tick data"""
+        if not self.is_running:
+            raise RuntimeError("System not running - call start() first")
+        
+        batch_size = batch_data.get('count', 0)
+        if batch_size == 0:
+            raise ValueError("Empty batch data provided for training")
+        
+        print(f"🧠 UnifiedAnalyzerSystem: Training ML models on {batch_size:,} ticks...")
+        
+        try:
+            # Train models using market analyzer
+            training_result = self.market_analyzer.train_models_on_batch(batch_data)
+            
+            # Update system stats
+            with self.system_lock:
+                self.system_stats['total_ticks_processed'] += batch_size
+            
+            # Emit training event
+            self.event_collector.emit_manual_event(
+                EventType.SYSTEM_STATUS,
+                {
+                    'action': 'batch_training_completed',
+                    'batch_size': batch_size,
+                    'training_result': training_result
+                },
+                EventSeverity.INFO
+            )
+            
+            print(f"✅ ML training completed on {batch_size:,} ticks")
+            return training_result
+            
+        except Exception as e:
+            # Update error stats
+            with self.system_lock:
+                self.system_stats['total_errors'] += 1
+            
+            # Emit error event
+            self.event_collector.emit_manual_event(
+                EventType.ERROR_EVENT,
+                {
+                    'component': 'unified_system',
+                    'method': 'train_on_batch',
+                    'error': str(e),
+                    'batch_size': batch_size
+                },
+                EventSeverity.ERROR
+            )
+            
+            raise RuntimeError(f"Batch training failed: {e}")
+    
+    def validate_on_batch(self, batch_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Generate predictions using trained models on a batch of tick data"""
+        if not self.is_running:
+            raise RuntimeError("System not running - call start() first")
+        
+        batch_size = batch_data.get('count', 0)
+        if batch_size == 0:
+            raise ValueError("Empty batch data provided for validation")
+        
+        print(f"🔮 UnifiedAnalyzerSystem: Generating predictions on {batch_size:,} ticks...")
+        
+        try:
+            # Generate predictions using market analyzer
+            predictions = self.market_analyzer.validate_models_on_batch(batch_data)
+            
+            # Update system stats
+            with self.system_lock:
+                self.system_stats['total_ticks_processed'] += batch_size
+                if predictions:
+                    self.system_stats['total_predictions_generated'] += len(predictions)
+            
+            # Emit validation event
+            self.event_collector.emit_manual_event(
+                EventType.SYSTEM_STATUS,
+                {
+                    'action': 'batch_validation_completed',
+                    'batch_size': batch_size,
+                    'predictions_count': len(predictions) if predictions else 0
+                },
+                EventSeverity.INFO
+            )
+            
+            print(f"✅ Generated {len(predictions) if predictions else 0} predictions")
+            return predictions
+            
+        except Exception as e:
+            # Update error stats
+            with self.system_lock:
+                self.system_stats['total_errors'] += 1
+            
+            # Emit error event
+            self.event_collector.emit_manual_event(
+                EventType.ERROR_EVENT,
+                {
+                    'component': 'unified_system',
+                    'method': 'validate_on_batch',
+                    'error': str(e),
+                    'batch_size': batch_size
+                },
+                EventSeverity.ERROR
+            )
+            
+            raise RuntimeError(f"Batch validation failed: {e}")
 
 
 # Factory functions
