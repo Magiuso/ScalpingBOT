@@ -18,13 +18,13 @@ from typing import Dict, Any, Optional, List, Set
 from collections import deque
 
 # Import shared enums
-from src.shared.enums import ModelType
+from ScalpingBOT_Restauro.src.shared.enums import ModelType
 
 # Import migrated components from FASE 1-5
-from src.config.base.config_loader import get_configuration_manager
-from src.config.base.base_config import get_analyzer_config
-from src.monitoring.events.event_collector import EventCollector, EventType, EventSeverity
-from src.prediction.core.asset_analyzer import AssetAnalyzer, create_asset_analyzer
+from ScalpingBOT_Restauro.src.config.base.config_loader import get_configuration_manager
+from ScalpingBOT_Restauro.src.config.base.base_config import get_analyzer_config
+from ScalpingBOT_Restauro.src.monitoring.events.event_collector import EventCollector, EventType, EventSeverity
+from ScalpingBOT_Restauro.src.prediction.core.asset_analyzer import AssetAnalyzer, create_asset_analyzer
 
 
 class AdvancedMarketAnalyzer:

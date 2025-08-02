@@ -17,20 +17,20 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List, Set, Callable
 
 # Import shared enums and system mode (avoid duplication)
-from src.shared.enums import ModelType
-from src.config.domain.system_config import SystemMode
+from ScalpingBOT_Restauro.src.shared.enums import ModelType
+from ScalpingBOT_Restauro.src.config.domain.system_config import SystemMode
 
 # Import ALL migrated components FASE 1-6
-from src.config.base.config_loader import get_configuration_manager, ConfigurationManager
-from src.config.base.base_config import get_analyzer_config
-from src.monitoring.events.event_collector import EventCollector, EventType, EventSeverity
-from src.monitoring.display.display_manager import SimpleDisplayManager
-from src.monitoring.storage.storage_manager import StorageManager
-from src.data.collectors.tick_collector import TickCollector
-from src.data.processors.market_data_processor import MarketDataProcessor  
-from src.interfaces.mt5.mt5_bridge_reader import MT5BridgeReader
-from src.interfaces.mt5.mt5_backtest_runner import MT5BacktestRunner
-from src.prediction.core.advanced_market_analyzer import AdvancedMarketAnalyzer
+from ScalpingBOT_Restauro.src.config.base.config_loader import get_configuration_manager, ConfigurationManager
+from ScalpingBOT_Restauro.src.config.base.base_config import get_analyzer_config
+from ScalpingBOT_Restauro.src.monitoring.events.event_collector import EventCollector, EventType, EventSeverity
+from ScalpingBOT_Restauro.src.monitoring.display.display_manager import SimpleDisplayManager
+from ScalpingBOT_Restauro.src.monitoring.storage.storage_manager import StorageManager
+from ScalpingBOT_Restauro.src.data.collectors.tick_collector import TickCollector
+from ScalpingBOT_Restauro.src.data.processors.market_data_processor import MarketDataProcessor  
+from ScalpingBOT_Restauro.src.interfaces.mt5.mt5_bridge_reader import MT5BridgeReader
+from ScalpingBOT_Restauro.src.interfaces.mt5.mt5_backtest_runner import MT5BacktestRunner
+from ScalpingBOT_Restauro.src.prediction.core.advanced_market_analyzer import AdvancedMarketAnalyzer
 
 
 class UnifiedAnalyzerSystem:
@@ -530,11 +530,11 @@ def create_production_system(data_path: str) -> UnifiedAnalyzerSystem:
     return UnifiedAnalyzerSystem(data_path=data_path, mode=SystemMode.PRODUCTION)
 
 
-def create_backtesting_system(data_path: str) -> UnifiedAnalyzerSystem:
-    """Factory function per sistema backtesting - data_path is required"""
+def create_testing_system(data_path: str) -> UnifiedAnalyzerSystem:
+    """Factory function per sistema testing/backtesting - data_path is required"""
     if not data_path or not isinstance(data_path, str):
         raise ValueError("data_path is required and must be a non-empty string")
-    return UnifiedAnalyzerSystem(data_path=data_path, mode=SystemMode.BACKTESTING)
+    return UnifiedAnalyzerSystem(data_path=data_path, mode=SystemMode.TESTING)
 
 
 # Export
@@ -543,5 +543,5 @@ __all__ = [
     'SystemMode',
     'create_unified_system',
     'create_production_system', 
-    'create_backtesting_system'
+    'create_testing_system'
 ]

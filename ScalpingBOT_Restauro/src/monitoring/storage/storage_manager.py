@@ -24,10 +24,10 @@ from collections import deque
 import uuid
 
 # Import configuration and events
-from src.config.domain.monitoring_config import (
+from ScalpingBOT_Restauro.src.config.domain.monitoring_config import (
     MLTrainingLoggerConfig, StorageSettings, OutputFormat
 )
-from src.monitoring.events.event_collector import MLEvent
+from ScalpingBOT_Restauro.src.monitoring.events.event_collector import MLEvent
 
 
 class FileRotationManager:

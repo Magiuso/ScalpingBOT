@@ -19,8 +19,8 @@ from typing import Dict, Any
 from dataclasses import dataclass, field
 
 # Import configuration and events
-from src.config.domain.monitoring_config import MLTrainingLoggerConfig
-from src.monitoring.events.event_collector import MLEvent, EventType, EventSeverity
+from ScalpingBOT_Restauro.src.config.domain.monitoring_config import MLTrainingLoggerConfig
+from ScalpingBOT_Restauro.src.monitoring.events.event_collector import MLEvent, EventType, EventSeverity
 
 
 @dataclass

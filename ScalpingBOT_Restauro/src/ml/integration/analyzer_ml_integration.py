@@ -35,7 +35,7 @@ from ..monitoring.training_monitor import TrainingMonitor, MonitorConfig
 from enum import Enum
 
 # Import shared enums instead of duplicating - CONSOLIDATED
-from src.shared.enums import ModelType, OptimizationProfile
+from ScalpingBOT_Restauro.src.shared.enums import ModelType, OptimizationProfile
 
 # Create missing classes that were in optimized_training_config.py
 class OptimizedTrainingPipeline:

@@ -17,17 +17,17 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 
 # Import shared enums
-from src.shared.enums import ModelType
+from ScalpingBOT_Restauro.src.shared.enums import ModelType
 
 # Import migrated components from FASE 1-5
-from src.config.base.config_loader import get_configuration_manager
-from src.config.base.base_config import get_analyzer_config
-from src.monitoring.events.event_collector import EventCollector
-from src.data.collectors.tick_collector import TickCollector
-from src.data.processors.market_data_processor import MarketDataProcessor
-from src.ml.models.competition import AlgorithmCompetition
-from src.ml.models.base_models import Prediction
-from src.interfaces.mt5.mt5_adapter import MT5Adapter
+from ScalpingBOT_Restauro.src.config.base.config_loader import get_configuration_manager
+from ScalpingBOT_Restauro.src.config.base.base_config import get_analyzer_config
+from ScalpingBOT_Restauro.src.monitoring.events.event_collector import EventCollector
+from ScalpingBOT_Restauro.src.data.collectors.tick_collector import TickCollector
+from ScalpingBOT_Restauro.src.data.processors.market_data_processor import MarketDataProcessor
+from ScalpingBOT_Restauro.src.ml.models.competition import AlgorithmCompetition
+from ScalpingBOT_Restauro.src.ml.models.base_models import Prediction
+from ScalpingBOT_Restauro.src.interfaces.mt5.mt5_adapter import MT5Adapter
 # Removed safe_print import - using fail-fast error handling instead
 
 
@@ -207,7 +207,7 @@ class AssetAnalyzer:
             
             # FASE 2 - MONITORING: Use migrated event collector for errors
             if self.event_collector:
-                from src.monitoring.events.event_collector import EventType, EventSeverity
+                from ScalpingBOT_Restauro.src.monitoring.events.event_collector import EventType, EventSeverity
                 self.event_collector.emit_manual_event(
                     EventType.ERROR_EVENT,
                     {
@@ -305,7 +305,7 @@ class AssetAnalyzer:
                 except Exception as e:
                     # Log error but continue with other models
                     if self.event_collector:
-                        from src.monitoring.events.event_collector import EventType, EventSeverity
+                        from ScalpingBOT_Restauro.src.monitoring.events.event_collector import EventType, EventSeverity
                         self.event_collector.emit_manual_event(
                             EventType.ERROR_EVENT,
                             {
@@ -322,7 +322,7 @@ class AssetAnalyzer:
         except Exception as e:
             # Log general prediction error
             if self.event_collector:
-                from src.monitoring.events.event_collector import EventType, EventSeverity
+                from ScalpingBOT_Restauro.src.monitoring.events.event_collector import EventType, EventSeverity
                 self.event_collector.emit_manual_event(
                     EventType.ERROR_EVENT,
                     {
@@ -349,7 +349,7 @@ class AssetAnalyzer:
         
         # Start event collector
         if self.event_collector:
-            from src.monitoring.events.event_collector import EventType, EventSeverity
+            from ScalpingBOT_Restauro.src.monitoring.events.event_collector import EventType, EventSeverity
             self.event_collector.emit_manual_event(
                 EventType.SYSTEM_STATUS,
                 {
@@ -369,7 +369,7 @@ class AssetAnalyzer:
         
         # Stop event collector notification
         if self.event_collector:
-            from src.monitoring.events.event_collector import EventType, EventSeverity
+            from ScalpingBOT_Restauro.src.monitoring.events.event_collector import EventType, EventSeverity
             self.event_collector.emit_manual_event(
                 EventType.SYSTEM_STATUS,
                 {

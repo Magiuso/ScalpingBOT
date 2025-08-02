@@ -22,7 +22,7 @@ from .unified_system import (
     SystemMode,
     create_unified_system,
     create_production_system,
-    create_backtesting_system
+    create_testing_system
 )
 
 __all__ = [
@@ -34,5 +34,5 @@ __all__ = [
     'SystemMode',
     'create_unified_system',
     'create_production_system',
-    'create_backtesting_system'
+    'create_testing_system'
 ]

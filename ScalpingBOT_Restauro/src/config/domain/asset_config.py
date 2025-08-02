@@ -18,7 +18,7 @@ MIGRATED FROM:
 import os
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
-from src.config.base.base_config import AnalyzerConfig
+from ScalpingBOT_Restauro.src.config.base.base_config import AnalyzerConfig
 
 
 @dataclass

@@ -70,7 +70,7 @@ try:
     from ScalpingBOT_Restauro.src.interfaces.mt5.mt5_backtest_runner import MT5BacktestRunner, BacktestConfig, create_backtest_config
     
     # FASE 6: PREDICTION - Unified system
-    from ScalpingBOT_Restauro.src.prediction.unified_system import UnifiedAnalyzerSystem, create_backtesting_system
+    from ScalpingBOT_Restauro.src.prediction.unified_system import UnifiedAnalyzerSystem, create_testing_system
     
     print("✅ Migrated modular system available")
     print("   ├── Configuration system ✅")
@@ -236,9 +236,9 @@ class BacktestRestauro:
             if not self.config_manager:
                 raise RuntimeError("Failed to initialize configuration manager")
             
-            # CRITICAL: Load configuration for BACKTESTING mode with asset
-            safe_print(f"🔧 Loading configuration for BACKTESTING mode with asset: {self.asset_symbol}")
-            self.config_manager.load_configuration_for_mode("backtesting", self.asset_symbol)
+            # CRITICAL: Load configuration for TESTING mode with asset (includes backtesting)
+            safe_print(f"🔧 Loading configuration for TESTING mode with asset: {self.asset_symbol}")
+            self.config_manager.load_configuration_for_mode("testing", self.asset_symbol)
             
             safe_print("✅ Configuration manager initialized and loaded")
             
@@ -341,12 +341,19 @@ class BacktestRestauro:
         """Test caricamento dati con rilevamento storico"""
         
         try:
-            # Initialize unified system for backtesting
-            safe_print("🔧 Initializing unified backtesting system...")
-            self.unified_system = create_backtesting_system(self.test_data_path)
+            # Initialize unified system for testing/backtesting
+            safe_print("🔧 Initializing unified testing system...")
+            
+            # Pass the already configured config manager to avoid global instance issues
+            # The global instance HAS the config loaded, but UnifiedAnalyzerSystem doesn't see it
+            self.unified_system = UnifiedAnalyzerSystem(
+                data_path=self.test_data_path,
+                mode=SystemMode.TESTING,
+                config_manager=self.config_manager  # Use the same instance we configured
+            )
             
             if not self.unified_system:
-                raise RuntimeError("Failed to create unified backtesting system")
+                raise RuntimeError("Failed to create unified testing system")
             
             # Add the asset to the system
             safe_print(f"🎯 Adding asset {self.asset_symbol} to unified system...")

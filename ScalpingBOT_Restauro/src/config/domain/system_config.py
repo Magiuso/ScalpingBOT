@@ -14,9 +14,8 @@ class SystemMode(Enum):
     """Modalità operative del sistema"""
     PRODUCTION = "production"      # Minimal logging, max performance
     DEVELOPMENT = "development"    # Normal logging, debugging enabled
-    TESTING = "testing"           # Verbose logging, full diagnostics
+    TESTING = "testing"           # Verbose logging, full diagnostics, backtesting
     DEMO = "demo"                 # Rich console output, showcasing
-    BACKTESTING = "backtesting"   # Ultra-high performance backtesting mode
 
 
 class PerformanceProfile(Enum):

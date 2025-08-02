@@ -10,13 +10,13 @@ from dataclasses import dataclass
 from enum import Enum
 
 # Import all configuration classes
-from src.config.base.base_config import AnalyzerConfig, get_analyzer_config, set_analyzer_config
-from src.config.domain.system_config import UnifiedConfig, SystemMode, PerformanceProfile
-from src.config.domain.monitoring_config import MLTrainingLoggerConfig, VerbosityLevel
-from src.config.domain.asset_config import AssetSpecificConfig
+from ScalpingBOT_Restauro.src.config.base.base_config import AnalyzerConfig, get_analyzer_config, set_analyzer_config
+from ScalpingBOT_Restauro.src.config.domain.system_config import UnifiedConfig, SystemMode, PerformanceProfile
+from ScalpingBOT_Restauro.src.config.domain.monitoring_config import MLTrainingLoggerConfig, VerbosityLevel
+from ScalpingBOT_Restauro.src.config.domain.asset_config import AssetSpecificConfig
 
 # Import universal encoding fix for system-wide Unicode support
-from src.monitoring.utils.universal_encoding_fix import init_universal_encoding
+from ScalpingBOT_Restauro.src.monitoring.utils.universal_encoding_fix import init_universal_encoding
 
 
 # ============================================================================

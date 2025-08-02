@@ -24,9 +24,9 @@ import logging
 from dataclasses import dataclass
 
 # Import sistema migrato FASE 1-2
-from src.config.base.config_loader import get_configuration_manager
-from src.config.domain.system_config import UnifiedConfig, SystemMode, PerformanceProfile
-from src.monitoring.events.event_collector import EventCollector, EventType, EventSource, EventSeverity
+from ScalpingBOT_Restauro.src.config.base.config_loader import get_configuration_manager
+from ScalpingBOT_Restauro.src.config.domain.system_config import UnifiedConfig, SystemMode, PerformanceProfile
+from ScalpingBOT_Restauro.src.monitoring.events.event_collector import EventCollector, EventType, EventSource, EventSeverity
 
 # Import MT5 adapter for clean interface
 from .mt5_adapter import MT5Adapter, MT5Tick
@@ -317,6 +317,11 @@ class MT5DataExporter:
         # Tick counting for M5 periods
         m5_tick_counter = {}  # key: M5 timestamp, value: tick count
         
+        # Real-time export progress tracking
+        export_start_time = time.time()
+        last_progress_report = export_start_time
+        last_ticks_reported = 0
+        
         for i, tick in enumerate(ticks):
             # Reuse template to avoid allocations
             tick_data = self._tick_data_template.copy()
@@ -372,6 +377,16 @@ class MT5DataExporter:
             
             ticks_processed += 1
             
+            # Real-time export progress every second
+            current_time = time.time()
+            if current_time - last_progress_report >= 1.0:
+                ticks_this_second = ticks_processed - last_ticks_reported
+                elapsed_time = current_time - export_start_time
+                progress_pct = (ticks_processed / chunk_tick_count * 100) if chunk_tick_count > 0 else 0
+                self.logger.info(f"📤 Export progress: {ticks_processed:,}/{chunk_tick_count:,} ticks ({progress_pct:.1f}%) | {ticks_this_second:,} ticks/sec | Elapsed: {elapsed_time:.1f}s")
+                last_progress_report = current_time
+                last_ticks_reported = ticks_processed
+            
             # Periodic memory management
             if (i + 1) % 2000 == 0:
                 file_handle.flush()
@@ -388,7 +403,10 @@ class MT5DataExporter:
                     if self._get_memory_usage() > 90:
                         raise RuntimeError(f"Memory exceeded 90% at tick {i+1}/{chunk_tick_count}")
         
-        self.logger.info(f"Chunk {chunk_number} processing completed: {ticks_processed} ticks")
+        # Final chunk summary
+        total_export_time = time.time() - export_start_time
+        avg_ticks_per_sec = ticks_processed / total_export_time if total_export_time > 0 else 0
+        self.logger.info(f"✅ Chunk {chunk_number} export completed: {ticks_processed:,} ticks in {total_export_time:.1f}s ({avg_ticks_per_sec:.0f} ticks/sec avg)")
         
         # 🚀 CLEANUP - Delete ticks from memory immediately
         del ticks
@@ -653,18 +671,32 @@ class MT5BacktestRunner:
         return self._process_jsonl_file(jsonl_file, analyzer_system)
     
     def _process_jsonl_file(self, jsonl_file: str, analyzer_system) -> bool:
-        """Process JSONL file and feed to analyzer"""
+        """Process JSONL file with 30-day training + 30-day validation phases"""
         
         if not os.path.exists(jsonl_file):
             raise FileNotFoundError(f"File not found: {jsonl_file}")
         
         self.logger.info(f"Processing JSONL file: {jsonl_file}")
         
+        # Initialize phase tracking
         ticks_processed = 0
         batch_buffer = []
         is_historical_data = False
         first_ticks_checked = False
         ticks_for_date_check = []
+        
+        # Phase management variables
+        training_phase = True  # Start with training phase
+        validation_phase = False
+        training_start_date = None
+        validation_start_date = None
+        training_days = 30  # From config
+        total_training_ticks = 0
+        total_validation_ticks = 0
+        
+        # Performance tracking
+        last_progress_time = time.time()
+        last_progress_ticks = 0
         
         try:
             with open(jsonl_file, 'r', encoding='utf-8') as f:
@@ -689,18 +721,65 @@ class MT5BacktestRunner:
                     
                     # Process tick
                     if tick_data.get('type') == 'tick':
-                        # Check if data is historical (first 50 ticks)
-                        if not first_ticks_checked and len(ticks_for_date_check) < 50:
-                            ticks_for_date_check.append(tick_data)
-                            if len(ticks_for_date_check) == 50:
-                                is_historical_data = self._check_if_historical_data(ticks_for_date_check)
-                                first_ticks_checked = True
-                                if is_historical_data:
-                                    self.logger.warning("⚠️ HISTORICAL DATA DETECTED - Training with past market data")
-                                    self.logger.info("📚 This is LEARNING PHASE - Models will train on historical patterns")
-                                    # Notify analyzer system about historical mode if supported
-                                    if hasattr(analyzer_system, 'set_historical_mode'):
-                                        analyzer_system.set_historical_mode(True)
+                        # Parse timestamp to determine phase
+                        timestamp_str = tick_data.get('timestamp')
+                        if not timestamp_str:
+                            raise ValueError("Missing timestamp in tick data")
+                        
+                        try:
+                            tick_timestamp = datetime.strptime(timestamp_str, '%Y.%m.%d %H:%M:%S')
+                        except ValueError as e:
+                            raise ValueError(f"Invalid timestamp format '{timestamp_str}': {e}")
+                        
+                        # Initialize phase dates on first tick
+                        if training_start_date is None:
+                            training_start_date = tick_timestamp
+                            validation_start_date = training_start_date + timedelta(days=training_days)
+                            self.logger.info(f"📚 TRAINING PHASE: {training_start_date.strftime('%Y-%m-%d')} to {validation_start_date.strftime('%Y-%m-%d')} (30 days)")
+                            self.logger.info(f"🧪 VALIDATION PHASE: {validation_start_date.strftime('%Y-%m-%d')} onwards (30 days)")
+                            
+                            # Set historical mode for training
+                            if hasattr(analyzer_system, 'set_historical_mode'):
+                                analyzer_system.set_historical_mode(True)
+                        
+                        # Determine current phase
+                        if validation_start_date is None:
+                            raise RuntimeError("Phase dates not initialized - logic error")
+                        
+                        if tick_timestamp < validation_start_date:
+                            # TRAINING PHASE
+                            if not training_phase:
+                                training_phase = True
+                                validation_phase = False
+                                self.logger.info("📚 Entering TRAINING PHASE")
+                            
+                            total_training_ticks += 1
+                            if training_start_date is None:
+                                raise RuntimeError("Training start date not initialized")
+                            current_training_day = (tick_timestamp - training_start_date).days + 1
+                            
+                            # Progress feedback every 100K training ticks
+                            if total_training_ticks % 100000 == 0:
+                                self.logger.info(f"📚 Training progress: {total_training_ticks:,} ticks | Day {current_training_day} of 30")
+                        
+                        else:
+                            # VALIDATION PHASE
+                            if not validation_phase:
+                                training_phase = False
+                                validation_phase = True
+                                self.logger.info("🧪 Entering VALIDATION PHASE - Models will make predictions")
+                                # Switch to validation mode
+                                if hasattr(analyzer_system, 'set_validation_mode'):
+                                    analyzer_system.set_validation_mode(True)
+                            
+                            total_validation_ticks += 1
+                            if validation_start_date is None:
+                                raise RuntimeError("Validation start date not initialized")
+                            current_validation_day = (tick_timestamp - validation_start_date).days + 1
+                            
+                            # Progress feedback every 100K validation ticks
+                            if total_validation_ticks % 100000 == 0:
+                                self.logger.info(f"🧪 Validation progress: {total_validation_ticks:,} ticks | Day {current_validation_day} of 30")
                         
                         batch_buffer.append(tick_data)
                         
@@ -708,6 +787,16 @@ class MT5BacktestRunner:
                         if len(batch_buffer) >= self.config.batch_size:
                             self._process_tick_batch(batch_buffer, analyzer_system)
                             ticks_processed += len(batch_buffer)
+                            
+                            # Real-time performance feedback every second
+                            current_time = time.time()
+                            if current_time - last_progress_time >= 1.0:  # Every second
+                                ticks_this_second = ticks_processed - last_progress_ticks
+                                phase_name = "Training" if training_phase else "Validation"
+                                self.logger.info(f"⚡ {phase_name}: {ticks_this_second:,} ticks/sec | Total: {ticks_processed:,}")
+                                last_progress_time = current_time
+                                last_progress_ticks = ticks_processed
+                            
                             batch_buffer.clear()
                 
                 # Process remaining ticks
@@ -717,11 +806,17 @@ class MT5BacktestRunner:
             
             self.total_ticks_processed = ticks_processed
             
-            if is_historical_data:
-                self.logger.info(f"✅ Historical backtest completed: {ticks_processed} ticks processed")
-                self.logger.info("📊 Models have been trained with historical data and are ready for live trading")
+            # Final phase summary
+            self.logger.info(f"✅ 60-day backtest completed: {ticks_processed:,} total ticks processed")
+            self.logger.info(f"📚 Training phase: {total_training_ticks:,} ticks processed (first 30 days)")
+            self.logger.info(f"🧪 Validation phase: {total_validation_ticks:,} ticks processed (last 30 days)")
+            
+            if total_training_ticks > 0 and total_validation_ticks > 0:
+                self.logger.info("📊 Models have been trained and validated with historical data")
+            elif total_training_ticks > 0:
+                self.logger.info("📚 Models have been trained - validation phase incomplete")
             else:
-                self.logger.info(f"Backtest completed: {ticks_processed} ticks processed")
+                raise RuntimeError("No training data processed - insufficient data range")
             
             return True
             

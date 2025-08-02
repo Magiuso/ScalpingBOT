@@ -21,7 +21,7 @@ from enum import Enum
 from collections import defaultdict
 
 # Import configuration
-from src.config.domain.monitoring_config import (
+from ScalpingBOT_Restauro.src.config.domain.monitoring_config import (
     MLTrainingLoggerConfig, EventSeverity, VerbosityLevel
 )
 

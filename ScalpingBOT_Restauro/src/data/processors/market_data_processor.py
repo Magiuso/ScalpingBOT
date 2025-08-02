@@ -24,7 +24,7 @@ from collections import deque
 import threading
 
 # Import configuration for technical indicators
-from src.config.base.base_config import AnalyzerConfig
+from ScalpingBOT_Restauro.src.config.base.base_config import AnalyzerConfig
 from typing import Dict, Any, Optional, List, Tuple, Union
 
 class MarketDataProcessor:

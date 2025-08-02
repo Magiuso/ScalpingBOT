@@ -25,8 +25,8 @@ from collections import deque
 import os
 
 # Import sistema migrato FASE 1-2
-from src.config.base.config_loader import get_configuration_manager
-from src.monitoring.events.event_collector import EventCollector, EventType, EventSource, EventSeverity
+from ScalpingBOT_Restauro.src.config.base.config_loader import get_configuration_manager
+from ScalpingBOT_Restauro.src.monitoring.events.event_collector import EventCollector, EventType, EventSource, EventSeverity
 
 
 @dataclass

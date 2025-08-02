@@ -23,7 +23,7 @@ from collections import deque
 from typing import Dict, Any, Optional, Deque
 
 # Import shared enums instead of duplicating - CONSOLIDATED
-from src.shared.enums import ModelType, OptimizationProfile
+from ScalpingBOT_Restauro.src.shared.enums import ModelType, OptimizationProfile
 
 
 @dataclass
