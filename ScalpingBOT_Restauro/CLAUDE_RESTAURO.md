@@ -56,11 +56,10 @@ ScalpingBOT_Data/
 
 ## 🚨 REGOLE FONDAMENTALI - DA RISPETTARE SEMPRE
 
-### 1. 🚫 **ZERO MODIFICHE ALLA LOGICA**
-- **VIETATO** aggiungere nuove funzionalità
-- **VIETATO** "migliorare" o "ottimizzare" algoritmi
-- **VIETATO** cambiare il comportamento delle funzioni
-- **CONSENTITO SOLO** riorganizzare il codice esistente in file separati
+### 1. 🔧 **MIGLIORA IL SISTEMA QUANDO NECESSARIO**
+- **CONSENTITO** correggere bug e problemi necessari
+- **OBBLIGATORIO** rispettare SEMPRE le altre regole (no fallback, fail fast, no dati sintetici)
+- **VIETATO** aggiungere funzionalità non richieste
 
 #### Esempio:
 ```python
@@ -157,7 +156,7 @@ raise RuntimeError(f"Model not trained for {asset} - Run training first")
 
 Prima di considerare completo un file migrato, verificare:
 
-- [ ] **Logica identica** - Nessuna modifica al comportamento
+- [ ] **Logica corretta** - Bug fixati quando necessario
 - [ ] **Import corretti** - Solo path aggiornati  
 - [ ] **Nomi preservati** - Stessi nomi di classi/funzioni/variabili
 - [ ] **Modulo integrato** - Nessun test embedded

@@ -61,16 +61,16 @@ except ImportError:
 # Import migrated modular system - FAIL FAST if not available
 try:
     # FASE 1-2: CONFIG + MONITORING
-    from src.config.base.config_loader import get_configuration_manager
-    from src.config.domain.system_config import SystemMode, PerformanceProfile
-    from src.config.domain.asset_config import AssetSpecificConfig
-    from src.monitoring.events.event_collector import EventCollector, EventType, EventSeverity
+    from ScalpingBOT_Restauro.src.config.base.config_loader import get_configuration_manager
+    from ScalpingBOT_Restauro.src.config.domain.system_config import SystemMode, PerformanceProfile
+    from ScalpingBOT_Restauro.src.config.domain.asset_config import AssetSpecificConfig
+    from ScalpingBOT_Restauro.src.monitoring.events.event_collector import EventCollector, EventType, EventSeverity
     
     # FASE 3: INTERFACES - MT5 integration
-    from src.interfaces.mt5.mt5_backtest_runner import MT5BacktestRunner, BacktestConfig, create_backtest_config
+    from ScalpingBOT_Restauro.src.interfaces.mt5.mt5_backtest_runner import MT5BacktestRunner, BacktestConfig, create_backtest_config
     
     # FASE 6: PREDICTION - Unified system
-    from src.prediction.unified_system import UnifiedAnalyzerSystem, create_backtesting_system
+    from ScalpingBOT_Restauro.src.prediction.unified_system import UnifiedAnalyzerSystem, create_backtesting_system
     
     print("✅ Migrated modular system available")
     print("   ├── Configuration system ✅")
@@ -84,7 +84,7 @@ except ImportError as e:
 
 # Import universal encoding for safe printing
 try:
-    from src.monitoring.utils.universal_encoding_fix import safe_print as original_safe_print, init_universal_encoding, get_safe_logger
+    from ScalpingBOT_Restauro.src.monitoring.utils.universal_encoding_fix import safe_print as original_safe_print, init_universal_encoding, get_safe_logger
     init_universal_encoding(silent=True)
     logger = get_safe_logger(__name__)
     original_safe_print("✅ Migrated logger system available")
@@ -138,13 +138,14 @@ class BacktestRestauro:
             'details': {}
         }
         
-        # Test config - MULTIASSET SUPPORT
-        self.learning_days = 30  # Updated to 30 days as per CLAUDE_RESTAURO.md
+        # Test config - MULTIASSET SUPPORT  
+        self.export_days = 60    # Export 60 days of historical data from MT5
+        self.learning_days = 30  # Train models on 30 days (as per CLAUDE_RESTAURO.md)
         self.stop_requested = False
         
         safe_print(f"🧪 Backtest Restauro initialized")
         safe_print(f"📊 Asset Symbol: {self.asset_symbol}")
-        safe_print(f"📅 Learning period: {self.learning_days} days")
+        safe_print(f"📅 Export period: {self.export_days} days, Training period: {self.learning_days} days")
         safe_print(f"📁 Test data path: {self.test_data_path}")
     
     async def run_complete_test(self) -> bool:
@@ -235,7 +236,11 @@ class BacktestRestauro:
             if not self.config_manager:
                 raise RuntimeError("Failed to initialize configuration manager")
             
-            safe_print("✅ Configuration manager initialized")
+            # CRITICAL: Load configuration for BACKTESTING mode with asset
+            safe_print(f"🔧 Loading configuration for BACKTESTING mode with asset: {self.asset_symbol}")
+            self.config_manager.load_configuration_for_mode("backtesting", self.asset_symbol)
+            
+            safe_print("✅ Configuration manager initialized and loaded")
             
             # Initialize event collector
             safe_print("🔧 Initializing event collector...")
@@ -297,12 +302,13 @@ class BacktestRestauro:
         """Test integrazione MT5 con sistema migrato"""
         
         try:
-            # Create backtest configuration
+            # Create backtest configuration - EXPORT 60 days, TRAIN 30 days
             end_date = datetime.now()
-            start_date = end_date - timedelta(days=self.learning_days)
+            start_date = end_date - timedelta(days=self.export_days)  # Export 60 days
             
             safe_print(f"🔧 Creating backtest config for {self.asset_symbol}")
-            safe_print(f"📅 Period: {start_date.date()} to {end_date.date()}")
+            safe_print(f"📅 Export period: {start_date.date()} to {end_date.date()} ({self.export_days} days)")
+            safe_print(f"🧠 Training will use last {self.learning_days} days of exported data")
             
             backtest_config = create_backtest_config(
                 symbol=self.asset_symbol,
@@ -352,6 +358,8 @@ class BacktestRestauro:
             
             # Run backtest to load data
             safe_print("📊 Running backtest data loading...")
+            if not self.mt5_backtest_runner or not self.unified_system:
+                raise RuntimeError("MT5 runner or unified system not initialized")
             backtest_success = self.mt5_backtest_runner.run_backtest(self.unified_system)
             
             if not backtest_success:
@@ -388,6 +396,8 @@ class BacktestRestauro:
                 await asyncio.sleep(10)  # Check every 10 seconds
                 
                 # Get system health
+                if not self.unified_system:
+                    raise RuntimeError("Unified system not initialized")
                 health = self.unified_system.get_system_health()
                 
                 if health['overall_status'] == 'healthy':
@@ -397,6 +407,8 @@ class BacktestRestauro:
                 safe_print(f"⏳ Learning in progress... Status: {health['overall_status']}")
             
             # Final health check
+            if not self.unified_system:
+                raise RuntimeError("Unified system not initialized")
             final_health = self.unified_system.get_system_health()
             safe_print(f"📈 Final system status: {final_health['overall_status']}")
             
@@ -416,6 +428,8 @@ class BacktestRestauro:
         
         try:
             # Check if models directory exists and has content
+            if not self.asset_config:
+                raise RuntimeError("Asset configuration not initialized")
             models_dir = self.asset_config.get_models_directory(self.test_data_path)
             
             if not os.path.exists(models_dir):
@@ -431,6 +445,8 @@ class BacktestRestauro:
             safe_print(f"📁 Found {len(model_files)} model files in persistence storage")
             
             # Check events directory
+            if not self.asset_config:
+                raise RuntimeError("Asset configuration not initialized")
             events_dir = self.asset_config.get_events_directory(self.test_data_path)
             if os.path.exists(events_dir):
                 event_files = [f for f in os.listdir(events_dir) if f.endswith('.json')]
@@ -449,6 +465,8 @@ class BacktestRestauro:
         
         try:
             # Get comprehensive health metrics
+            if not self.unified_system:
+                raise RuntimeError("Unified system not initialized")
             health = self.unified_system.get_system_health()
             stats = self.unified_system.get_system_stats()
             
@@ -484,6 +502,8 @@ class BacktestRestauro:
             
             # Test invalid asset addition
             try:
+                if not self.unified_system:
+                    raise RuntimeError("Unified system not initialized")
                 self.unified_system.add_asset("")  # Empty asset should fail
                 safe_print("❌ Empty asset addition should have failed")
                 return False
@@ -492,8 +512,10 @@ class BacktestRestauro:
             
             # Test invalid tick processing
             try:
-                if self.unified_system.is_running:
+                if self.unified_system and self.unified_system.is_running:
                     # This should work - just testing the error handling path
+                    if not self.unified_system:
+                        raise RuntimeError("Unified system not initialized")
                     result = self.unified_system.process_tick(
                         asset=self.asset_symbol,
                         timestamp=datetime.now(),
@@ -550,6 +572,8 @@ class BacktestRestauro:
             safe_print("🏆 Testing competition system...")
             
             # Get market analyzer stats to check competition system
+            if not self.unified_system:
+                raise RuntimeError("Unified system not initialized")
             stats = self.unified_system.get_system_stats()
             
             if 'market_analyzer_stats' in stats:
@@ -644,6 +668,52 @@ async def run_backtest_restauro(asset_symbol: str = "USTEC") -> bool:
     return success
 
 
+def ask_user_for_asset() -> str:
+    """Ask user which asset to test - INTERACTIVE SELECTION"""
+    
+    safe_print("\n🎯 ASSET SELECTION FOR BACKTEST:")
+    safe_print("   1. USTEC (US Tech Index - NASDAQ)")
+    safe_print("   2. EURUSD (Euro/Dollar - Forex)")
+    safe_print("   3. BTCUSD (Bitcoin/Dollar - Crypto)")
+    safe_print("   4. XAUUSD (Gold/Dollar - Commodity)")
+    safe_print("   5. SPX500 (S&P 500 Index)")
+    safe_print("   6. GBPUSD (British Pound/Dollar - Forex)")
+    safe_print("   7. Custom asset symbol")
+    
+    while True:
+        try:
+            choice = input("\n🔢 Select asset (1-7): ").strip()
+            
+            if choice == "1":
+                return "USTEC"
+            elif choice == "2":
+                return "EURUSD"
+            elif choice == "3":
+                return "BTCUSD"
+            elif choice == "4":
+                return "XAUUSD"
+            elif choice == "5":
+                return "SPX500"
+            elif choice == "6":
+                return "GBPUSD"
+            elif choice == "7":
+                custom_asset = input("Enter custom asset symbol: ").strip().upper()
+                if not custom_asset:
+                    safe_print("❌ Asset symbol cannot be empty")
+                    continue
+                return custom_asset
+            else:
+                safe_print("❌ Invalid selection. Please choose 1-7.")
+                continue
+                
+        except KeyboardInterrupt:
+            safe_print("\n🛑 Asset selection cancelled")
+            sys.exit(0)
+        except Exception as e:
+            safe_print(f"❌ Error in asset selection: {e}")
+            continue
+
+
 def main():
     """Main function per Backtest Restauro"""
     
@@ -652,9 +722,13 @@ def main():
     safe_print(f"🐍 Python: {sys.version}")
     safe_print(f"📁 Working directory: {os.getcwd()}")
     
-    # Default asset or get from command line
-    asset_symbol = sys.argv[1] if len(sys.argv) > 1 else "USTEC"
-    safe_print(f"🎯 Testing asset: {asset_symbol}")
+    # Asset selection: command line or interactive
+    if len(sys.argv) > 1:
+        asset_symbol = sys.argv[1].upper()
+        safe_print(f"🎯 Asset from command line: {asset_symbol}")
+    else:
+        asset_symbol = ask_user_for_asset()
+        safe_print(f"🎯 Selected asset: {asset_symbol}")
     
     # Run test
     try:

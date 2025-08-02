@@ -96,7 +96,8 @@ class MT5DataExporter:
             "price_change_5m": 0.0,
             "volatility": 0.0,
             "momentum_5m": 0.0,
-            "market_state": "backtest"
+            "market_state": "backtest",
+            "m5_tick_count": 0
         }
     
     def _get_memory_usage(self) -> float:
@@ -313,6 +314,9 @@ class MT5DataExporter:
         ticks_processed = 0
         write_batch = []
         
+        # Tick counting for M5 periods
+        m5_tick_counter = {}  # key: M5 timestamp, value: tick count
+        
         for i, tick in enumerate(ticks):
             # Reuse template to avoid allocations
             tick_data = self._tick_data_template.copy()
@@ -324,19 +328,38 @@ class MT5DataExporter:
             tick_last = tick.last
             tick_volume = tick.volume
             
-            # Calculate spread
-            spread_percentage = 0.0
-            if tick_bid > 0:
-                spread_percentage = (tick_ask - tick_bid) / tick_bid
+            # Calculate spread - FAIL FAST
+            if tick_bid <= 0:
+                raise ValueError(f"Invalid bid price: {tick_bid} at timestamp {tick_time}")
+            spread_percentage = (tick_ask - tick_bid) / tick_bid
+            
+            # Fix last price: use mid price if last is 0
+            if tick_last == 0 and tick_bid > 0 and tick_ask > 0:
+                tick_last = (tick_bid + tick_ask) / 2
+            
+            # Calculate M5 tick volume when real volume is 0
+            tick_datetime = datetime.fromtimestamp(tick_time)
+            m5_timestamp = tick_datetime.replace(minute=tick_datetime.minute // 5 * 5, second=0, microsecond=0)
+            m5_key = m5_timestamp.strftime('%Y%m%d%H%M')
+            
+            # Count ticks per M5 period
+            if m5_key not in m5_tick_counter:
+                m5_tick_counter[m5_key] = 0
+            m5_tick_counter[m5_key] += 1
+            
+            # Use tick count as volume if real volume is 0
+            if tick_volume == 0:
+                tick_volume = m5_tick_counter[m5_key]
             
             # Update template
-            tick_data["timestamp"] = datetime.fromtimestamp(tick_time).strftime('%Y.%m.%d %H:%M:%S')
+            tick_data["timestamp"] = tick_datetime.strftime('%Y.%m.%d %H:%M:%S')
             tick_data["symbol"] = symbol
             tick_data["bid"] = float(tick_bid)
             tick_data["ask"] = float(tick_ask) 
             tick_data["last"] = float(tick_last)
             tick_data["volume"] = int(tick_volume)
             tick_data["spread_percentage"] = float(spread_percentage)
+            tick_data["m5_tick_count"] = m5_tick_counter[m5_key]  # Add M5 tick count for reference
             
             # Batch write for performance
             write_batch.append(json.dumps(tick_data))
@@ -551,7 +574,17 @@ class MT5BacktestRunner:
             self.is_running = False
     
     def _run_mt5_export_backtest(self, analyzer_system) -> bool:
-        """Run backtest with MT5 data export"""
+        """Run backtest with MT5 data export - with 80% coverage detection"""
+        
+        # 1. Check for existing files with sufficient coverage
+        existing_file = self._find_existing_file_with_coverage()
+        
+        if existing_file:
+            print(f"📁 Using existing file with sufficient coverage: {os.path.basename(existing_file)}")
+            return self._process_jsonl_file(existing_file, analyzer_system)
+        
+        # 2. No suitable existing file found - export new data
+        print("📊 No existing file with sufficient coverage - exporting new data")
         
         # Generate export filename
         export_file = f"backtest_{self.config.symbol}_{self.config.start_date.strftime('%Y%m%d')}_{self.config.end_date.strftime('%Y%m%d')}.jsonl"
@@ -701,11 +734,58 @@ class MT5BacktestRunner:
         
         for tick_data in tick_batch:
             try:
-                # Convert to expected format and feed to analyzer
-                if hasattr(analyzer_system, 'process_tick'):
-                    analyzer_system.process_tick(tick_data)
-                else:
+                # Extract tick data fields and feed to analyzer - FAIL FAST format conversion
+                if not hasattr(analyzer_system, 'process_tick'):
                     raise AttributeError("analyzer_system missing process_tick method")
+                
+                # Parse timestamp
+                timestamp_str = tick_data.get('timestamp')
+                if not timestamp_str:
+                    raise ValueError("Missing required field 'timestamp' in tick data")
+                
+                # Parse timestamp format: "2025.01.01 00:00:01"
+                try:
+                    timestamp = datetime.strptime(timestamp_str, '%Y.%m.%d %H:%M:%S')
+                except ValueError as e:
+                    raise ValueError(f"Invalid timestamp format '{timestamp_str}': {e}")
+                
+                # Extract required fields - FAIL FAST if missing
+                asset = tick_data.get('symbol')
+                if not asset:
+                    raise ValueError("Missing required field 'symbol' in tick data")
+                
+                price = tick_data.get('last')
+                if price is None:
+                    raise ValueError("Missing required field 'last' in tick data")
+                
+                # Handle zero last price - use mid price
+                if price == 0:
+                    bid = tick_data.get('bid', 0)
+                    ask = tick_data.get('ask', 0)
+                    if bid > 0 and ask > 0:
+                        price = (bid + ask) / 2
+                    else:
+                        raise ValueError(f"Cannot determine price: last={price}, bid={bid}, ask={ask}")
+                
+                volume = tick_data.get('volume')
+                if volume is None:
+                    raise ValueError("Missing required field 'volume' in tick data")
+                
+                # Volume of 0 is now acceptable (will use M5 tick count)
+                
+                # Optional fields
+                bid = tick_data.get('bid')
+                ask = tick_data.get('ask')
+                
+                # Call analyzer with correct signature
+                analyzer_system.process_tick(
+                    asset=asset,
+                    timestamp=timestamp,
+                    price=float(price),
+                    volume=float(volume),
+                    bid=float(bid) if bid is not None else None,
+                    ask=float(ask) if ask is not None else None
+                )
                     
             except Exception as e:
                 self.logger.error(f"Error processing tick: {e}")
@@ -786,6 +866,15 @@ class MT5BacktestRunner:
                     # If it's a Timestamp object, convert to datetime first
                     timestamp_formatted = pd.Timestamp(timestamp_val).strftime('%Y.%m.%d %H:%M:%S')
                 
+                # FAIL FAST - no defaults allowed
+                if bid_val <= 0:
+                    raise ValueError(f"Invalid bid value at row {idx}: bid={bid_val}")
+                if ask_val <= 0:
+                    raise ValueError(f"Invalid ask value at row {idx}: ask={ask_val}")
+                
+                # Calculate spread percentage - FAIL FAST
+                spread_percentage = (ask_val - bid_val) / bid_val
+                
                 tick_dict = {
                     'type': 'tick',
                     'timestamp': timestamp_formatted,
@@ -794,7 +883,7 @@ class MT5BacktestRunner:
                     'ask': ask_val,
                     'last': (bid_val + ask_val) / 2,
                     'volume': volume_val,
-                    'spread_percentage': (ask_val - bid_val) / bid_val if bid_val > 0 else 0.0,
+                    'spread_percentage': spread_percentage,
                     'price_change_1m': 0.0,
                     'price_change_5m': 0.0,
                     'volatility': 0.0,
@@ -808,6 +897,139 @@ class MT5BacktestRunner:
                 raise ValueError(f"Error parsing row {idx}: {e}")
         
         return tick_data_list
+    
+    def _find_existing_file_with_coverage(self) -> Optional[str]:
+        """
+        Find existing file with >= 80% coverage of requested time period
+        
+        Returns:
+            Path to existing file with sufficient coverage, or None
+        """
+        try:
+            data_dir = "./test_analyzer_data"
+            if not os.path.exists(data_dir):
+                return None
+            
+            required_start = self.config.start_date
+            required_end = self.config.end_date
+            required_duration = (required_end - required_start).total_seconds()
+            
+            print(f"🔍 Searching for existing files covering period: {required_start.date()} to {required_end.date()}")
+            
+            best_file = None
+            best_coverage = 0.0
+            
+            # Scan all .jsonl files in data directory
+            for filename in os.listdir(data_dir):
+                if not filename.endswith('.jsonl') or not filename.startswith(f'backtest_{self.config.symbol}'):
+                    continue
+                
+                file_path = os.path.join(data_dir, filename)
+                coverage_info = self._analyze_file_coverage(file_path, required_start, required_end)
+                
+                if coverage_info and coverage_info['coverage_percent'] > best_coverage:
+                    best_coverage = coverage_info['coverage_percent']
+                    best_file = file_path
+                    
+                    print(f"📊 {filename}: {coverage_info['coverage_percent']:.1f}% coverage "
+                                   f"({coverage_info['file_start'].date()} to {coverage_info['file_end'].date()})")
+            
+            # Return file if coverage >= 80%
+            if best_coverage >= 80.0:
+                print(f"✅ Found suitable file with {best_coverage:.1f}% coverage (>= 80%)")
+                return best_file
+            elif best_file:
+                print(f"❌ Best file only has {best_coverage:.1f}% coverage (< 80% required)")
+            else:
+                print("❌ No existing files found for this symbol")
+                
+            return None
+            
+        except Exception as e:
+            self.logger.warning(f"Error searching for existing files: {e}")
+            return None
+    
+    def _analyze_file_coverage(self, file_path: str, required_start: datetime, required_end: datetime) -> Optional[Dict[str, Any]]:
+        """
+        Analyze file coverage for given time period - FAIL FAST, NO FALLBACK
+        
+        Args:
+            file_path: Path to JSONL file to analyze
+            required_start: Required start datetime
+            required_end: Required end datetime
+            
+        Returns:
+            Dictionary with coverage info or None if file invalid
+        """
+        try:
+            # FAIL FAST: Only filename parsing - NO FALLBACK
+            filename = os.path.basename(file_path)
+            file_dates = self._extract_dates_from_filename(filename)
+            
+            if not file_dates:
+                # FAIL FAST: Cannot parse filename - reject file
+                raise ValueError(f"Cannot extract dates from filename: {filename}")
+            
+            file_start, file_end = file_dates
+            
+            # Calculate overlap between file period and required period
+            overlap_start = max(file_start, required_start)
+            overlap_end = min(file_end, required_end)
+            
+            if overlap_start >= overlap_end:
+                # No overlap
+                return {
+                    'file_start': file_start,
+                    'file_end': file_end,
+                    'coverage_percent': 0.0,
+                    'overlap_hours': 0.0
+                }
+            
+            # Calculate coverage percentage
+            overlap_duration = (overlap_end - overlap_start).total_seconds()
+            required_duration = (required_end - required_start).total_seconds()
+            coverage_percent = (overlap_duration / required_duration) * 100.0
+            
+            return {
+                'file_start': file_start,
+                'file_end': file_end,
+                'coverage_percent': coverage_percent,
+                'overlap_hours': overlap_duration / 3600.0
+            }
+            
+        except Exception as e:
+            # FAIL FAST: Log error and reject file
+            self.logger.warning(f"File rejected due to invalid format: {os.path.basename(file_path)} - {e}")
+            return None
+    
+    def _extract_dates_from_filename(self, filename: str) -> Optional[Tuple[datetime, datetime]]:
+        """
+        Extract start and end dates from filename pattern: backtest_SYMBOL_YYYYMMDD_YYYYMMDD.jsonl
+        
+        Args:
+            filename: Filename to parse
+            
+        Returns:
+            Tuple of (start_date, end_date) or None if parsing fails
+        """
+        try:
+            # Expected pattern: backtest_USTEC_20250523_20250724.jsonl
+            import re
+            pattern = r'backtest_\w+_(\d{8})_(\d{8})\.jsonl'
+            match = re.match(pattern, filename)
+            
+            if not match:
+                return None
+            
+            start_str, end_str = match.groups()
+            start_date = datetime.strptime(start_str, '%Y%m%d')
+            end_date = datetime.strptime(end_str, '%Y%m%d')
+            
+            return (start_date, end_date)
+            
+        except Exception:
+            return None
+    
 
 
 # Factory functions
