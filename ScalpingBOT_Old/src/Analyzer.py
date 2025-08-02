@@ -1066,32 +1066,22 @@ init_universal_encoding(silent=False)
 
 # ================== UTILS ML MODULES IMPORTS ==================
 
-try:
-    # Try absolute import first
-    try:
-        from src.utils.adaptive_trainer import AdaptiveTrainer, TrainingConfig
-        from src.utils.data_preprocessing import AdvancedDataPreprocessor, PreprocessingConfig
-        from src.utils.training_monitor import TrainingMonitor, MonitorConfig
-        # EnhancedLSTMTrainer is imported locally where needed to avoid circular import
-    except ImportError:
-        # Fallback to relative import if running from different location
-        import sys
-        import os
-        # Add parent directory to path
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from utils.adaptive_trainer import AdaptiveTrainer, TrainingConfig
-        from utils.data_preprocessing import AdvancedDataPreprocessor, PreprocessingConfig
-        from utils.training_monitor import TrainingMonitor, MonitorConfig
-        # EnhancedLSTMTrainer is imported locally where needed to avoid circular import
-    
-    # OptimizedLSTM and LSTMConfig are now defined directly in this file
-    UTILS_ML_AVAILABLE = True
-    safe_print("✅ Utils ML modules imported successfully - OptimizedLSTM will be used!")
-except ImportError as e:
-    UTILS_ML_AVAILABLE = False
-    safe_print(f"⚠️ Utils ML modules not available: {e}")
-    import traceback
-    safe_print(f"📋 Import error details:\n{traceback.format_exc()}")
+# Import ML optimization modules - REQUIRED (NO FALLBACK)
+import sys
+import os
+
+# Add parent directory to sys.path to find ScalpingBOT_Restauro
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, parent_dir)
+
+# Now import from ScalpingBOT_Restauro
+from ScalpingBOT_Restauro.src.ml.training.adaptive_trainer import AdaptiveTrainer, TrainingConfig
+from ScalpingBOT_Restauro.src.ml.preprocessing.data_preprocessing import AdvancedDataPreprocessor, PreprocessingConfig
+from ScalpingBOT_Restauro.src.ml.monitoring.training_monitor import TrainingMonitor, MonitorConfig
+# EnhancedLSTMTrainer is imported locally where needed to avoid circular import
+
+# OptimizedLSTM and LSTMConfig are now defined directly in this file
+safe_print("✅ ML optimization modules loaded from modular structure - REQUIRED dependencies")
 
 # ================== ML TRAINING LOGGER IMPORTS ==================
 
@@ -6753,39 +6743,36 @@ class RollingWindowTrainer:
             'rsi': rsi
         }
         
-        # Applica preprocessing avanzato se disponibile
-        if UTILS_ML_AVAILABLE:
-            try:
-                preprocessor_config = PreprocessingConfig(
-                    outlier_threshold=3.0,
-                    outlier_method='isolation_forest',
-                    normalization_method='auto',
-                    adaptive_windowing=True
-                )
-                
-                preprocessor = AdvancedDataPreprocessor(preprocessor_config)
-                
-                # Combina le features numeriche per il preprocessing
-                features_matrix = np.column_stack([
-                    prices, volumes, returns, log_returns, 
-                    np.nan_to_num(sma_20), np.nan_to_num(sma_50), np.nan_to_num(rsi)
-                ])
-                
-                # Applica SOLO normalizzazione - RIMOSSO outlier detection per training sui movimenti reali!
-                processed_features = preprocessor.smart_normalize(features_matrix, 'training_features')
-                # RIMOSSO: processed_features = preprocessor.detect_and_handle_outliers(processed_features)
-                # I grandi movimenti di prezzo NON sono outliers - sono i pattern che dobbiamo imparare!
-                
-                # Aggiungi le features processate ai dati
-                result_data['processed_features'] = processed_features
-                result_data['preprocessing_applied'] = True
-                
-                safe_print("✅ Advanced data preprocessing applied")
-                
-            except Exception as e:
-                safe_print(f"⚠️ Advanced preprocessing failed, using basic features: {e}")
-                result_data['preprocessing_applied'] = False
-        else:
+        # Applica preprocessing avanzato - REQUIRED
+        try:
+            preprocessor_config = PreprocessingConfig(
+                outlier_threshold=3.0,
+                outlier_method='isolation_forest',
+                normalization_method='auto',
+                adaptive_windowing=True
+            )
+            
+            preprocessor = AdvancedDataPreprocessor(preprocessor_config)
+            
+            # Combina le features numeriche per il preprocessing
+            features_matrix = np.column_stack([
+                prices, volumes, returns, log_returns, 
+                np.nan_to_num(sma_20), np.nan_to_num(sma_50), np.nan_to_num(rsi)
+            ])
+            
+            # Applica SOLO normalizzazione - RIMOSSO outlier detection per training sui movimenti reali!
+            processed_features = preprocessor.smart_normalize(features_matrix, 'training_features')
+            # RIMOSSO: processed_features = preprocessor.detect_and_handle_outliers(processed_features)
+            # I grandi movimenti di prezzo NON sono outliers - sono i pattern che dobbiamo imparare!
+            
+            # Aggiungi le features processate ai dati
+            result_data['processed_features'] = processed_features
+            result_data['preprocessing_applied'] = True
+            
+            safe_print("✅ Advanced data preprocessing applied")
+            
+        except Exception as e:
+            safe_print(f"⚠️ Advanced preprocessing failed, using basic features: {e}")
             result_data['preprocessing_applied'] = False
         
         # 🔧 ARCHITETTURA CORRETTA: Chiamata ai metodi _prepare_*_dataset basata su ModelType
@@ -7581,23 +7568,22 @@ class RollingWindowTrainer:
         
         start_time = datetime.now()
         
-        # Inizializza training monitor se disponibile
+        # Inizializza training monitor - REQUIRED
         training_monitor = None
-        if UTILS_ML_AVAILABLE:
-            try:
-                monitor_config = MonitorConfig(
-                    metrics_update_interval=1.0,
-                    memory_check_interval=5.0,
-                    health_check_interval=10.0,
-                    enable_plots=False  # Disabilita plotting per performance
-                )
-                training_monitor = TrainingMonitor(monitor_config)
-                # Initialize training monitoring
-                training_monitor.start_monitoring()
-                safe_print("✅ Training monitor initialized")
-            except Exception as e:
-                safe_print(f"⚠️ Training monitor initialization failed: {e}")
-                training_monitor = None
+        try:
+            monitor_config = MonitorConfig(
+                metrics_update_interval=1.0,
+                memory_check_interval=5.0,
+                health_check_interval=10.0,
+                enable_plots=False  # Disabilita plotting per performance
+            )
+            training_monitor = TrainingMonitor(monitor_config)
+            # Initialize training monitoring
+            training_monitor.start_monitoring()
+            safe_print("✅ Training monitor initialized")
+        except Exception as e:
+            safe_print(f"⚠️ Training monitor initialization failed: {e}")
+            training_monitor = None
         
         # 🔧 CORREZIONE: I metodi _prepare_*_dataset sono ora in AdvancedMarketAnalyzer
         # Assumiamo che i dati siano già preparati e passati come training_data
@@ -7650,9 +7636,7 @@ class RollingWindowTrainer:
                 safe_print(f"⚠️ Training monitor finalization failed: {e}")
         
         return result
-    
-    
-    
+        
     def _prepare_trend_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
         """
         🔧 Prepara dataset per Trend Analysis con target realistici
@@ -8315,23 +8299,18 @@ class RollingWindowTrainer:
         # CREA TRAINER PROTETTO CON GESTIONE ERRORI
         try:
             # 🚀 SEMPRE USA ADAPTIVE TRAINER per tutti i modelli (CNN, LSTM, etc.)
-            if UTILS_ML_AVAILABLE:
-                # Use AdaptiveTrainer as primary trainer with LSTM optimizations
-                from src.utils.adaptive_trainer import AdaptiveTrainer, create_adaptive_trainer_config
-                
-                config = create_adaptive_trainer_config(
-                    initial_learning_rate=1e-2,  # 10x PIÙ ALTO per apprendimento reale!
-                    max_grad_norm=1.0,
-                    early_stopping_patience=100,  # Molto più pazienza per LSTM
-                    lr_patience=50,  # Non ridurre LR troppo presto
-                    lr_factor=0.9  # Riduzione meno aggressiva
-                )
-                protected_trainer = AdaptiveTrainer(model, config)
-                safe_print("✅ Using AdaptiveTrainer with LSTM-specific fixes")
-            else:
-                # Fallback to OptimizedLSTMTrainer only if utils not available
-                protected_trainer = OptimizedLSTMTrainer(model)
-                safe_print("⚠️ Using legacy OptimizedLSTMTrainer (fallback)")
+            # Use AdaptiveTrainer as primary trainer with LSTM optimizations
+            from ScalpingBOT_Restauro.src.ml.training.adaptive_trainer import create_adaptive_trainer_config
+            
+            config = create_adaptive_trainer_config(
+                initial_learning_rate=1e-2,  # 10x PIÙ ALTO per apprendimento reale!
+                max_grad_norm=1.0,
+                early_stopping_patience=100,  # Molto più pazienza per LSTM
+                lr_patience=50,  # Non ridurre LR troppo presto
+                lr_factor=0.9  # Riduzione meno aggressiva
+            )
+            protected_trainer = AdaptiveTrainer(model, config)
+            safe_print("✅ Using AdaptiveTrainer with LSTM-specific fixes")
         except Exception as trainer_error:
             self._store_training_event('trainer_creation_failed', {
                 **training_info,
@@ -10738,6 +10717,14 @@ class AssetAnalyzer:
                 'timestamp': datetime.now()
             })
 
+    # Method declarations for Pylance static analysis
+    def _prepare_sr_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]: ...
+    def _prepare_bias_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]: ...
+    def _prepare_pattern_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]: ...
+    def _prepare_momentum_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]: ...
+    def _prepare_trend_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]: ...
+    def _prepare_volatility_dataset(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]: ...
+    
     def _optimize_hyperparameters(self, model_name: str, X: np.ndarray, y: np.ndarray, 
                                   use_randomized: bool = True, n_iter: int = 20) -> Any:
         """
@@ -10986,27 +10973,16 @@ class AssetAnalyzer:
         }
         
         for model_name, config in lstm_configs.items():
-            if UTILS_ML_AVAILABLE:
-                # Usa OptimizedLSTM se disponibile
-                lstm_config = LSTMConfig(
-                    input_size=config['input_size'],
-                    hidden_size=config['hidden_size'],
-                    num_layers=config['num_layers'],
-                    output_size=config['output_size'],
-                    dropout_rate=config['dropout']
-                )
-                self.ml_models[model_name] = OptimizedLSTM(lstm_config)
-                self._log(f"✅ Using OptimizedLSTM for {model_name}", "model_creation", "info")
-            else:
-                # Fallback al vecchio AdvancedLSTM
-                self.ml_models[model_name] = AdvancedLSTM(
-                    input_size=config['input_size'],
-                    hidden_size=config['hidden_size'],
-                    num_layers=config['num_layers'],
-                    output_size=config['output_size'],
-                    dropout=config['dropout']
-                )
-                self._log(f"⚠️ Using legacy AdvancedLSTM for {model_name}", "model_creation", "warning")
+            # Usa OptimizedLSTM - REQUIRED
+            lstm_config = LSTMConfig(
+                input_size=config['input_size'],
+                hidden_size=config['hidden_size'],
+                num_layers=config['num_layers'],
+                output_size=config['output_size'],
+                dropout_rate=config['dropout']
+            )
+            self.ml_models[model_name] = OptimizedLSTM(lstm_config)
+            self._log(f"✅ Using OptimizedLSTM for {model_name}", "model_creation", "info")
         
         # Transformer models con configurazione
         transformer_configs = {
@@ -11117,26 +11093,15 @@ class AssetAnalyzer:
         
         # 🚀 MOMENTUM ANALYSIS MODELS
         # Neural Momentum - LSTM per analisi momentum complessa
-        if UTILS_ML_AVAILABLE:
-            momentum_config = LSTMConfig(
-                input_size=self.config.get_model_architecture('Neural_Momentum')['input_size'],
-                hidden_size=128,
-                num_layers=2,
-                output_size=4,  # 4 momentum indicators
-                dropout_rate=0.3
-            )
-            self.ml_models['Neural_Momentum'] = OptimizedLSTM(momentum_config)
-            self._log("✅ Created Neural_Momentum model with OptimizedLSTM", "model_creation", "info")
-        else:
-            # Fallback semplice
-            self.ml_models['Neural_Momentum'] = AdvancedLSTM(
-                input_size=100,
-                hidden_size=128,
-                num_layers=2,
-                output_size=4,
-                dropout=0.3
-            )
-            self._log("✅ Created Neural_Momentum model with AdvancedLSTM", "model_creation", "info")
+        momentum_config = LSTMConfig(
+            input_size=self.config.get_model_architecture('Neural_Momentum')['input_size'],
+            hidden_size=128,
+            num_layers=2,
+            output_size=4,  # 4 momentum indicators
+            dropout_rate=0.3
+        )
+        self.ml_models['Neural_Momentum'] = OptimizedLSTM(momentum_config)
+        self._log("✅ Created Neural_Momentum model with OptimizedLSTM", "model_creation", "info")
         
         # Scalers per normalizzazione
         for model_name in self.ml_models.keys():

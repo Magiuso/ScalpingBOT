@@ -540,22 +540,19 @@ class StorageManager:
             except Exception as e:
                 print(f"Error closing writer: {e}")
     
-    def store_event(self, event: MLEvent) -> bool:
+    def store_event(self, event: MLEvent) -> None:
         """
         Memorizza un evento
         
         Args:
             event: Evento da memorizzare
-            
-        Returns:
-            bool: True se evento memorizzato con successo
         """
         print(f"🔥 DEBUG: StorageManager.store_event called with event_type={event.event_type}, severity={event.severity}")
         print(f"🔥 DEBUG: enable_file_output={self.storage_config.enable_file_output}")
         
         if not self.storage_config.enable_file_output:
-            print(f"🔥 DEBUG: File output disabled, returning True")
-            return True
+            print(f"🔥 DEBUG: File output disabled")
+            return
         
         # Add to buffer
         print(f"🔥 DEBUG: Adding event to buffer...")
@@ -570,11 +567,9 @@ class StorageManager:
                 self._flush_pending_events()
             else:
                 print(f"🔥 DEBUG: Non-critical event, will flush later...")
-            return True
         else:
             print(f"🔥 DEBUG: Failed to add event to buffer!")
             self.stats['write_errors'] += 1
-            return False
     
     def store_events_batch(self, events: List[MLEvent]) -> int:
         """
