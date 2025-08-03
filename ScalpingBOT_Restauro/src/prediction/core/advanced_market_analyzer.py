@@ -706,8 +706,16 @@ class AdvancedMarketAnalyzer:
                     print(f"  🧠 Training {asset} ML models with {len(asset_ticks):,} ticks")
                     training_start = time.time()
                     
-                    # Prepare training data from ticks
-                    training_data = self._convert_ticks_to_training_data(asset_ticks)
+                    # Check if we need expensive ML feature generation (BIBBIA OPTIMIZATION)
+                    needs_ml_features = self._check_if_ml_features_needed(selected_algorithm_names)
+                    
+                    # Prepare training data from ticks (ONLY if ML algorithms selected)
+                    training_data = None
+                    if needs_ml_features:
+                        print(f"      🚀 Creating features with INCREMENTAL S/R calculation for O(n) performance...")
+                        training_data = self._convert_ticks_to_training_data(asset_ticks)
+                    else:
+                        print(f"      ⚡ Skipping ML feature generation - only classical algorithms selected")
                     
                     # Train models for each type
                     trained_models = {}
@@ -737,7 +745,10 @@ class AdvancedMarketAnalyzer:
                                 
                                 # Train algorithm based on type
                                 if 'LSTM' in algorithm_name:
-                                    # Neural network training
+                                    # Neural network training - requires ML features
+                                    if training_data is None:
+                                        raise ValueError(f"ML features required for {algorithm_name} but were not generated (optimization bug)")
+                                    
                                     sr_model = AdvancedLSTM(
                                         input_size=training_data['features_per_timestep'],
                                         hidden_size=256,
@@ -783,6 +794,10 @@ class AdvancedMarketAnalyzer:
                                         print(f"        ❌ {algorithm_name} training failed: {sr_result['message']}")
                                         
                                 elif 'Transformer' in algorithm_name:
+                                    # Transformer training - requires ML features
+                                    if training_data is None:
+                                        raise ValueError(f"ML features required for {algorithm_name} but were not generated (optimization bug)")
+                                    
                                     # Transformer training using existing TransformerPredictor
                                     from ...ml.models.transformer_models import TransformerPredictor
                                     
@@ -882,7 +897,10 @@ class AdvancedMarketAnalyzer:
                                 
                                 # Train algorithm based on type
                                 if 'LSTM' in algorithm_name:
-                                    # LSTM training
+                                    # LSTM training - requires ML features
+                                    if training_data is None:
+                                        raise ValueError(f"ML features required for {algorithm_name} but were not generated (optimization bug)")
+                                    
                                     pattern_model = AdvancedLSTM(
                                         input_size=training_data['features_per_timestep'],
                                         hidden_size=256,
@@ -928,6 +946,10 @@ class AdvancedMarketAnalyzer:
                                         print(f"        ❌ {algorithm_name} training failed: {pattern_result['message']}")
                                         
                                 elif 'CNN' in algorithm_name:
+                                    # CNN training - requires ML features
+                                    if training_data is None:
+                                        raise ValueError(f"ML features required for {algorithm_name} but were not generated (optimization bug)")
+                                    
                                     # CNN training using existing CNNPatternRecognizer
                                     from ...ml.models.cnn_models import CNNPatternRecognizer
                                     
@@ -978,6 +1000,10 @@ class AdvancedMarketAnalyzer:
                                         print(f"        ❌ {algorithm_name} training failed: {cnn_result['message']}")
                                     
                                 elif 'Transformer' in algorithm_name:
+                                    # Transformer training - requires ML features
+                                    if training_data is None:
+                                        raise ValueError(f"ML features required for {algorithm_name} but were not generated (optimization bug)")
+                                    
                                     # Transformer training using existing TransformerPredictor
                                     from ...ml.models.transformer_models import TransformerPredictor
                                     
@@ -1075,7 +1101,10 @@ class AdvancedMarketAnalyzer:
                                 
                                 # Train algorithm based on type
                                 if 'LSTM' in algorithm_name:
-                                    # LSTM training
+                                    # LSTM training - requires ML features
+                                    if training_data is None:
+                                        raise ValueError(f"ML features required for {algorithm_name} but were not generated (optimization bug)")
+                                    
                                     bias_model = AdvancedLSTM(
                                         input_size=training_data['features_per_timestep'],
                                         hidden_size=256,
@@ -1121,6 +1150,10 @@ class AdvancedMarketAnalyzer:
                                         print(f"        ❌ {algorithm_name} training failed: {bias_result['message']}")
                                         
                                 elif 'Transformer' in algorithm_name:
+                                    # Transformer training - requires ML features
+                                    if training_data is None:
+                                        raise ValueError(f"ML features required for {algorithm_name} but were not generated (optimization bug)")
+                                    
                                     # Transformer training using existing TransformerPredictor
                                     from ...ml.models.transformer_models import TransformerPredictor
                                     
@@ -1218,7 +1251,10 @@ class AdvancedMarketAnalyzer:
                                 
                                 # Train algorithm based on type
                                 if 'LSTM' in algorithm_name:
-                                    # LSTM training
+                                    # LSTM training - requires ML features
+                                    if training_data is None:
+                                        raise ValueError(f"ML features required for {algorithm_name} but were not generated (optimization bug)")
+                                    
                                     trend_model = AdvancedLSTM(
                                         input_size=training_data['features_per_timestep'],
                                         hidden_size=256,
@@ -1265,6 +1301,10 @@ class AdvancedMarketAnalyzer:
                                         print(f"        ❌ {algorithm_name} training failed: {trend_result['message']}")
                                         
                                 elif 'Transformer' in algorithm_name:
+                                    # Transformer training - requires ML features
+                                    if training_data is None:
+                                        raise ValueError(f"ML features required for {algorithm_name} but were not generated (optimization bug)")
+                                    
                                     # Transformer training using existing TransformerPredictor
                                     from ...ml.models.transformer_models import TransformerPredictor
                                     
@@ -1384,7 +1424,10 @@ class AdvancedMarketAnalyzer:
                                 
                                 # Train algorithm based on type
                                 if 'LSTM' in algorithm_name:
-                                    # LSTM training
+                                    # LSTM training - requires ML features
+                                    if training_data is None:
+                                        raise ValueError(f"ML features required for {algorithm_name} but were not generated (optimization bug)")
+                                    
                                     volatility_model = AdvancedLSTM(
                                         input_size=training_data['features_per_timestep'],
                                         hidden_size=256,
@@ -1491,16 +1534,27 @@ class AdvancedMarketAnalyzer:
                     analyzer.algorithm_bridge.ml_models.update(asset_specific_models)
                     
                     training_time = time.time() - training_start
+                    # Build training results based on whether ML features were generated
                     training_results[asset] = {
                         'status': 'models_trained',
                         'models_trained': len(trained_models),
                         'model_types': list(trained_models.keys()),
                         'training_time_seconds': training_time,
-                        'ticks_processed': len(asset_ticks),
-                        'features_per_timestep': training_data['features_per_timestep'],
-                        'sequence_length': training_data['sequence_length'],
-                        'total_feature_count': training_data['feature_count']
+                        'ticks_processed': len(asset_ticks)
                     }
+                    
+                    # Add ML feature info only if ML features were generated
+                    if training_data is not None:
+                        training_results[asset].update({
+                            'features_per_timestep': training_data['features_per_timestep'],
+                            'sequence_length': training_data['sequence_length'],
+                            'total_feature_count': training_data['feature_count']
+                        })
+                    else:
+                        training_results[asset].update({
+                            'optimization_applied': 'skipped_ml_features_for_classical_algorithms',
+                            'time_saved': '~214 seconds per classical algorithm'
+                        })
                     
                     print(f"  ✅ {asset} ML training completed in {training_time:.2f}s ({len(trained_models)} models trained)")
                     
@@ -1758,6 +1812,31 @@ class AdvancedMarketAnalyzer:
             algorithm_names.append(key_to_algorithm[key])
         
         return algorithm_names
+    
+    def _check_if_ml_features_needed(self, selected_algorithm_names: List[str]) -> bool:
+        """Check if any selected algorithms require ML feature generation - BIBBIA COMPLIANT"""
+        
+        # Algorithms that DON'T need ML features (classical/mathematical)
+        classical_algorithms = {
+            # Support/Resistance
+            "PivotPoints_Classic",
+            "VolumeProfile_Advanced", 
+            "StatisticalLevels_ML",
+            
+            # Pattern Recognition  
+            "Classical_Patterns",
+            
+            # Volatility Prediction
+            "GARCH_Volatility",
+            "RealizedVolatility_Advanced"
+        }
+        
+        # Check if ANY selected algorithm needs ML features
+        for algorithm_name in selected_algorithm_names:
+            if algorithm_name not in classical_algorithms:
+                return True  # At least one ML algorithm found
+        
+        return False  # Only classical algorithms selected
     
     def validate_models_on_batch(self, batch_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Generate predictions using trained models"""
