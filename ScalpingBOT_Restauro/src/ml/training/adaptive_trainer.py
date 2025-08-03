@@ -42,9 +42,9 @@ class TrainingConfig:
     """Configurazione per AdaptiveTrainer"""
     
     # Core training settings - STABLE LEARNING FOR LSTM
-    initial_learning_rate: float = 1e-3     # REDUCED for LSTM stability
-    min_learning_rate: float = 1e-5        # Lower minimum for fine-tuning
-    max_learning_rate: float = 5e-3        # Much more conservative
+    initial_learning_rate: float = 5e-4     # FURTHER REDUCED for stability
+    min_learning_rate: float = 1e-6        # Lower minimum for fine-tuning
+    max_learning_rate: float = 2e-3        # MUCH more conservative
     
     # Batch size settings - ANTI-OVERFITTING
     initial_batch_size: int = 32         # RIDOTTO da 128 per prevenire overfitting
@@ -59,13 +59,13 @@ class TrainingConfig:
     
     # Learning rate scheduling - OTTIMIZZATO PER APPRENDIMENTO REALE
     lr_scheduler_type: str = 'plateau'  # 'plateau', 'cosine', 'exponential', 'cyclic', 'adaptive'
-    lr_patience: int = 50   # MOLTO PIÙ ALTO per dare tempo al modello
-    lr_factor: float = 0.9  # MENO AGGRESSIVO nella riduzione
-    lr_cooldown: int = 20   # PIÙ STABILITÀ dopo riduzione LR
+    lr_patience: int = 100  # MOLTO PIÙ ALTO per dare tempo al modello
+    lr_factor: float = 0.95 # MENO AGGRESSIVO nella riduzione
+    lr_cooldown: int = 50   # PIÙ STABILITÀ dopo riduzione LR
     
     # Training stability - CONSERVATIVE FOR LSTM
     gradient_accumulation_steps: int = 4  # AUMENTATO da 1 per batch virtuali più grandi
-    max_grad_norm: float = 0.5           # REDUCED for LSTM stability
+    max_grad_norm: float = 1.0           # INCREASED for gradient stability
     warmup_steps: int = 200              # INCREASED for better warmup
     
     # Mixed precision
@@ -238,13 +238,8 @@ class AdaptiveLRScheduler:
         
         self.step_count += 1
         
-        # Warmup phase - DISABLED: Skip warmup to maintain stable LR
-        # Warmup was causing LR to be adjusted every step regardless of validation
-        # if self.step_count <= self.warmup_steps:
-        #     lr = self.base_lr * (self.step_count / self.warmup_steps)
-        #     for param_group in self.optimizer.param_groups:
-        #         param_group['lr'] = lr
-        #     return
+        # Warmup phase - COMPLETELY DISABLED for stability
+        # Warmup causes unnecessary LR adjustments that destabilize training
         
         # Regular scheduling
         if self.config.lr_scheduler_type == 'plateau' and metric is not None and self.base_scheduler is not None:
@@ -380,14 +375,14 @@ class AdaptiveTrainer:
         # Parameter groups with differential learning rates
         param_groups = []
         
-        # LSTM weight_hh gets CONSERVATIVE learning rate for stability
+        # LSTM weight_hh gets MODERATE learning rate for stability
         if lstm_weight_hh_params:
             param_groups.append({
                 'params': lstm_weight_hh_params,
-                'lr': self.config.initial_learning_rate * 0.5,  # REDUCED from 10x to 0.5x for stability
-                'weight_decay': 1e-5  # Lower weight decay for critical params
+                'lr': self.config.initial_learning_rate * 2.0,  # REDUCED multiplier for stability
+                'weight_decay': 1e-5  # Slightly higher weight decay
             })
-            print(f"✅ Differential LR: weight_hh={self.config.initial_learning_rate * 0.5:.2e}")
+            print(f"✅ Differential LR: weight_hh={self.config.initial_learning_rate * 2.0:.2e}")
         
         # Other LSTM parameters get standard rate
         if lstm_other_params:
@@ -472,6 +467,10 @@ class AdaptiveTrainer:
                         output = model_output
                     loss = criterion(output, target)
                 
+                # Check for dead model (zero loss might indicate collapsed gradients)
+                if loss.item() == 0.0:
+                    print(f"⚠️ Zero loss detected - possible dead model at step {self.global_step}")
+                
                 # Backward pass with gradient scaling
                 self.scaler.scale(loss).backward()
                 
@@ -506,6 +505,11 @@ class AdaptiveTrainer:
                         output = output[:, -1, :]  # Take last timestep
                 
                 loss = criterion(output, target)
+                
+                # Check for dead model (zero loss might indicate collapsed gradients)
+                if loss.item() == 0.0:
+                    print(f"⚠️ Zero loss detected - possible dead model at step {self.global_step}")
+                
                 loss.backward()
                 
                 # LSTM-specific gradient clipping with selective fixes
@@ -533,16 +537,15 @@ class AdaptiveTrainer:
             if not instability_info['is_stable']:
                 self._handle_training_instability(instability_info)
             
-            # Validation step
+            # Validation step - SIMPLIFIED
             if (validation_loader is not None and 
                 self.global_step % self.config.validation_frequency == 0):
                 val_loss = self._validate(validation_loader, criterion)
                 self.loss_tracker.update(train_loss=loss.item(), val_loss=val_loss)
                 
-                # Learning rate scheduling - FIXED: Only after validation
-                if len(self.loss_tracker.val_losses) > 0:
+                # Learning rate scheduling - ONLY after validation, LESS frequent
+                if len(self.loss_tracker.val_losses) > 0 and self.global_step % (self.config.validation_frequency * 2) == 0:
                     self.lr_scheduler.step(self.loss_tracker.val_losses[-1])
-            # REMOVED: No fallback LR stepping - scheduler only steps after validation
             
             # SWA update
             if (self.swa_model is not None and 
@@ -685,9 +688,40 @@ class AdaptiveTrainer:
                     # Fix per weight_hh parameters (critical LSTM params)
                     if 'weight_hh' in name:
                         if param_grad_norm < 1e-6:  # Vanishing gradient detected
-                            # FAIL FAST: Log vanishing gradients without noise injection
-                            print(f"⚠️ Vanishing gradient detected in {name}: {param_grad_norm:.2e}")
+                            # Track consecutive vanishing gradient detections per parameter
+                            if not hasattr(self, 'vanishing_count'):
+                                self.vanishing_count = {}
+                            if name not in self.vanishing_count:
+                                self.vanishing_count[name] = 0
+                            self.vanishing_count[name] += 1
+                            
+                            # DISABLED: No automatic LR increases to prevent instability
+                            if self.vanishing_count[name] <= 3:  # Max 3 attempts only
+                                # Log vanishing gradient but don't adjust LR
+                                print(f"⚠️ Vanishing gradient in {name}: {param_grad_norm:.2e} (attempt {self.vanishing_count[name]}/3) - NO LR adjustment")
+                            elif self.vanishing_count[name] == 4:  # First time hitting limit
+                                print(f"🛑 Vanishing gradient limit reached for {name} - applying small weight perturbation")
+                                # Apply small random perturbation to break the dead zone
+                                with torch.no_grad():
+                                    param.data += torch.randn_like(param.data) * 5e-5  # SMALLER perturbation
+                            elif self.vanishing_count[name] > 5:  # Reset counter faster
+                                print(f"🔄 Resetting vanishing count for {name} after 5 attempts")
+                                self.vanishing_count[name] = 0
+                            
                             weight_hh_fixed += 1
+                        else:
+                            # Reset vanishing count if gradients improve (rate limited logging)
+                            if hasattr(self, 'vanishing_count') and name in self.vanishing_count:
+                                if self.vanishing_count[name] > 0:
+                                    # Only log recovery every 10 times to reduce spam
+                                    if not hasattr(self, 'recovery_log_count'):
+                                        self.recovery_log_count = {}
+                                    if name not in self.recovery_log_count:
+                                        self.recovery_log_count[name] = 0
+                                    self.recovery_log_count[name] += 1
+                                    if self.recovery_log_count[name] % 10 == 0:
+                                        print(f"✅ Gradient recovered for {name}: {param_grad_norm:.2e} - resetting counter")
+                                    self.vanishing_count[name] = 0
                         
                         # Selective clipping with lower threshold for weight_hh
                         if param_grad_norm > self.config.max_grad_norm * 0.5:
@@ -696,11 +730,14 @@ class AdaptiveTrainer:
                     min_grad_norm = min(min_grad_norm, float(param.grad.norm().item()))
                     max_grad_norm = max(max_grad_norm, float(param.grad.norm().item()))
             
-            # Log gradient health (rate limited)
-            if total_grad_count > 0:
-                zero_grad_ratio = (min_grad_norm < 1e-8) * 100.0  # Simplified check
-                if weight_hh_fixed > 0:
-                    print(f"🔧 LSTM gradient fixes applied: {weight_hh_fixed} weight_hh parameters fixed")
+            # Log gradient health (rate limited to reduce noise)
+            if total_grad_count > 0 and weight_hh_fixed > 0:
+                # Only log every 50 fixes to reduce console spam
+                if not hasattr(self, 'gradient_fix_count'):
+                    self.gradient_fix_count = 0
+                self.gradient_fix_count += 1
+                if self.gradient_fix_count % 50 == 0:
+                    print(f"🔧 LSTM gradient fixes applied: {weight_hh_fixed} weight_hh parameters fixed (total: {self.gradient_fix_count})")
             
             # Standard gradient clipping for all parameters
             grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
@@ -722,21 +759,18 @@ class AdaptiveTrainer:
         
         stats = self.loss_tracker.get_training_stats()
         
-        # 🎯 DIAGNOSTICA LEARNING OGNI 1000 STEPS
+        # SIMPLIFIED DIAGNOSTICS - Only every 500 steps to reduce noise
         diagnostic_info = ""
-        if self.global_step % 1000 == 0 and hasattr(self, 'loss_variance_window') and len(self.loss_variance_window) >= 100:
-            loss_std = np.std(list(self.loss_variance_window)[-100:])  # Varianza ultimi 100 steps
-            loss_trend = np.mean(list(self.loss_variance_window)[-50:]) - np.mean(list(self.loss_variance_window)[-100:-50])
+        if self.global_step % 500 == 0 and hasattr(self, 'loss_variance_window') and len(self.loss_variance_window) >= 50:
+            loss_trend = np.mean(list(self.loss_variance_window)[-25:]) - np.mean(list(self.loss_variance_window)[-50:-25])
             
-            # 🎯 DIAGNOSTICA OTTIMIZZATA PER MOSTRARE LEARNING REALE
-            if loss_std < 0.000005:  # Varianza troppo bassa
-                diagnostic_info = f" | ⚠️ PLATEAU (std={loss_std:.2e})"
-            elif loss_trend < -0.000005:  # Miglioramento significativo (più sensibile)
-                diagnostic_info = f" | ⬇️ LEARNING (Δ={loss_trend:.2e})"
-            elif loss_trend > 0.000005:  # Peggioramento significativo
-                diagnostic_info = f" | ⬆️ UNSTABLE (Δ={loss_trend:.2e})"  
-            else:  # Cambiamenti minimi
-                diagnostic_info = f" | 🔄 STABLE (Δ={loss_trend:.2e})"
+            # Simplified diagnostics
+            if loss_trend < -0.00001:  # Learning
+                diagnostic_info = f" | ⬇️ LEARNING"
+            elif loss_trend > 0.00001:  # Unstable
+                diagnostic_info = f" | ⚠️ UNSTABLE"  
+            else:  # Stable
+                diagnostic_info = f" | 🔄 STABLE"
 
         log_msg = (f"Step {self.global_step}: "
                   f"Loss={loss:.6f}, "

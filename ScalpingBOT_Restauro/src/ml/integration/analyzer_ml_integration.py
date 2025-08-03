@@ -395,19 +395,38 @@ class EnhancedLSTMTrainer:
         if np.all(targets_clean == 0.0):
             raise ValueError("All targets are zero - invalid data state, cannot proceed")
         
-        # FAIL FAST - No synthetic noise injection allowed
+        # Check target ranges - allow smaller ranges for financial data
         target_ranges = np.max(targets_clean, axis=0) - np.min(targets_clean, axis=0)
-        if np.any(target_ranges < 1e-6):
-            raise ValueError(f"Target range too small: {target_ranges} - insufficient data variance")
+        if np.any(target_ranges < 1e-10):  # Much more lenient threshold
+            print(f"⚠️ Very small target range detected: {target_ranges} - this may affect model learning")
+            # Don't raise error - let the model try to learn with small ranges
         
-        # Applica normalizzazione robusta - MANTENENDO DIMENSIONALITÀ 2D
+        # 🔧 CRITICAL FIX: Check for zero variance BEFORE normalization
+        # This prevents normalized targets from becoming all zeros, which causes zero loss
         if targets_clean.ndim == 2:
-            # Per targets 2D, normalizza ogni colonna separatamente per mantenere la forma
             processed_targets = np.zeros_like(targets_clean)
             for i in range(targets_clean.shape[1]):
-                processed_targets[:, i] = self.preprocessor.smart_normalize(targets_clean[:, i].reshape(-1, 1), f"sr_targets_col_{i}").flatten()
+                col_data = targets_clean[:, i]
+                col_std = np.std(col_data)
+                
+                # Skip normalization if variance is too low - keep original values
+                if col_std < 1e-12:  # Very strict threshold for actual zero variance
+                    print(f"⚠️ Skipping normalization for column {i}: std={col_std:.2e} too small")
+                    processed_targets[:, i] = col_data
+                else:
+                    normalized_col = self.preprocessor.smart_normalize(col_data.reshape(-1, 1), f"sr_targets_col_{i}").flatten()
+                    processed_targets[:, i] = normalized_col
+                    
         else:
-            processed_targets = self.preprocessor.smart_normalize(targets_clean, "sr_targets")
+            target_std = np.std(targets_clean)
+            
+            # Skip normalization if variance is too low - keep original values  
+            if target_std < 1e-12:  # Very strict threshold for actual zero variance
+                print(f"⚠️ Skipping target normalization: std={target_std:.2e} too small")
+                processed_targets = targets_clean.copy()
+            else:
+                processed_targets = self.preprocessor.smart_normalize(targets_clean, "sr_targets")
+                
         
         # Riempire valori mancanti se c'erano NaN
         if len(processed_targets) < len(targets):

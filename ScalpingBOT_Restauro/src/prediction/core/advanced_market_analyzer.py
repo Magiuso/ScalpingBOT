@@ -468,15 +468,10 @@ class AdvancedMarketAnalyzer:
         
         print(f"🎓 AdvancedMarketAnalyzer: REAL ML Training on {batch_size:,} ticks...")
         
-        # Import ML training components
-        from ...ml.integration.analyzer_ml_integration import (
-            create_enhanced_sr_trainer,
-            create_enhanced_pattern_trainer, 
-            create_enhanced_bias_trainer,
-            EnhancedLSTMTrainer
-        )
-        from ...ml.training.adaptive_trainer import TrainingConfig
-        from ...shared.enums import ModelType
+        # BIBBIA COMPLIANCE: Using only AdaptiveTrainer
+        from ...ml.training.adaptive_trainer import AdaptiveTrainer, TrainingConfig, create_adaptive_trainer_config
+        from ...ml.models.advanced_lstm import AdvancedLSTM
+        # ModelType import removed - not needed with AdaptiveTrainer
         
         training_results = {}
         
@@ -498,65 +493,107 @@ class AdvancedMarketAnalyzer:
                     trained_models = {}
                     training_success_count = 0
                     
-                    # Train Support/Resistance models
+                    # Train Support/Resistance models - BIBBIA COMPLIANT
                     try:
                         print(f"    🔧 Training Support/Resistance models...")
-                        sr_trainer = create_enhanced_sr_trainer(
-                            input_size=training_data['features_per_timestep']  # Features per LSTM timestep, not total flattened
+                        # Create model and trainer using AdaptiveTrainer
+                        sr_model = AdvancedLSTM(
+                            input_size=training_data['features_per_timestep'],
+                            hidden_size=256,
+                            num_layers=1,  # Single layer for stability
+                            output_size=2,  # Support and Resistance
+                            dropout=0.3
                         )
+                        sr_config = create_adaptive_trainer_config(
+                            initial_learning_rate=5e-4,
+                            early_stopping_patience=20,
+                            validation_frequency=100
+                        )
+                        sr_trainer = AdaptiveTrainer(sr_model, sr_config)
                         
-                        sr_result = sr_trainer.training_manager.train_model(
+                        # Train model
+                        sr_result = sr_trainer.train_model_protected(
                             training_data['train_features'],
                             training_data['sr_targets'],
-                            training_data['val_features'], 
-                            training_data['sr_val_targets'],
-                            num_epochs=50
+                            epochs=50
                         )
-                        trained_models['LSTM_SupportResistance'] = sr_trainer.model
-                        trained_models['Transformer_Levels'] = sr_trainer.model  # Reuse for now
-                        training_success_count += 1
-                        print(f"      ✅ Support/Resistance models trained successfully")
+                        
+                        if sr_result['training_completed']:
+                            trained_models['LSTM_SupportResistance'] = sr_model
+                            trained_models['Transformer_Levels'] = sr_model  # Reuse for now
+                            training_success_count += 1
+                            print(f"      ✅ Support/Resistance models trained successfully")
+                        else:
+                            print(f"      ❌ Support/Resistance training failed: {sr_result['message']}")
                         
                     except Exception as e:
                         print(f"      ❌ Support/Resistance training failed: {e}")
                     
-                    # Train Pattern Recognition models  
+                    # Train Pattern Recognition models - BIBBIA COMPLIANT  
                     try:
                         print(f"    🔧 Training Pattern Recognition models...")
-                        pattern_trainer = create_enhanced_pattern_trainer(
-                            input_size=training_data['features_per_timestep']  # Features per LSTM timestep, not total flattened
+                        # Create model and trainer using AdaptiveTrainer
+                        pattern_model = AdvancedLSTM(
+                            input_size=training_data['features_per_timestep'],
+                            hidden_size=256,
+                            num_layers=1,  # Single layer for stability
+                            output_size=1,  # Pattern probability
+                            dropout=0.3
                         )
-                        pattern_result = pattern_trainer.training_manager.train_model(
+                        pattern_config = create_adaptive_trainer_config(
+                            initial_learning_rate=5e-4,
+                            early_stopping_patience=20,
+                            validation_frequency=100
+                        )
+                        pattern_trainer = AdaptiveTrainer(pattern_model, pattern_config)
+                        
+                        # Train model
+                        pattern_result = pattern_trainer.train_model_protected(
                             training_data['train_features'],
                             training_data['pattern_targets'],
-                            training_data['val_features'],
-                            training_data['pattern_val_targets'], 
-                            num_epochs=50
+                            epochs=50
                         )
-                        trained_models['CNN_PatternRecognizer'] = pattern_trainer.model
-                        trained_models['LSTM_Sequences'] = pattern_trainer.model
-                        trained_models['Transformer_Patterns'] = pattern_trainer.model
-                        training_success_count += 1
-                        print(f"      ✅ Pattern Recognition models trained successfully")
+                        
+                        if pattern_result['training_completed']:
+                            trained_models['CNN_PatternRecognizer'] = pattern_model
+                            trained_models['LSTM_Sequences'] = pattern_model
+                            trained_models['Transformer_Patterns'] = pattern_model
+                            training_success_count += 1
+                            print(f"      ✅ Pattern Recognition models trained successfully")
+                        else:
+                            print(f"      ❌ Pattern Recognition training failed: {pattern_result['message']}")
                         
                     except Exception as e:
                         print(f"      ❌ Pattern Recognition training failed: {e}")
                     
-                    # Train Bias Detection models
+                    # Train Bias Detection models - BIBBIA COMPLIANT
                     try:
                         print(f"    🔧 Training Bias Detection models...")
-                        bias_trainer = create_enhanced_bias_trainer(
-                            input_size=training_data['features_per_timestep']  # Features per LSTM timestep, not total flattened
+                        # Create model and trainer using AdaptiveTrainer
+                        bias_model = AdvancedLSTM(
+                            input_size=training_data['features_per_timestep'],
+                            hidden_size=256,
+                            num_layers=1,  # Single layer for stability
+                            output_size=1,  # Bias score
+                            dropout=0.3
                         )
-                        bias_result = bias_trainer.training_manager.train_model(
+                        bias_config = create_adaptive_trainer_config(
+                            initial_learning_rate=5e-4,
+                            early_stopping_patience=20,
+                            validation_frequency=100
+                        )
+                        bias_trainer = AdaptiveTrainer(bias_model, bias_config)
+                        
+                        # Train model
+                        bias_result = bias_trainer.train_model_protected(
                             training_data['train_features'],
                             training_data['bias_targets'],
-                            training_data['val_features'],
-                            training_data['bias_val_targets'],
-                            num_epochs=50
+                            epochs=50
                         )
-                        trained_models['Sentiment_LSTM'] = bias_trainer.model
-                        trained_models['Transformer_Bias'] = bias_trainer.model
+                        
+                        if bias_result['training_completed']:
+                            trained_models['Sentiment_LSTM'] = bias_model
+                            trained_models['Transformer_Bias'] = bias_model
                         training_success_count += 1
                         print(f"      ✅ Bias Detection models trained successfully")
                         
@@ -810,11 +847,11 @@ class AdvancedMarketAnalyzer:
         if np.isinf(features_3d).any():
             raise ValueError("Features contain infinite values after normalization")
         
-        # Additional clipping for extreme values to prevent attention mechanism issues
-        features_3d = np.clip(features_3d, -10.0, 10.0)
+        # Additional clipping for extreme values (RELAXED to preserve data variance)
+        features_3d = np.clip(features_3d, -50.0, 50.0)
         
-        # Flatten for EnhancedLSTMTrainer (it will reshape back to 3D internally)
-        # Expected format: [samples, sequence_length * features_per_timestep]
+        # Prepare for AdaptiveTrainer
+        # Expected format: [samples, sequence_length, features]
         features = features_3d.reshape(features_3d.shape[0], -1)
         
         # Create targets for different model types
@@ -823,16 +860,26 @@ class AdvancedMarketAnalyzer:
         pattern_targets = []
         bias_targets = []
         
+        # Debug: Add logging to understand target calculation
+        print(f"      🔍 Target Debug:")
+        print(f"         Total prices: {len(prices)}")
+        print(f"         Features created: {len(features)}")
+        print(f"         Sequence length: {sequence_length}")
+        
         # IMPORTANT: Create targets for ALL features, not just those with future prices
         # This ensures features.shape[0] == targets.shape[0]
         for i in range(len(features)):
-            idx = i + sequence_length
+            idx = i + sequence_length  # idx is the current price index for this feature
             if idx < len(prices) - 1:
                 # We have future price - calculate real targets
                 future_price = prices[idx + 1]
                 current_price = prices[idx]
                 sr_target = (future_price - current_price) / current_price if current_price > 0 else 0
                 sr_targets.append([sr_target])
+                
+                # Debug first few targets
+                if i < 3:
+                    print(f"         Feature {i}: current_price[{idx}]={current_price:.4f}, future_price[{idx+1}]={future_price:.4f}, target={sr_target:.6f}")
                 
                 # Pattern target: price direction (up=1, down=0)
                 direction = 1 if future_price > current_price else 0
@@ -853,6 +900,16 @@ class AdvancedMarketAnalyzer:
         sr_targets = np.array(sr_targets)
         pattern_targets = np.array(pattern_targets)
         bias_targets = np.array(bias_targets)
+        
+        # Debug target statistics
+        print(f"      🔍 Target Statistics:")
+        print(f"         SR targets shape: {sr_targets.shape}")
+        print(f"         SR targets mean: {np.mean(sr_targets):.6f}")
+        print(f"         SR targets std: {np.std(sr_targets):.6f}")
+        print(f"         SR targets min/max: {np.min(sr_targets):.6f} / {np.max(sr_targets):.6f}")
+        print(f"         SR targets zeros: {np.sum(sr_targets == 0)} / {len(sr_targets)}")
+        if len(sr_targets) > 0:
+            print(f"         First 5 targets: {sr_targets[:5].flatten()}")
         
         # Split train/validation (80/20)
         split_idx = int(0.8 * len(features))

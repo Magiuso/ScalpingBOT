@@ -19,7 +19,8 @@ Version: 1.0.0
 from .training.adaptive_trainer import AdaptiveTrainer, TrainingConfig
 from .preprocessing.data_preprocessing import AdvancedDataPreprocessor, PreprocessingConfig
 from .monitoring.training_monitor import TrainingMonitor, MonitorConfig
-from .integration.analyzer_ml_integration import EnhancedLSTMTrainer
+# REMOVED: EnhancedLSTMTrainer - Using only AdaptiveTrainer as per BIBBIA
+# from .integration.analyzer_ml_integration import EnhancedLSTMTrainer
 
 __all__ = [
     'AdaptiveTrainer',
@@ -27,6 +28,6 @@ __all__ = [
     'AdvancedDataPreprocessor',
     'PreprocessingConfig',
     'TrainingMonitor',
-    'MonitorConfig',
-    'EnhancedLSTMTrainer'
+    'MonitorConfig'
+    # 'EnhancedLSTMTrainer' - REMOVED per BIBBIA compliance
 ]

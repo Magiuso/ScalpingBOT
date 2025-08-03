@@ -4,31 +4,15 @@ Integration Module - ML Integration with Analyzer System
 
 Integration of ML optimizations with the main Analyzer system.
 
-Classes:
-- EnhancedLSTMTrainer: Enhanced LSTM trainer with full optimization
-- OptimizedTrainingPipeline: Training pipeline with optimization profiles
-- OptimizedTrainingManager: Training management system
+BIBBIA COMPLIANCE: Only AdaptiveTrainer is used for ALL ML training.
+All EnhancedLSTMTrainer and create_enhanced_* functions have been removed.
 
-Factory Functions:
-- create_enhanced_sr_trainer: Support/Resistance trainer
-- create_enhanced_pattern_trainer: Pattern recognition trainer  
-- create_enhanced_bias_trainer: Bias detection trainer
+Classes:
+- AlgorithmBridge: Bridge between algorithms and ML system
 
 Author: ScalpingBOT Team
-Version: 1.0.0
+Version: 2.0.0 - BIBBIA Compliant
 """
-
-from .analyzer_ml_integration import (
-    EnhancedLSTMTrainer,
-    OptimizedTrainingPipeline,
-    OptimizedTrainingManager,
-    ModelType,
-    OptimizationProfile,
-    create_enhanced_sr_trainer,
-    create_enhanced_pattern_trainer,
-    create_enhanced_bias_trainer,
-    create_stable_training_pipeline
-)
 
 from .algorithm_bridge import (
     AlgorithmBridge,
@@ -36,16 +20,6 @@ from .algorithm_bridge import (
 )
 
 __all__ = [
-    'EnhancedLSTMTrainer',
-    'OptimizedTrainingPipeline',
-    'OptimizedTrainingManager',
-    'ModelType',
-    'OptimizationProfile',
-    'create_enhanced_sr_trainer',
-    'create_enhanced_pattern_trainer', 
-    'create_enhanced_bias_trainer',
-    'create_stable_training_pipeline',
-    
     # Algorithm Bridge
     'AlgorithmBridge',
     'create_algorithm_bridge'

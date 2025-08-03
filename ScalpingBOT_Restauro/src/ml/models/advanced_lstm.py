@@ -248,18 +248,18 @@ class AdvancedLSTM(nn.Module):
         self.expected_input_size = input_size  # Dimensione target preferita
         self.parent: Optional[Any] = None  # ✅ Inizializza parent reference per evitare errori
         
-        # 🚀 FASE 2 - ARCHITECTURE CHANGES
+        # 🚀 FASE 2 - ARCHITECTURE CHANGES - SIMPLIFIED FOR STABILITY
         self.architecture_fixes = {
-            'reduce_layers': True,
-            'layer_norm': True, 
-            'residual_connections': True,
-            'disable_bidirectional': False  # Opzionale
+            'reduce_layers': True,            # Keep layer reduction
+            'layer_norm': False,             # DISABLE - can cause instability
+            'residual_connections': False,   # DISABLE - can cause gradient issues
+            'disable_bidirectional': True    # Keep unidirectional for stability
         }
         
-        # 🔧 FASE 2.1: REDUCE LSTM LAYERS (3→2 layers)
+        # 🔧 FASE 2.1: REDUCE LSTM LAYERS (3→1 layers for maximum stability)
         original_num_layers = num_layers
-        if self.architecture_fixes['reduce_layers'] and num_layers > 2:
-            self.num_layers = 2
+        if self.architecture_fixes['reduce_layers'] and num_layers > 1:
+            self.num_layers = 1  # SINGLE LAYER for maximum stability
             self._log(f"🚀 ARCHITECTURE FIX: Reduced LSTM layers {original_num_layers}→{self.num_layers}", "architecture_fixes", "debug")
         else:
             self.num_layers = num_layers
@@ -281,26 +281,15 @@ class AdvancedLSTM(nn.Module):
         # 🔧 CRITICAL FIX: Initialize forget gate bias to 1.0 for LSTM stability
         self._initialize_lstm_weights()
         
-        # 🔧 FASE 2.2: ADD LAYER NORMALIZATION dopo ogni LSTM layer
-        if self.architecture_fixes['layer_norm']:
-            self.lstm_layer_norms = nn.ModuleList([
-                nn.LayerNorm(lstm_output_size) for _ in range(self.num_layers)
-            ])
-            self._log(f"🚀 ARCHITECTURE FIX: Added {self.num_layers} LayerNorm modules after LSTM layers", "architecture_fixes", "debug")
-        else:
-            self.lstm_layer_norms = None
+        # 🔧 FASE 2.2: LAYER NORMALIZATION - DISABLED for stability
+        self.lstm_layer_norms = None  # Disabled to prevent training instability
         
         self.attention = nn.MultiheadAttention(lstm_output_size, num_heads=8, dropout=dropout)
         self.layer_norm = nn.LayerNorm(lstm_output_size)
         self.dropout = nn.Dropout(dropout)
         
-        # 🔧 FASE 2.3: RESIDUAL CONNECTIONS
-        if self.architecture_fixes['residual_connections']:
-            # Projection layers per residual connections se necessario
-            self.residual_projection = nn.Linear(input_size, lstm_output_size) if input_size != lstm_output_size else None
-            self._log("🚀 ARCHITECTURE FIX: Added residual connection support", "architecture_fixes", "debug")
-        else:
-            self.residual_projection = None
+        # 🔧 FASE 2.3: RESIDUAL CONNECTIONS - DISABLED for stability
+        self.residual_projection = None  # Disabled to prevent gradient flow issues
         
         self.fc1 = nn.Linear(lstm_output_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, output_size)
@@ -866,8 +855,8 @@ class AdvancedLSTM(nn.Module):
                 self._log("❌ Input LSTM contiene NaN/Inf - sanitizzando...", "tensor_validation", "warning")
                 x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
             
-            # 🔧 FASE 2.3: Store original input per residual connections
-            original_input = x.clone() if self.architecture_fixes['residual_connections'] else None
+            # Original input not needed - residual connections disabled
+            original_input = None
             
             # LSTM forward
             lstm_out, lstm_hidden = self.lstm(x)
@@ -887,45 +876,9 @@ class AdvancedLSTM(nn.Module):
                 self._log(f"❌ LSTM output contiene {inf_count} Inf - sanitizzando...", "tensor_validation", "warning")
                 lstm_out = torch.nan_to_num(lstm_out, nan=0.0, posinf=1.0, neginf=-1.0)
             
-            # 🚀 FASE 2.2: ADD LAYER NORMALIZATION dopo LSTM layers
-            if self.architecture_fixes['layer_norm'] and self.lstm_layer_norms:
-                try:
-                    # Applica layer norm all'ultimo layer LSTM
-                    lstm_out = self.lstm_layer_norms[-1](lstm_out)
-                    
-                    # Validazione post-layer-norm
-                    if torch.isnan(lstm_out).any() or torch.isinf(lstm_out).any():
-                        self._log("❌ LayerNorm LSTM output contiene NaN/Inf - sanitizzando...", "tensor_validation", "warning")
-                        lstm_out = torch.nan_to_num(lstm_out, nan=0.0, posinf=1.0, neginf=-1.0)
-                    
-                except Exception as ln_error:
-                    self._log(f"❌ Errore LayerNorm LSTM: {ln_error}", "tensor_validation", "warning")
+            # LAYER NORMALIZATION - DISABLED
             
-            # 🚀 FASE 2.3: RESIDUAL CONNECTIONS
-            if self.architecture_fixes['residual_connections'] and original_input is not None:
-                try:
-                    # Project input se necessario per matching dimensions
-                    if self.residual_projection is not None:
-                        projected_input = self.residual_projection(original_input)
-                    else:
-                        # Se dimensioni compatibili, usa direttamente
-                        if original_input.shape[-1] == lstm_out.shape[-1]:
-                            projected_input = original_input
-                        else:
-                            projected_input = None
-                    
-                    # Aggiungi residual connection se possibile
-                    if projected_input is not None:
-                        lstm_out = lstm_out + projected_input
-                        self._log("Applied residual connection", "architecture_fixes", "debug")
-                        
-                        # Validazione post-residual
-                        if torch.isnan(lstm_out).any() or torch.isinf(lstm_out).any():
-                            self._log("❌ Residual connection output contiene NaN/Inf - sanitizzando...", "tensor_validation", "warning")
-                            lstm_out = torch.nan_to_num(lstm_out, nan=0.0, posinf=1.0, neginf=-1.0)
-                    
-                except Exception as res_error:
-                    self._log(f"❌ Errore residual connection: {res_error}", "tensor_validation", "warning")
+            # RESIDUAL CONNECTIONS - DISABLED
             
         except Exception as lstm_error:
             print(f"❌ Errore LSTM: {lstm_error}")
