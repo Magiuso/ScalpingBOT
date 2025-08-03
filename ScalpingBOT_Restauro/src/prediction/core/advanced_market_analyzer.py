@@ -1439,8 +1439,13 @@ class AdvancedMarketAnalyzer:
                     if training_success_count == 0:
                         raise RuntimeError(f"FAIL FAST: No ML models successfully trained for {asset}")
                     
-                    # Update analyzer's ml_models with trained models
-                    analyzer.algorithm_bridge.ml_models.update(trained_models)
+                    # Update analyzer's ml_models with asset-specific keys (BIBBIA COMPLIANCE)
+                    asset_specific_models = {}
+                    for algorithm_name, model in trained_models.items():
+                        asset_specific_key = f"{asset}_{algorithm_name}"
+                        asset_specific_models[asset_specific_key] = model
+                    
+                    analyzer.algorithm_bridge.ml_models.update(asset_specific_models)
                     
                     training_time = time.time() - training_start
                     training_results[asset] = {
