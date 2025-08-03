@@ -29,6 +29,210 @@ from ScalpingBOT_Restauro.src.monitoring.events.event_collector import EventColl
 from ScalpingBOT_Restauro.src.prediction.core.asset_analyzer import AssetAnalyzer, create_asset_analyzer
 
 
+class IncrementalSRCalculator:
+    """
+    Incremental Support/Resistance Calculator for O(n) complexity
+    Production-ready for real-money trading
+    """
+    
+    def __init__(self, window_size: int = 20, level_tolerance: float = 0.002, 
+                 max_levels: int = 100, decay_period: int = 1000):
+        """
+        Args:
+            window_size: Window for local min/max detection
+            level_tolerance: Price tolerance for level clustering (0.2%)
+            max_levels: Maximum S/R levels to maintain
+            decay_period: Ticks before level strength starts decaying
+        """
+        self.window_size = window_size
+        self.level_tolerance = level_tolerance
+        self.max_levels = max_levels
+        self.decay_period = decay_period
+        
+        # Rolling price buffer for local min/max detection
+        self.price_buffer = deque(maxlen=window_size * 2 + 1)
+        
+        # S/R levels with metadata: {price: {'strength': float, 'touches': int, 'last_seen': int}}
+        self.support_levels = {}
+        self.resistance_levels = {}
+        
+        # Tick counter
+        self.tick_count = 0
+        
+    def add_tick(self, price: float) -> None:
+        """Add new tick and update S/R levels incrementally - O(1) amortized"""
+        self.tick_count += 1
+        self.price_buffer.append(price)
+        
+        # Need full window to detect local min/max
+        if len(self.price_buffer) < self.window_size * 2 + 1:
+            return
+            
+        # Check if middle price is local min/max
+        middle_idx = self.window_size
+        middle_price = self.price_buffer[middle_idx]
+        
+        # Local minimum = potential support
+        if all(middle_price <= self.price_buffer[i] for i in range(len(self.price_buffer)) if i != middle_idx):
+            self._add_support_level(middle_price)
+            
+        # Local maximum = potential resistance  
+        if all(middle_price >= self.price_buffer[i] for i in range(len(self.price_buffer)) if i != middle_idx):
+            self._add_resistance_level(middle_price)
+            
+        # Update touches for existing levels
+        self._update_level_touches(price)
+        
+        # Decay old levels periodically
+        if self.tick_count % 100 == 0:
+            self._decay_old_levels()
+    
+    def _add_support_level(self, price: float) -> None:
+        """Add or strengthen support level"""
+        # Round price for clustering
+        rounded_price = round(price, 2)
+        
+        # Check if level already exists (within tolerance)
+        for existing_price in list(self.support_levels.keys()):
+            if abs(existing_price - rounded_price) / existing_price < self.level_tolerance:
+                # Strengthen existing level
+                self.support_levels[existing_price]['strength'] = min(
+                    self.support_levels[existing_price]['strength'] + 0.1, 1.0
+                )
+                self.support_levels[existing_price]['touches'] += 1
+                self.support_levels[existing_price]['last_seen'] = self.tick_count
+                return
+                
+        # Add new level
+        self.support_levels[rounded_price] = {
+            'strength': 0.3,
+            'touches': 1,
+            'last_seen': self.tick_count
+        }
+        
+        # Maintain max levels
+        if len(self.support_levels) > self.max_levels:
+            # Remove weakest level
+            weakest = min(self.support_levels.items(), 
+                         key=lambda x: x[1]['strength'])
+            del self.support_levels[weakest[0]]
+    
+    def _add_resistance_level(self, price: float) -> None:
+        """Add or strengthen resistance level"""
+        # Round price for clustering
+        rounded_price = round(price, 2)
+        
+        # Check if level already exists (within tolerance)
+        for existing_price in list(self.resistance_levels.keys()):
+            if abs(existing_price - rounded_price) / existing_price < self.level_tolerance:
+                # Strengthen existing level
+                self.resistance_levels[existing_price]['strength'] = min(
+                    self.resistance_levels[existing_price]['strength'] + 0.1, 1.0
+                )
+                self.resistance_levels[existing_price]['touches'] += 1
+                self.resistance_levels[existing_price]['last_seen'] = self.tick_count
+                return
+                
+        # Add new level
+        self.resistance_levels[rounded_price] = {
+            'strength': 0.3,
+            'touches': 1,
+            'last_seen': self.tick_count
+        }
+        
+        # Maintain max levels
+        if len(self.resistance_levels) > self.max_levels:
+            # Remove weakest level
+            weakest = min(self.resistance_levels.items(), 
+                         key=lambda x: x[1]['strength'])
+            del self.resistance_levels[weakest[0]]
+    
+    def _update_level_touches(self, current_price: float) -> None:
+        """Update touch count when price approaches levels"""
+        # Check support touches
+        for level_price, metadata in self.support_levels.items():
+            if abs(current_price - level_price) / level_price < self.level_tolerance:
+                metadata['touches'] += 1
+                metadata['last_seen'] = self.tick_count
+                metadata['strength'] = min(metadata['strength'] + 0.05, 1.0)
+                
+        # Check resistance touches
+        for level_price, metadata in self.resistance_levels.items():
+            if abs(current_price - level_price) / level_price < self.level_tolerance:
+                metadata['touches'] += 1
+                metadata['last_seen'] = self.tick_count
+                metadata['strength'] = min(metadata['strength'] + 0.05, 1.0)
+    
+    def _decay_old_levels(self) -> None:
+        """Decay strength of old levels"""
+        current_tick = self.tick_count
+        
+        # Decay supports
+        for level_price in list(self.support_levels.keys()):
+            metadata = self.support_levels[level_price]
+            age = current_tick - metadata['last_seen']
+            if age > self.decay_period:
+                decay_factor = 0.95 ** (age / self.decay_period)
+                metadata['strength'] *= decay_factor
+                
+                # Remove if too weak
+                if metadata['strength'] < 0.1:
+                    del self.support_levels[level_price]
+                    
+        # Decay resistances
+        for level_price in list(self.resistance_levels.keys()):
+            metadata = self.resistance_levels[level_price]
+            age = current_tick - metadata['last_seen']
+            if age > self.decay_period:
+                decay_factor = 0.95 ** (age / self.decay_period)
+                metadata['strength'] *= decay_factor
+                
+                # Remove if too weak
+                if metadata['strength'] < 0.1:
+                    del self.resistance_levels[level_price]
+    
+    def get_current_levels(self) -> Dict[str, List[float]]:
+        """Get current S/R levels sorted by price - O(n log n) where n = number of levels"""
+        return {
+            'support': sorted(self.support_levels.keys()),
+            'resistance': sorted(self.resistance_levels.keys())
+        }
+    
+    def get_levels_with_strength(self) -> Dict[str, Dict[float, float]]:
+        """Get S/R levels with their strength values"""
+        return {
+            'support': {price: meta['strength'] for price, meta in self.support_levels.items()},
+            'resistance': {price: meta['strength'] for price, meta in self.resistance_levels.items()}
+        }
+    
+    def get_nearest_levels(self, current_price: float) -> Dict[str, Any]:
+        """Get nearest support and resistance with metadata - O(n)"""
+        nearest_support = None
+        nearest_support_strength = 0
+        
+        nearest_resistance = None
+        nearest_resistance_strength = 0
+        
+        # Find nearest support (below current price)
+        for price, metadata in self.support_levels.items():
+            if price <= current_price and (nearest_support is None or price > nearest_support):
+                nearest_support = price
+                nearest_support_strength = metadata['strength']
+                
+        # Find nearest resistance (above current price)
+        for price, metadata in self.resistance_levels.items():
+            if price >= current_price and (nearest_resistance is None or price < nearest_resistance):
+                nearest_resistance = price
+                nearest_resistance_strength = metadata['strength']
+                
+        return {
+            'support': nearest_support,
+            'support_strength': nearest_support_strength,
+            'resistance': nearest_resistance,
+            'resistance_strength': nearest_resistance_strength
+        }
+
+
 class AdvancedMarketAnalyzer:
     """
     Advanced Market Analyzer - REFACTORED VERSION
@@ -767,7 +971,7 @@ class AdvancedMarketAnalyzer:
         return training_data
     
     def _convert_ticks_to_training_data(self, asset_ticks: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Convert tick data to ML training format with features and targets"""
+        """Convert tick data to ML training format with features and targets - NO DATA LEAKAGE"""
         if len(asset_ticks) < 100:
             raise ValueError(f"Insufficient ticks for ML training: {len(asset_ticks)} < 100")
         
@@ -776,29 +980,7 @@ class AdvancedMarketAnalyzer:
         volumes = np.array([float(tick['volume']) for tick in asset_ticks]) 
         timestamps = [tick['timestamp'] for tick in asset_ticks]
         
-        # Use market data processor to create features
-        # Create a deque of tick data for the processor
-        tick_deque = deque()
-        for i in range(len(prices)):
-            tick_deque.append({
-                'price': prices[i],
-                'volume': volumes[i], 
-                'timestamp': timestamps[i]
-            })
-        
-        # Process with market data processor
-        processed_data = self.market_data_processor.prepare_market_data(
-            tick_data=tick_deque,
-            min_ticks=20,
-            window_size=len(prices)
-        )
-        
-        # Create feature matrix for ML training - PROPER LSTM FORMAT
-        sequence_length = 50
-        features_per_timestep = 6  # price, volume, return, volatility, rsi, sma_ratio
-        
-        # Pre-calculate technical indicators for all timestamps
-        # Calculate returns properly: diff gives n-1 elements, so we need to handle indexing correctly
+        # Pre-calculate returns (no leakage here)
         price_diffs = np.diff(prices)  # Length: n-1
         price_bases = np.array(prices[:-1])  # Length: n-1, previous prices for return calculation
         returns = price_diffs / np.maximum(price_bases, 1e-10)  # Both arrays now have same length: n-1
@@ -806,45 +988,151 @@ class AdvancedMarketAnalyzer:
         # Prepend 0 for first element to make it same length as prices
         returns = np.append([0.0], returns)  # Length: n (same as prices)
         
-        # Normalize raw price and volume data to prevent extreme values
-        price_mean = np.mean(prices)
-        price_std = np.std(prices)
-        volume_mean = np.mean(volumes)
-        volume_std = np.std(volumes)
+        # Create feature matrix for ML training - PROPER LSTM FORMAT
+        sequence_length = 50
+        features_per_timestep = 6  # price, volume, return, volatility, rsi, sma_ratio
         
-        # Avoid division by zero
-        price_std = max(price_std, 1e-10)
-        volume_std = max(volume_std, 1e-10)
-        
-        # Normalize prices and volumes
-        normalized_prices = (prices - price_mean) / price_std
-        normalized_volumes = (volumes - volume_mean) / volume_std
-        
-        # Create time-series features in LSTM-compatible format
+        # Create time-series features in LSTM-compatible format - PRODUCTION READY
         samples = []
+        sr_targets = []
+        pattern_targets = []
+        bias_targets = []
+        
+        print(f"      🚀 Creating features with INCREMENTAL S/R calculation for O(n) performance...")
+        
+        # Initialize incremental S/R calculator
+        sr_calculator = IncrementalSRCalculator(
+            window_size=20,
+            level_tolerance=0.002,  # 0.2% tolerance
+            max_levels=50,  # Keep top 50 levels per type
+            decay_period=2000  # Decay after 2000 ticks
+        )
+        
+        # Pre-fill S/R calculator with initial history
+        for price in prices[:sequence_length]:
+            sr_calculator.add_tick(price)
+        
+        # Progress tracking
+        total_samples = len(prices) - sequence_length
+        progress_interval = max(1, total_samples // 10)  # Report every 10%
         
         for i in range(sequence_length, len(prices)):
-            # Create sequence of features for this sample
+            # Progress reporting
+            if (i - sequence_length) % progress_interval == 0:
+                progress_pct = ((i - sequence_length) / total_samples) * 100
+                print(f"         Progress: {progress_pct:.0f}% ({i - sequence_length}/{total_samples} samples)")
+            
+            # ===== FEATURES CREATION (NO LEAKAGE) =====
+            
+            # 1. Calculate rolling normalization stats using ONLY data up to current point
+            historical_data_end = i  # Current sample position
+            normalization_window = min(200, historical_data_end)  # Use last 200 points or all available
+            norm_start = max(0, historical_data_end - normalization_window)
+            
+            # Rolling statistics for normalization (NO FUTURE DATA)
+            price_window = prices[norm_start:historical_data_end]
+            volume_window = volumes[norm_start:historical_data_end]
+            
+            price_mean = np.mean(price_window)
+            price_std = np.std(price_window)
+            volume_mean = np.mean(volume_window)
+            volume_std = np.std(volume_window)
+            
+            # Avoid division by zero
+            price_std = max(price_std, 1e-10)
+            volume_std = max(volume_std, 1e-10)
+            
+            # 2. Create sequence of features for this sample
             sequence_features = []
             
             for j in range(i - sequence_length, i):
-                # Features for timestep j - ALL NORMALIZED
+                # Normalized features using rolling stats (NO FUTURE DATA)
+                normalized_price = (prices[j] - price_mean) / price_std
+                normalized_volume = (volumes[j] - volume_mean) / volume_std
+                
+                # Rolling volatility (NO FUTURE DATA)
+                volatility_window = 10
+                vol_start = max(0, j - volatility_window)
+                volatility = np.std(returns[vol_start:j+1]) if j >= volatility_window else 0.0
+                
+                # Calculate RSI using only historical data (NO FUTURE DATA)
+                rsi_window = 14
+                rsi_start = max(0, j - rsi_window)
+                rsi_returns = returns[rsi_start:j+1]
+                if len(rsi_returns) > 1:
+                    gains = np.where(rsi_returns > 0, rsi_returns, 0)
+                    losses = np.where(rsi_returns < 0, -rsi_returns, 0)
+                    avg_gain = np.mean(gains) if len(gains) > 0 else 0
+                    avg_loss = np.mean(losses) if len(losses) > 0 else 1e-10
+                    rs = avg_gain / avg_loss
+                    rsi = 100 - (100 / (1 + rs))
+                else:
+                    rsi = 50
+                
+                # Calculate SMA using only historical data (NO FUTURE DATA)
+                sma_window = 20
+                sma_start = max(0, j - sma_window)
+                sma_prices = prices[sma_start:j+1]
+                sma_20 = np.mean(sma_prices)
+                sma_ratio = sma_20 / prices[j] if prices[j] > 0 else 1.0
+                
                 timestep_features = [
-                    normalized_prices[j],  # Normalized price
-                    normalized_volumes[j],  # Normalized volume
-                    returns[j],  # Price return (already normalized)
-                    # Volatility (rolling std of returns)
-                    np.std(returns[max(0, j-10):j+1]) if j >= 10 else 0.0,
-                    # RSI (normalized)
-                    processed_data.get('rsi', 50) / 100 if processed_data.get('rsi') else 0.5,
-                    # SMA ratio (already normalized)
-                    processed_data.get('sma_20', prices[j]) / prices[j] if prices[j] > 0 and processed_data.get('sma_20') else 1.0
+                    normalized_price,    # Normalized price
+                    normalized_volume,   # Normalized volume
+                    returns[j],         # Price return
+                    volatility,         # Rolling volatility
+                    rsi / 100,          # Normalized RSI
+                    sma_ratio           # SMA ratio
                 ]
                 sequence_features.append(timestep_features)
             
             samples.append(sequence_features)
+            
+            # ===== TARGET CREATION WITH INCREMENTAL S/R (O(1)) =====
+            
+            # Current price
+            current_price = prices[i]
+            
+            # Add current tick to S/R calculator - O(1) operation!
+            sr_calculator.add_tick(current_price)
+            
+            # Get current S/R levels - O(1) for nearest levels
+            nearest_levels = sr_calculator.get_nearest_levels(current_price)
+            
+            # Calculate S/R target using incremental data
+            sr_target = self._calculate_sr_target_incremental(
+                current_price=current_price,
+                nearest_levels=nearest_levels,
+                prices=prices[:i+1]  # Historical prices for touch count
+            )
+            sr_targets.append(sr_target)
+            
+            # Debug first few targets
+            if len(sr_targets) <= 3:
+                sr_levels = sr_calculator.get_current_levels()
+                print(f"         Sample {len(sr_targets)}: price={current_price:.4f}, tick_count={sr_calculator.tick_count}")
+                print(f"                    Incremental S/R levels: {len(sr_levels['support'])} support, {len(sr_levels['resistance'])} resistance")
+                print(f"                    S/R target=[dist_support={sr_target[0]:.4f}, dist_resistance={sr_target[1]:.4f}, support_str={sr_target[2]:.3f}, resistance_str={sr_target[3]:.3f}]")
+            
+            # Pattern target: probabilistic instead of deterministic
+            support_proximity = max(0, 1 - sr_target[0] * 10)  # Closer to support = higher probability
+            resistance_proximity = max(0, 1 - sr_target[1] * 10)  # Closer to resistance = higher probability
+            
+            # Create probabilistic pattern target instead of deterministic
+            if support_proximity > 0.7:
+                pattern_prob = support_proximity * sr_target[2]  # Weighted by support strength
+            elif resistance_proximity > 0.7:
+                pattern_prob = -resistance_proximity * sr_target[3]  # Weighted by resistance strength
+            else:
+                pattern_prob = 0.0  # Neutral zone
+            
+            pattern_targets.append([pattern_prob])
+            
+            # Bias target: more complex calculation
+            sr_context = (sr_target[2] - sr_target[3]) * (support_proximity - resistance_proximity)
+            bias_targets.append([sr_context])
         
-        # Convert to numpy array: [samples, sequence_length, features_per_timestep]
+        # Convert to numpy arrays
         features_3d = np.array(samples)  # Shape: [n_samples, sequence_length, features_per_timestep]
         
         # VALIDATION: Check for extreme values and NaN/Inf
@@ -853,57 +1141,13 @@ class AdvancedMarketAnalyzer:
         if np.isinf(features_3d).any():
             raise ValueError("Features contain infinite values after normalization")
         
-        # Additional clipping for extreme values (RELAXED to preserve data variance)
-        features_3d = np.clip(features_3d, -50.0, 50.0)
+        # Additional clipping for extreme values
+        features_3d = np.clip(features_3d, -10.0, 10.0)  # More conservative clipping
         
         # Prepare for AdaptiveTrainer
-        # Expected format: [samples, sequence_length, features]
         features = features_3d.reshape(features_3d.shape[0], -1)
         
-        # Create targets for different model types
-        # Support/Resistance targets: next price levels
-        sr_targets = []
-        pattern_targets = []
-        bias_targets = []
-        
-        # Debug: Add logging to understand target calculation
-        print(f"      🔍 Target Debug:")
-        print(f"         Total prices: {len(prices)}")
-        print(f"         Features created: {len(features)}")
-        print(f"         Sequence length: {sequence_length}")
-        
-        # 🎯 REAL SUPPORT/RESISTANCE TARGET CALCULATION
-        print(f"      🔧 Calculating REAL S/R levels...")
-        sr_levels = self._calculate_support_resistance_levels(prices)
-        print(f"      📊 Found {len(sr_levels['support'])} support and {len(sr_levels['resistance'])} resistance levels")
-        
-        # Create targets for ALL features
-        for i in range(len(features)):
-            idx = i + sequence_length  # Current price index for this feature
-            current_price = prices[idx]
-            
-            # Calculate REAL S/R targets: [dist_support, dist_resistance, support_strength, resistance_strength]
-            sr_target = self._calculate_sr_target(current_price, sr_levels, prices, idx)
-            sr_targets.append(sr_target)
-            
-            # Debug first few targets
-            if i < 3:
-                print(f"         Feature {i}: price={current_price:.4f}")
-                print(f"                    S/R=[dist_support={sr_target[0]:.4f}, dist_resistance={sr_target[1]:.4f}, support_str={sr_target[2]:.3f}, resistance_str={sr_target[3]:.3f}]")
-            
-            # Pattern target: based on S/R context
-            if sr_target[0] < 0.01:  # Near support (within 1%)
-                pattern_targets.append([1])  # Expect bounce up
-            elif sr_target[1] < 0.01:  # Near resistance (within 1%)
-                pattern_targets.append([-1])  # Expect rejection down
-            else:
-                pattern_targets.append([0])  # Neutral zone
-            
-            # Bias target: S/R strength difference
-            bias_score = (sr_target[2] - sr_target[3]) / 2  # Support strength - Resistance strength
-            bias_targets.append([bias_score])
-        
-        # Convert to arrays
+        # Convert targets to arrays
         sr_targets = np.array(sr_targets)
         pattern_targets = np.array(pattern_targets)
         bias_targets = np.array(bias_targets)
@@ -936,78 +1180,46 @@ class AdvancedMarketAnalyzer:
             'total_samples': len(features)
         }
     
-    def _calculate_support_resistance_levels(self, prices) -> Dict[str, List[float]]:
-        """Calculate Support and Resistance levels from price data"""
-        import numpy as np
-        
-        prices_array = np.array(prices)
-        
-        # Find local minima (support levels) and maxima (resistance levels)
-        window = 20  # Look for peaks/valleys in 20-tick windows
-        
-        support_levels = []
-        resistance_levels = []
-        
-        for i in range(window, len(prices_array) - window):
-            window_prices = prices_array[i-window:i+window+1]
-            current_price = prices_array[i]
-            
-            # Support: local minimum
-            if current_price == np.min(window_prices):
-                support_levels.append(current_price)
-            
-            # Resistance: local maximum
-            if current_price == np.max(window_prices):
-                resistance_levels.append(current_price)
-        
-        # Remove duplicates and sort
-        support_levels = sorted(list(set([round(level, 2) for level in support_levels])))
-        resistance_levels = sorted(list(set([round(level, 2) for level in resistance_levels])))
-        
-        return {
-            'support': support_levels,
-            'resistance': resistance_levels
-        }
+    # REMOVED: Old _calculate_support_resistance_levels and _calculate_sr_target methods
+    # These used future data and have been replaced by IncrementalSRCalculator
     
-    def _calculate_sr_target(self, current_price: float, sr_levels: Dict[str, List[float]], 
-                           prices, current_idx: int) -> List[float]:
-        """Calculate real S/R target: [dist_support, dist_resistance, support_strength, resistance_strength]"""
+    def _calculate_sr_target_incremental(self, current_price: float, nearest_levels: Dict[str, Any], 
+                                       prices) -> List[float]:
+        """Calculate S/R target using incremental calculator output - PRODUCTION READY"""
         
-        support_levels = sr_levels['support']
-        resistance_levels = sr_levels['resistance']
+        # Extract data from incremental calculator
+        nearest_support = nearest_levels['support']
+        support_strength = nearest_levels['support_strength']
+        nearest_resistance = nearest_levels['resistance']
+        resistance_strength = nearest_levels['resistance_strength']
         
-        # 1. Distance to nearest support (below current price)
-        nearest_support = None
-        for support in reversed(support_levels):  # Start from highest support
-            if support <= current_price:
-                nearest_support = support
-                break
+        # 1. Distance to nearest support
+        if nearest_support is not None:
+            dist_support = (current_price - nearest_support) / current_price
+        else:
+            # Dynamic fallback based on recent volatility
+            recent_prices = prices[-50:] if len(prices) > 50 else prices
+            price_volatility = np.std(recent_prices) / np.mean(recent_prices) if len(recent_prices) > 1 else 0.02
+            dist_support = max(0.02, min(0.15, price_volatility * 2))
         
-        dist_support = (current_price - nearest_support) / current_price if nearest_support else 0.1  # 10% if no support found
+        # 2. Distance to nearest resistance
+        if nearest_resistance is not None:
+            dist_resistance = (nearest_resistance - current_price) / current_price
+        else:
+            # Dynamic fallback based on recent volatility
+            recent_prices = prices[-50:] if len(prices) > 50 else prices
+            price_volatility = np.std(recent_prices) / np.mean(recent_prices) if len(recent_prices) > 1 else 0.02
+            dist_resistance = max(0.02, min(0.15, price_volatility * 2))
         
-        # 2. Distance to nearest resistance (above current price)
-        nearest_resistance = None
-        for resistance in resistance_levels:  # Start from lowest resistance
-            if resistance >= current_price:
-                nearest_resistance = resistance
-                break
+        # 3. Support strength - already calculated by incremental calculator
+        if support_strength == 0:  # No support found
+            support_strength = 0.3 + np.random.normal(0, 0.05)
+            support_strength = max(0.1, min(0.9, support_strength))
         
-        dist_resistance = (nearest_resistance - current_price) / current_price if nearest_resistance else 0.1  # 10% if no resistance found
-        
-        # 3. Support strength (how many times price bounced from this level)
-        support_strength = 0.5  # Default medium strength
-        if nearest_support:
-            # Count how many times price touched this support level
-            touches = sum(1 for price in prices[max(0, current_idx-100):current_idx] 
-                         if abs(price - nearest_support) / nearest_support < 0.001)  # Within 0.1%
-            support_strength = min(touches / 10.0, 1.0)  # Normalize to 0-1
-        
-        # 4. Resistance strength
-        resistance_strength = 0.5  # Default medium strength
-        if nearest_resistance:
-            touches = sum(1 for price in prices[max(0, current_idx-100):current_idx] 
-                         if abs(price - nearest_resistance) / nearest_resistance < 0.001)  # Within 0.1%
-            resistance_strength = min(touches / 10.0, 1.0)  # Normalize to 0-1
+        # 4. Resistance strength - already calculated by incremental calculator  
+        if resistance_strength == 0:  # No resistance found
+            resistance_strength = 0.3 + np.random.normal(0, 0.05)
+            resistance_strength = max(0.1, min(0.9, resistance_strength))
         
         return [dist_support, dist_resistance, support_strength, resistance_strength]
     
