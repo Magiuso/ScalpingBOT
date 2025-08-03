@@ -417,7 +417,7 @@ class BacktestRestauro:
             safe_print("📊 Running backtest data loading...")
             if not self.mt5_backtest_runner or not self.unified_system:
                 raise RuntimeError("MT5 runner or unified system not initialized")
-            backtest_success = self.mt5_backtest_runner.run_backtest(self.unified_system)
+            backtest_success = self.mt5_backtest_runner.run_backtest(self.unified_system, self.selected_models)
             
             if not backtest_success:
                 raise RuntimeError("Backtest data loading failed")

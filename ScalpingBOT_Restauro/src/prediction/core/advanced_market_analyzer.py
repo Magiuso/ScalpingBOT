@@ -670,7 +670,7 @@ class AdvancedMarketAnalyzer:
         
         return events[-limit:] if limit else events
     
-    def train_models_on_batch(self, batch_data: Dict[str, Any]) -> Dict[str, Any]:
+    def train_models_on_batch(self, batch_data: Dict[str, Any], selected_models: Optional[List[str]] = None) -> Dict[str, Any]:
         """REAL ML Model Training - Trains neural networks on batch data"""
         batch_size = batch_data.get('count', 0)
         ticks = batch_data.get('ticks', [])
@@ -678,7 +678,15 @@ class AdvancedMarketAnalyzer:
         if not ticks:
             raise ValueError("No tick data provided for training")
         
+        if not selected_models:
+            raise ValueError("selected_models is mandatory - no default training allowed (BIBBIA compliance)")
+        
         print(f"🎓 AdvancedMarketAnalyzer: REAL ML Training on {batch_size:,} ticks...")
+        print(f"🎯 Training ONLY selected models: {selected_models}")
+        
+        # Convert model keys to algorithm names (BIBBIA COMPLIANT)
+        selected_algorithm_names = self._convert_model_keys_to_algorithm_names(selected_models)
+        print(f"🔍 Converted to algorithm names: {selected_algorithm_names}")
         
         # BIBBIA COMPLIANCE: Using only AdaptiveTrainer
         from ...ml.training.adaptive_trainer import AdaptiveTrainer, TrainingConfig, create_adaptive_trainer_config
@@ -711,7 +719,14 @@ class AdvancedMarketAnalyzer:
                         sr_algorithms = self.algorithm_bridge.get_available_algorithms(ModelType.SUPPORT_RESISTANCE)
                         print(f"      📊 Found {len(sr_algorithms)} S/R algorithms: {sr_algorithms}")
                         
-                        for algorithm_name in sr_algorithms:
+                        # Filter only selected S/R algorithms (BIBBIA COMPLIANCE)
+                        selected_sr_algorithms = [alg for alg in sr_algorithms if alg in selected_algorithm_names]
+                        if not selected_sr_algorithms:
+                            print(f"      ⏭️ No S/R algorithms selected - skipping S/R training")
+                        else:
+                            print(f"      🎯 Training ONLY selected S/R algorithms: {selected_sr_algorithms}")
+                        
+                        for algorithm_name in selected_sr_algorithms:
                             try:
                                 print(f"      🎯 Training {algorithm_name}...")
                                 
@@ -849,7 +864,14 @@ class AdvancedMarketAnalyzer:
                         pattern_algorithms = self.algorithm_bridge.get_available_algorithms(ModelType.PATTERN_RECOGNITION)
                         print(f"      📊 Found {len(pattern_algorithms)} Pattern algorithms: {pattern_algorithms}")
                         
-                        for algorithm_name in pattern_algorithms:
+                        # Filter only selected Pattern algorithms (BIBBIA COMPLIANCE)
+                        selected_pattern_algorithms = [alg for alg in pattern_algorithms if alg in selected_algorithm_names]
+                        if not selected_pattern_algorithms:
+                            print(f"      ⏭️ No Pattern algorithms selected - skipping Pattern training")
+                        else:
+                            print(f"      🎯 Training ONLY selected Pattern algorithms: {selected_pattern_algorithms}")
+                        
+                        for algorithm_name in selected_pattern_algorithms:
                             try:
                                 print(f"      🎯 Training {algorithm_name}...")
                                 
@@ -1035,7 +1057,14 @@ class AdvancedMarketAnalyzer:
                         bias_algorithms = self.algorithm_bridge.get_available_algorithms(ModelType.BIAS_DETECTION)
                         print(f"      📊 Found {len(bias_algorithms)} Bias algorithms: {bias_algorithms}")
                         
-                        for algorithm_name in bias_algorithms:
+                        # Filter only selected Bias algorithms (BIBBIA COMPLIANCE)
+                        selected_bias_algorithms = [alg for alg in bias_algorithms if alg in selected_algorithm_names]
+                        if not selected_bias_algorithms:
+                            print(f"      ⏭️ No Bias algorithms selected - skipping Bias training")
+                        else:
+                            print(f"      🎯 Training ONLY selected Bias algorithms: {selected_bias_algorithms}")
+                        
+                        for algorithm_name in selected_bias_algorithms:
                             try:
                                 print(f"      🎯 Training {algorithm_name}...")
                                 
@@ -1171,7 +1200,14 @@ class AdvancedMarketAnalyzer:
                         trend_algorithms = self.algorithm_bridge.get_available_algorithms(ModelType.TREND_ANALYSIS)
                         print(f"      📊 Found {len(trend_algorithms)} Trend algorithms: {trend_algorithms}")
                         
-                        for algorithm_name in trend_algorithms:
+                        # Filter only selected Trend algorithms (BIBBIA COMPLIANCE)
+                        selected_trend_algorithms = [alg for alg in trend_algorithms if alg in selected_algorithm_names]
+                        if not selected_trend_algorithms:
+                            print(f"      ⏭️ No Trend algorithms selected - skipping Trend training")
+                        else:
+                            print(f"      🎯 Training ONLY selected Trend algorithms: {selected_trend_algorithms}")
+                        
+                        for algorithm_name in selected_trend_algorithms:
                             try:
                                 print(f"      🎯 Training {algorithm_name}...")
                                 
@@ -1330,7 +1366,14 @@ class AdvancedMarketAnalyzer:
                         volatility_algorithms = self.algorithm_bridge.get_available_algorithms(ModelType.VOLATILITY_PREDICTION)
                         print(f"      📊 Found {len(volatility_algorithms)} Volatility algorithms: {volatility_algorithms}")
                         
-                        for algorithm_name in volatility_algorithms:
+                        # Filter only selected Volatility algorithms (BIBBIA COMPLIANCE)
+                        selected_volatility_algorithms = [alg for alg in volatility_algorithms if alg in selected_algorithm_names]
+                        if not selected_volatility_algorithms:
+                            print(f"      ⏭️ No Volatility algorithms selected - skipping Volatility training")
+                        else:
+                            print(f"      🎯 Training ONLY selected Volatility algorithms: {selected_volatility_algorithms}")
+                        
+                        for algorithm_name in selected_volatility_algorithms:
                             try:
                                 print(f"      🎯 Training {algorithm_name}...")
                                 
@@ -1668,6 +1711,53 @@ class AdvancedMarketAnalyzer:
         except Exception as e:
             print(f"    ❌ Failed to create model instance for {algorithm_name}: {e}")
             return None
+    
+    def _convert_model_keys_to_algorithm_names(self, model_keys: List[str]) -> List[str]:
+        """Convert model selection keys to algorithm names - BIBBIA COMPLIANT"""
+        
+        # Model key to algorithm name mapping (from model_selection_config.py)
+        key_to_algorithm = {
+            # Support/Resistance
+            "pivot_points": "PivotPoints_Classic",
+            "volume_profile": "VolumeProfile_Advanced", 
+            "lstm_sr": "LSTM_SupportResistance",
+            "statistical_levels": "StatisticalLevels_ML",
+            "transformer_levels": "Transformer_Levels",
+            
+            # Pattern Recognition
+            "cnn_patterns": "CNN_PatternRecognizer",
+            "classical_patterns": "Classical_Patterns",
+            "lstm_sequences": "LSTM_Sequences", 
+            "transformer_patterns": "Transformer_Patterns",
+            "ensemble_patterns": "Ensemble_Patterns",
+            
+            # Bias Detection
+            "sentiment_lstm": "Sentiment_LSTM",
+            "volume_price": "VolumePrice_Analysis",
+            "momentum_ml": "Momentum_ML",
+            "transformer_bias": "Transformer_Bias",
+            "multimodal_bias": "MultiModal_Bias",
+            
+            # Trend Analysis
+            "random_forest_trend": "RandomForest_Trend",
+            "lstm_trend": "LSTM_TrendPrediction",
+            "gradient_boosting_trend": "GradientBoosting_Trend",
+            "transformer_trend": "Transformer_Trend",
+            "ensemble_trend": "Ensemble_Trend",
+            
+            # Volatility Prediction
+            "garch_volatility": "GARCH_Volatility",
+            "lstm_volatility": "LSTM_Volatility",
+            "realized_volatility": "RealizedVolatility_Advanced"
+        }
+        
+        algorithm_names = []
+        for key in model_keys:
+            if key not in key_to_algorithm:
+                raise ValueError(f"Unknown model key '{key}' - no algorithm mapping found (BIBBIA compliance)")
+            algorithm_names.append(key_to_algorithm[key])
+        
+        return algorithm_names
     
     def validate_models_on_batch(self, batch_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Generate predictions using trained models"""

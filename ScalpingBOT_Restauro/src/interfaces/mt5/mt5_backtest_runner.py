@@ -514,7 +514,7 @@ class MT5BacktestRunner:
         self.total_ticks_processed = 0
         self.start_time: Optional[datetime] = None
     
-    def run_backtest(self, analyzer_system) -> bool:
+    def run_backtest(self, analyzer_system, selected_models: Optional[List[str]] = None) -> bool:
         """Run complete backtest - FAIL FAST version"""
         
         if self.is_running:
@@ -550,11 +550,11 @@ class MT5BacktestRunner:
             
             # Determine data processing method
             if self.config.data_source == 'mt5_export':
-                success = self._run_mt5_export_backtest(analyzer_system)
+                success = self._run_mt5_export_backtest(analyzer_system, selected_models)
             elif self.config.data_source == 'csv_file':
-                success = self._run_csv_backtest(analyzer_system)
+                success = self._run_csv_backtest(analyzer_system, selected_models)
             elif self.config.data_source == 'jsonl_file':
-                success = self._run_jsonl_backtest(analyzer_system)
+                success = self._run_jsonl_backtest(analyzer_system, selected_models)
             else:
                 raise ValueError(f"Unsupported data_source: {self.config.data_source}")
             
@@ -594,7 +594,7 @@ class MT5BacktestRunner:
         finally:
             self.is_running = False
     
-    def _run_mt5_export_backtest(self, analyzer_system) -> bool:
+    def _run_mt5_export_backtest(self, analyzer_system, selected_models: Optional[List[str]] = None) -> bool:
         """Run backtest with MT5 data export - with 80% coverage detection"""
         
         # 1. Check for existing files with sufficient coverage
@@ -602,7 +602,7 @@ class MT5BacktestRunner:
         
         if existing_file:
             print(f"📁 Using existing file with sufficient coverage: {os.path.basename(existing_file)}")
-            return self._process_jsonl_file(existing_file, analyzer_system)
+            return self._process_jsonl_file(existing_file, analyzer_system, selected_models)
         
         # 2. No suitable existing file found - export new data
         print("📊 No existing file with sufficient coverage - exporting new data")
@@ -623,9 +623,9 @@ class MT5BacktestRunner:
             raise RuntimeError("Data export failed")
         
         # Now process the exported data
-        return self._process_jsonl_file(export_path, analyzer_system)
+        return self._process_jsonl_file(export_path, analyzer_system, selected_models)
     
-    def _run_csv_backtest(self, analyzer_system) -> bool:
+    def _run_csv_backtest(self, analyzer_system, selected_models: Optional[List[str]] = None) -> bool:
         """Run backtest with CSV file"""
         csv_file = f"./test_analyzer_data/backtest_{self.config.symbol}.csv"
         
@@ -651,8 +651,8 @@ class MT5BacktestRunner:
             batch = tick_data_list[i:i + BATCH_SIZE]
             print(f"🔄 Processing CSV batch: {len(batch):,} ticks")
             
-            # Use training mode for CSV processing
-            self._train_models_on_batch(batch, analyzer_system)
+            # Use training mode for CSV processing with selected models (BIBBIA COMPLIANCE)
+            self._train_models_on_batch(batch, analyzer_system, selected_models)
             ticks_processed += len(batch)
             
             print(f"✅ CSV batch completed: {len(batch):,} ticks processed")
@@ -662,16 +662,16 @@ class MT5BacktestRunner:
         
         return True
     
-    def _run_jsonl_backtest(self, analyzer_system) -> bool:
+    def _run_jsonl_backtest(self, analyzer_system, selected_models: Optional[List[str]] = None) -> bool:
         """Run backtest with JSONL file"""
         jsonl_file = f"./test_analyzer_data/backtest_{self.config.symbol}.jsonl"
         
         if not os.path.exists(jsonl_file):
             raise FileNotFoundError(f"JSONL file not found: {jsonl_file}")
         
-        return self._process_jsonl_file(jsonl_file, analyzer_system)
+        return self._process_jsonl_file(jsonl_file, analyzer_system, selected_models)
     
-    def _process_jsonl_file(self, jsonl_file: str, analyzer_system) -> bool:
+    def _process_jsonl_file(self, jsonl_file: str, analyzer_system, selected_models: Optional[List[str]] = None) -> bool:
         """Process JSONL file: read 100K ticks → process batch → repeat"""
         
         if not os.path.exists(jsonl_file):
@@ -769,8 +769,8 @@ class MT5BacktestRunner:
                     batch_process_start = time.time()
                     
                     if batch_phase == "training":
-                        # Training: only train models, no predictions
-                        self._train_models_on_batch(current_batch, analyzer_system)
+                        # Training: only train models, no predictions with selected models (BIBBIA COMPLIANCE)
+                        self._train_models_on_batch(current_batch, analyzer_system, selected_models)
                         total_training_ticks += len(current_batch)
                     else:
                         # Validation: use trained models for predictions
@@ -821,7 +821,7 @@ class MT5BacktestRunner:
         
         return "training"
     
-    def _train_models_on_batch(self, batch: List[Dict], analyzer_system):
+    def _train_models_on_batch(self, batch: List[Dict], analyzer_system, selected_models: Optional[List[str]] = None):
         """Train ML models on batch data (no predictions)"""
         print(f"🎓 Training models with {len(batch):,} ticks...")
         
@@ -832,9 +832,9 @@ class MT5BacktestRunner:
         if not hasattr(analyzer_system, 'train_on_batch'):
             raise AttributeError("analyzer_system missing required method 'train_on_batch' - cannot train models")
         
-        # Train models on batch data
+        # Train models on batch data with selected models (BIBBIA COMPLIANCE)
         print(f"🧠 Training ML models on {len(training_data['ticks'])} ticks...")
-        result = analyzer_system.train_on_batch(training_data)
+        result = analyzer_system.train_on_batch(training_data, selected_models)
         print(f"✅ ML training completed: {result if result else 'models updated'}")
     
     def _convert_batch_to_ml_data(self, batch: List[Dict]) -> Dict[str, Any]:

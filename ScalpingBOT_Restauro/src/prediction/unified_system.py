@@ -514,7 +514,7 @@ class UnifiedAnalyzerSystem:
         
         return health
     
-    def train_on_batch(self, batch_data: Dict[str, Any]) -> Dict[str, Any]:
+    def train_on_batch(self, batch_data: Dict[str, Any], selected_models: Optional[List[str]] = None) -> Dict[str, Any]:
         """Train ML models on a batch of tick data"""
         if not self.is_running:
             raise RuntimeError("System not running - call start() first")
@@ -526,8 +526,8 @@ class UnifiedAnalyzerSystem:
         print(f"🧠 UnifiedAnalyzerSystem: Training ML models on {batch_size:,} ticks...")
         
         try:
-            # Train models using market analyzer
-            training_result = self.market_analyzer.train_models_on_batch(batch_data)
+            # Train models using market analyzer with selected models (BIBBIA COMPLIANCE)
+            training_result = self.market_analyzer.train_models_on_batch(batch_data, selected_models)
             
             # Update system stats
             with self.system_lock:
