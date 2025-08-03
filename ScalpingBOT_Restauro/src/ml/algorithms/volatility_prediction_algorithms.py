@@ -265,6 +265,77 @@ def create_realized_volatility_predictor(ml_models: Optional[Dict[str, Any]] = N
     """Factory function for realized volatility predictor"""
     return RealizedVolatilityPredictor(ml_models)
 
+class VolatilityPredictionAlgorithms:
+    """
+    Volatility Prediction Algorithms - WRAPPER CLASS
+    
+    Wrapper che gestisce tutti gli algoritmi di predizione volatilità
+    seguendo lo stesso pattern di SupportResistanceAlgorithms
+    """
+    
+    def __init__(self, ml_models: Optional[Dict[str, Any]] = None):
+        """Initialize volatility prediction algorithms"""
+        self.ml_models = ml_models or {}
+        self.algorithm_stats = {
+            'executions': 0,
+            'successful_predictions': 0,
+            'failed_predictions': 0,
+            'last_execution': None
+        }
+    
+    def run_algorithm(self, algorithm_name: str, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute specified volatility prediction algorithm"""
+        from datetime import datetime
+        
+        self.algorithm_stats['executions'] += 1
+        self.algorithm_stats['last_execution'] = datetime.now()
+        
+        try:
+            # FAIL FAST: Validate required market data fields
+            if 'price_history' not in market_data:
+                raise KeyError("Critical field 'price_history' missing from market_data")
+            
+            if algorithm_name == "GARCH_Volatility":
+                algorithm = create_garch_volatility_predictor(self.ml_models)
+            elif algorithm_name == "LSTM_Volatility":
+                algorithm = create_lstm_volatility_predictor(self.ml_models)
+            elif algorithm_name == "Realized_Volatility":
+                algorithm = create_realized_volatility_predictor(self.ml_models)
+            else:
+                raise ValueError(f"Unknown Volatility Prediction algorithm: {algorithm_name}")
+            
+            # Extract price data - FAIL FAST validation
+            prices = np.array(market_data['price_history'])
+            if len(prices) == 0:
+                raise ValueError(f"Empty price history provided to {algorithm_name} - cannot calculate volatility")
+            
+            # Execute algorithm
+            result = algorithm.predict(prices)
+            
+            self.algorithm_stats['successful_predictions'] += 1
+            
+            return {
+                'volatility_forecast': result.data,
+                'confidence': result.confidence,
+                'method': algorithm_name,
+                'algorithm_metadata': result.metadata
+            }
+            
+        except Exception as e:
+            self.algorithm_stats['failed_predictions'] += 1
+            raise PredictionError(algorithm_name, str(e))
+    
+    def get_algorithm_stats(self) -> Dict[str, Any]:
+        """Get algorithm execution statistics"""
+        return self.algorithm_stats.copy()
+
+
+# Factory function following same pattern as other algorithms
+def create_volatility_prediction_algorithms(ml_models: Optional[Dict[str, Any]] = None) -> VolatilityPredictionAlgorithms:
+    """Factory function for volatility prediction algorithms"""
+    return VolatilityPredictionAlgorithms(ml_models)
+
+
 # Algorithm registry for easy access
 VOLATILITY_ALGORITHMS = {
     'garch': create_garch_volatility_predictor,

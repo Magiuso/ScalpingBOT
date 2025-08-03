@@ -129,12 +129,27 @@ class OptimizedTrainingManager:
         
         # Create datasets and data loaders
         # Note: Keep tensors on CPU for DataLoader, they'll be moved to device in training loop
+        
+        # Reshape flattened data back to 3D for LSTM: [batch, seq_len, features_per_timestep]
+        sequence_length = self.pipeline.sequence_length
+        features_per_timestep = self.pipeline.lstm_config.input_size
+        
+        # Ensure data can be reshaped properly
+        expected_flattened_size = sequence_length * features_per_timestep
+        
+        if train_data.shape[1] != expected_flattened_size:
+            raise ValueError(f"Data dimension mismatch: expected {expected_flattened_size}, got {train_data.shape[1]}")
+        
+        # Reshape to 3D
+        train_data_3d = train_data.reshape(-1, sequence_length, features_per_timestep)
+        val_data_3d = val_data.reshape(-1, sequence_length, features_per_timestep)
+        
         train_dataset = TensorDataset(
-            torch.FloatTensor(train_data), 
+            torch.FloatTensor(train_data_3d), 
             torch.FloatTensor(train_targets)
         )
         val_dataset = TensorDataset(
-            torch.FloatTensor(val_data), 
+            torch.FloatTensor(val_data_3d), 
             torch.FloatTensor(val_targets)
         )
         
@@ -261,8 +276,7 @@ class EnhancedLSTMTrainer:
             "pattern_recognition": ModelType.PATTERN_RECOGNITION,
             "bias_detection": ModelType.BIAS_DETECTION,
             "trend_analysis": ModelType.TREND_ANALYSIS,
-            "volatility_prediction": ModelType.VOLATILITY_PREDICTION,
-            "momentum_analysis": ModelType.MOMENTUM_ANALYSIS
+            "volatility_prediction": ModelType.VOLATILITY_PREDICTION
         }
         
         # Map optimization profile string to enum
@@ -293,15 +307,8 @@ class EnhancedLSTMTrainer:
         
         # Override LSTM config with provided parameters
         if self.pipeline.lstm_config is not None:
-            # Per LSTM, l'input_size deve essere il numero di features per timestep
-            # non il numero totale di features
-            sequence_length = self.pipeline.sequence_length  # 50
-            
-            # Se input_size non è divisibile per sequence_length, usa direttamente 4
-            if input_size % sequence_length != 0:
-                features_per_timestep = 4  # Default per support/resistance
-            else:
-                features_per_timestep = input_size // sequence_length
+            # input_size is now the features_per_timestep directly (not total flattened)
+            features_per_timestep = input_size  # Direct assignment - no division needed
             
             self.pipeline.lstm_config.input_size = features_per_timestep
             self.pipeline.lstm_config.hidden_size = hidden_size
@@ -533,26 +540,39 @@ class EnhancedLSTMTrainer:
             X_processed = X_processed[:min_len]
             y_processed = y_processed[:min_len]
         
-        # Reshape se necessario per LSTM
+        # Reshape for LSTM: data comes in flattened format and needs to be 3D
         if X_processed.ndim == 2:
             sequence_length = self.pipeline.sequence_length
-            feature_size = X_processed.shape[1] // sequence_length
+            features_per_timestep = self.pipeline.lstm_config.input_size
+            expected_flattened_size = sequence_length * features_per_timestep
             
-            if X_processed.shape[1] % sequence_length != 0:
-                # Pad or truncate to make it divisible
-                pad_size = sequence_length - (X_processed.shape[1] % sequence_length)
-                X_processed = np.pad(X_processed, ((0, 0), (0, pad_size)), mode='constant')
-                feature_size = X_processed.shape[1] // sequence_length
+            # Validate dimensions match expectation
+            if X_processed.shape[1] != expected_flattened_size:
+                raise ValueError(f"Feature dimension mismatch: expected {expected_flattened_size} "
+                               f"(seq_len={sequence_length} * features={features_per_timestep}), "
+                               f"got {X_processed.shape[1]}")
             
-            X_processed = X_processed.reshape(-1, sequence_length, feature_size)
+            # Reshape to 3D format expected by LSTM
+            X_processed = X_processed.reshape(-1, sequence_length, features_per_timestep)
         
-        # 2. TRAIN/VALIDATION SPLIT
+        # 2. TRAIN/VALIDATION SPLIT with minimum size validation
+        if len(X_processed) < 100:
+            raise ValueError(f"Insufficient training data: {len(X_processed)} samples < 100 minimum")
+        
         split_idx = int(len(X_processed) * (1 - validation_split))
+        
+        # Ensure minimum validation set size
+        if len(X_processed) - split_idx < 10:
+            split_idx = len(X_processed) - 10
         
         X_train, X_val = X_processed[:split_idx], X_processed[split_idx:]
         y_train, y_val = y_processed[:split_idx], y_processed[split_idx:]
         
         print(f"📊 Data split: Train={len(X_train)}, Val={len(X_val)}")
+        
+        # Final validation check
+        if len(X_train) < 50 or len(X_val) < 5:
+            raise ValueError(f"Training/validation split too small: Train={len(X_train)}, Val={len(X_val)}")
         
         # 3. TRAINING OTTIMIZZATO
         print("🎯 Starting optimized training...")
@@ -729,17 +749,20 @@ class EnhancedLSTMTrainer:
         if X_processed.ndim == 1 and len(original_shape) == 2:
             X_processed = X_processed.reshape(original_shape)
         
-        # Reshape for LSTM
+        # Reshape for LSTM prediction: same logic as training
         if X_processed.ndim == 2:
             sequence_length = self.pipeline.sequence_length
-            feature_size = X_processed.shape[1] // sequence_length
+            features_per_timestep = self.pipeline.lstm_config.input_size
+            expected_flattened_size = sequence_length * features_per_timestep
             
-            if X_processed.shape[1] % sequence_length != 0:
-                pad_size = sequence_length - (X_processed.shape[1] % sequence_length)
-                X_processed = np.pad(X_processed, ((0, 0), (0, pad_size)), mode='constant')
-                feature_size = X_processed.shape[1] // sequence_length
+            # Validate dimensions match expectation  
+            if X_processed.shape[1] != expected_flattened_size:
+                raise ValueError(f"Prediction feature dimension mismatch: expected {expected_flattened_size} "
+                               f"(seq_len={sequence_length} * features={features_per_timestep}), "
+                               f"got {X_processed.shape[1]}")
             
-            X_processed = X_processed.reshape(-1, sequence_length, feature_size)
+            # Reshape to 3D format expected by LSTM
+            X_processed = X_processed.reshape(-1, sequence_length, features_per_timestep)
         
         # Convert to tensor
         X_tensor = torch.FloatTensor(X_processed).to(self.device)

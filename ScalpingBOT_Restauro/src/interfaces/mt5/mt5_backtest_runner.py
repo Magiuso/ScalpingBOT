@@ -837,6 +837,61 @@ class MT5BacktestRunner:
         result = analyzer_system.train_on_batch(training_data)
         print(f"✅ ML training completed: {result if result else 'models updated'}")
     
+    def _convert_batch_to_ml_data(self, batch: List[Dict]) -> Dict[str, Any]:
+        """Convert MT5 batch data to ML training format"""
+        if not batch:
+            raise ValueError("Empty batch provided for ML data conversion")
+        
+        # Extract ticks with proper format
+        converted_ticks = []
+        
+        for tick in batch:
+            # Extract fields from MT5 tick format
+            timestamp_str = tick.get('timestamp', '')
+            tick_last = tick.get('last', 0.0)
+            volume = tick.get('volume', 0.0)
+            bid = tick.get('bid', 0.0)
+            ask = tick.get('ask', 0.0)
+            symbol = tick.get('symbol', self.config.symbol)
+            
+            # Calculate price from bid/ask for CFD data (when last=0)
+            try:
+                price = calculate_price_from_bid_ask(tick_last, bid, ask)
+            except ValueError:
+                # Skip ticks with invalid price data
+                continue
+            
+            # Skip invalid ticks
+            if not timestamp_str:
+                continue
+            
+            # Convert to standard format expected by ML algorithms
+            converted_tick = {
+                'timestamp': timestamp_str,
+                'price': float(price),
+                'volume': float(volume),
+                'bid': float(bid) if bid > 0 else None,
+                'ask': float(ask) if ask > 0 else None,
+                'symbol': symbol
+            }
+            
+            converted_ticks.append(converted_tick)
+        
+        if not converted_ticks:
+            raise ValueError("No valid ticks found in batch after conversion")
+        
+        return {
+            'count': len(converted_ticks),
+            'ticks': converted_ticks,
+            'symbol': self.config.symbol,
+            'batch_metadata': {
+                'original_count': len(batch),
+                'converted_count': len(converted_ticks),
+                'first_timestamp': converted_ticks[0]['timestamp'],
+                'last_timestamp': converted_ticks[-1]['timestamp']
+            }
+        }
+    
     def _validate_models_on_batch(self, batch: List[Dict], analyzer_system):
         """Use trained models to make predictions on batch"""
         print(f"🧪 Validating models with {len(batch):,} ticks...")
@@ -852,25 +907,6 @@ class MT5BacktestRunner:
         print(f"🔮 Generating predictions with trained models...")
         predictions = analyzer_system.validate_on_batch(validation_data)
         print(f"✅ Generated {len(predictions) if predictions else 0} predictions")
-    
-    def _convert_batch_to_ml_data(self, batch: List[Dict]) -> Dict[str, Any]:
-        """Convert tick batch to ML training/validation format"""
-        ml_data = {
-            'ticks': [],
-            'timestamps': [],
-            'prices': [],
-            'volumes': [],
-            'count': len(batch)
-        }
-        
-        for tick_data in batch:
-            if tick_data.get('type') == 'tick':
-                ml_data['ticks'].append(tick_data)
-                ml_data['timestamps'].append(tick_data.get('timestamp'))
-                ml_data['prices'].append(tick_data.get('last', 0))
-                ml_data['volumes'].append(tick_data.get('volume', 0))
-        
-        return ml_data
     
     
     def _load_csv_data(self, csv_file: str, symbol: str) -> List[Dict[str, Any]]:

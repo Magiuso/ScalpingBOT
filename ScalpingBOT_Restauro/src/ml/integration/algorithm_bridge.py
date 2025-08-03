@@ -39,6 +39,10 @@ from ..algorithms.trend_analysis_algorithms import (
     TrendAnalysisAlgorithms,
     create_trend_analysis_algorithms
 )
+from ..algorithms.volatility_prediction_algorithms import (
+    VolatilityPredictionAlgorithms,
+    create_volatility_prediction_algorithms
+)
 
 # Import competition system
 from ..models.competition import AlgorithmCompetition
@@ -81,6 +85,7 @@ class AlgorithmBridge:
         self.pattern_algorithms = create_pattern_recognition_algorithms(ml_models)
         self.bias_algorithms = create_bias_detection_algorithms(ml_models)
         self.trend_algorithms = create_trend_analysis_algorithms(ml_models)
+        self.volatility_algorithms = create_volatility_prediction_algorithms(ml_models)
         
         # Algorithm registry: ModelType -> List[algorithm_names]
         self.algorithm_registry = {
@@ -112,9 +117,11 @@ class AlgorithmBridge:
                 "Transformer_Trend",
                 "Ensemble_Trend"
             ],
-            # Placeholder per altri model types
-            ModelType.VOLATILITY_PREDICTION: [],
-            ModelType.MOMENTUM_ANALYSIS: []
+            ModelType.VOLATILITY_PREDICTION: [
+                "GARCH_Volatility",
+                "LSTM_Volatility", 
+                "Realized_Volatility"
+            ]
         }
         
         # Performance tracking
@@ -184,10 +191,9 @@ class AlgorithmBridge:
                 result = self.trend_algorithms.run_algorithm(algorithm_name, market_data)
                 
             elif model_type == ModelType.VOLATILITY_PREDICTION:
-                raise NotImplementedError(f"Volatility prediction algorithms not yet migrated")
-                
-            elif model_type == ModelType.MOMENTUM_ANALYSIS:
-                raise NotImplementedError(f"Momentum analysis algorithms not yet migrated")
+                if algorithm_name not in self.algorithm_registry[ModelType.VOLATILITY_PREDICTION]:
+                    raise ValueError(f"Algorithm {algorithm_name} not available for {model_type.value}")
+                result = self.volatility_algorithms.run_algorithm(algorithm_name, market_data)
                 
             else:
                 raise ValueError(f"Unsupported model type: {model_type.value}")
@@ -306,6 +312,20 @@ class AlgorithmBridge:
                 'method': algorithm_result['method']
             }
             confidence = algorithm_result['trend_confidence']
+            
+        elif model_type == ModelType.VOLATILITY_PREDICTION:
+            if 'volatility_forecast' not in algorithm_result:
+                raise KeyError("Missing required field 'volatility_forecast' from Volatility Prediction algorithm result")
+            if 'method' not in algorithm_result:
+                raise KeyError("Missing required field 'method' from Volatility Prediction algorithm result")
+            if 'confidence' not in algorithm_result:
+                raise KeyError("Missing required field 'confidence' from Volatility Prediction algorithm result")
+            
+            prediction_value = {
+                'volatility_forecast': algorithm_result['volatility_forecast'],
+                'method': algorithm_result['method']
+            }
+            confidence = algorithm_result['confidence']
             
         else:
             # Unknown model type - fail fast
@@ -431,7 +451,8 @@ class AlgorithmBridge:
             'support_resistance': self.sr_algorithms.get_algorithm_stats(),
             'pattern_recognition': self.pattern_algorithms.get_algorithm_stats(),
             'bias_detection': self.bias_algorithms.get_algorithm_stats(),
-            'trend_analysis': self.trend_algorithms.get_algorithm_stats()
+            'trend_analysis': self.trend_algorithms.get_algorithm_stats(),
+            'volatility_prediction': self.volatility_algorithms.get_algorithm_stats()
         }
         
         # Add algorithm counts

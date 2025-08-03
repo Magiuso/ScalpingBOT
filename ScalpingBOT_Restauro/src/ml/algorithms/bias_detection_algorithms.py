@@ -91,6 +91,10 @@ class BiasDetectionAlgorithms:
             raise ModelNotInitializedError('Sentiment_LSTM')
         
         # Prepara features per sentiment
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
+        if 'volume_history' not in market_data:
+            raise KeyError("Critical field 'volume_history' missing from market_data")
         prices = np.array(market_data['price_history'][-30:])
         volumes = np.array(market_data['volume_history'][-30:])
         
@@ -142,6 +146,10 @@ class BiasDetectionAlgorithms:
         Volume-Price Analysis per professional buying/selling pressure
         ESTRATTO IDENTICO da src/Analyzer.py:13447-13520
         """
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
+        if 'volume_history' not in market_data:
+            raise KeyError("Critical field 'volume_history' missing from market_data")
         prices = np.array(market_data['price_history'][-50:])
         volumes = np.array(market_data['volume_history'][-50:])
         
@@ -152,13 +160,18 @@ class BiasDetectionAlgorithms:
             # Volume-Price Trend Analysis
             price_changes = np.diff(prices)
             
+            # Check if all volumes are zero
+            if np.all(volumes == 0):
+                raise InvalidInputError("volume_history", "all zeros", "All volume values are zero - cannot perform volume analysis")
+            
             # Analisi volume su movimenti positivi vs negativi
             positive_volume = np.sum(volumes[1:][price_changes > 0])
             negative_volume = np.sum(volumes[1:][price_changes < 0])
             total_volume = positive_volume + negative_volume
             
             if total_volume == 0:
-                raise InvalidInputError("total_volume", 0, "No volume data available for analysis")
+                # This can happen if all price changes are exactly zero
+                raise InvalidInputError("total_volume", 0, f"No volume data available for analysis - price changes: {np.unique(price_changes)}")
             
             buying_pressure = positive_volume / total_volume
             selling_pressure = negative_volume / total_volume
@@ -237,6 +250,8 @@ class BiasDetectionAlgorithms:
         ML-based Momentum Analysis con multi-timeframe RSI/MACD
         ESTRATTO IDENTICO da src/Analyzer.py:13521-13594
         """
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
         prices = np.array(market_data['price_history'][-100:])
         
         if len(prices) < 100:
@@ -347,6 +362,10 @@ class BiasDetectionAlgorithms:
         if model is None:
             raise ModelNotInitializedError('Transformer_Bias')
         
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
+        if 'volume_history' not in market_data:
+            raise KeyError("Critical field 'volume_history' missing from market_data")
         prices = np.array(market_data['price_history'][-80:])
         volumes = np.array(market_data['volume_history'][-80:])
         

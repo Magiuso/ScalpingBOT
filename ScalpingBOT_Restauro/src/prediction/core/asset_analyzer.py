@@ -101,9 +101,15 @@ class AssetAnalyzer:
             config=self.config
         )
         
-        # Initialize competitions for each model type with correct signature
+        # Initialize competitions for ALL model types - FAIL FAST if any problems
         self.competitions: Dict[ModelType, AlgorithmCompetition] = {}
         for model_type in ModelType:
+            # FAIL FAST: Every ModelType MUST have algorithms - no skip/fallback allowed
+            available_algorithms = self.algorithm_bridge.get_available_algorithms(model_type)
+            if not available_algorithms:
+                raise RuntimeError(f"FAIL FAST: ModelType {model_type.value} has no algorithms available - system integrity compromised")
+            
+            # Create competition - will fail fast if any initialization problems
             self.competitions[model_type] = AlgorithmCompetition(
                 model_type=model_type,
                 asset=self.asset,
@@ -113,6 +119,7 @@ class AssetAnalyzer:
                 emergency_stop=self.emergency_stop_system,
                 config=self.config
             )
+            print(f"✅ Created competition for {model_type.value} with {len(available_algorithms)} algorithms")
         
         # Threading
         self.data_lock = threading.RLock()

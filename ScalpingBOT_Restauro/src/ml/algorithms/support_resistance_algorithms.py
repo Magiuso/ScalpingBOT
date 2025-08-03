@@ -88,6 +88,8 @@ class SupportResistanceAlgorithms:
         Implementazione Pivot Points classici
         ESTRATTO IDENTICO da src/Analyzer.py:12826-12850
         """
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
         prices = market_data['price_history']
         if len(prices) < 20:
             raise InsufficientDataError(required=20, available=len(prices), operation="PivotPoints_Classic")
@@ -119,6 +121,10 @@ class SupportResistanceAlgorithms:
         Volume Profile analysis avanzata
         ESTRATTO IDENTICO da src/Analyzer.py:12852-12893
         """
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
+        if 'volume_history' not in market_data:
+            raise KeyError("Critical field 'volume_history' missing from market_data")
         prices = np.array(market_data['price_history'])
         volumes = np.array(market_data['volume_history'])
         
@@ -172,6 +178,10 @@ class SupportResistanceAlgorithms:
             raise ModelNotInitializedError('LSTM_SupportResistance')
         
         # Prepara input
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
+        if 'volume_history' not in market_data:
+            raise KeyError("Critical field 'volume_history' missing from market_data")
         prices = np.array(market_data['price_history'][-50:])
         volumes = np.array(market_data['volume_history'][-50:])
         
@@ -256,6 +266,8 @@ class SupportResistanceAlgorithms:
         Statistical Levels ML analysis
         ESTRATTO IDENTICO da src/Analyzer.py:12997-13035
         """
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
         prices = np.array(market_data['price_history'])
         
         if len(prices) < 100:
@@ -314,6 +326,10 @@ class SupportResistanceAlgorithms:
             raise ModelNotInitializedError('Transformer_Levels')
         
         # Placeholder per ora - da implementare completamente
+        if 'current_price' not in market_data:
+            raise KeyError("Critical field 'current_price' missing from market_data")
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
         current_price = market_data['current_price']
         price_history = market_data['price_history']
         

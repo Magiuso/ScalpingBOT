@@ -90,6 +90,8 @@ class PatternRecognitionAlgorithms:
         if model is None:
             raise ModelNotInitializedError('CNN_PatternRecognizer')
         
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
         prices = np.array(market_data['price_history'][-100:])
         if len(prices) < 100:
             raise InsufficientDataError(required=100, available=len(prices), operation="CNN_PatternRecognizer")
@@ -158,6 +160,8 @@ class PatternRecognitionAlgorithms:
         Classical Pattern Recognition
         ESTRATTO IDENTICO da src/Analyzer.py:13150-13224
         """
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
         prices = np.array(market_data['price_history'][-50:])
         if len(prices) < 50:
             raise InsufficientDataError(required=50, available=len(prices), operation="Classical_Patterns")
@@ -249,6 +253,8 @@ class PatternRecognitionAlgorithms:
         if model is None:
             raise ModelNotInitializedError('LSTM_Sequences')
         
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
         prices = np.array(market_data['price_history'][-60:])
         if len(prices) < 60:
             raise InsufficientDataError(required=60, available=len(prices), operation="LSTM_Sequences")
@@ -298,6 +304,8 @@ class PatternRecognitionAlgorithms:
         if model is None:
             raise ModelNotInitializedError('Transformer_Patterns')
         
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
         prices = np.array(market_data['price_history'][-80:])
         if len(prices) < 80:
             raise InsufficientDataError(required=80, available=len(prices), operation="Transformer_Patterns")

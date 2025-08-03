@@ -41,10 +41,10 @@ warnings.filterwarnings('ignore')
 class TrainingConfig:
     """Configurazione per AdaptiveTrainer"""
     
-    # Core training settings - AGGRESSIVE LEARNING FOR REAL TRADING
-    initial_learning_rate: float = 1e-2     # MOLTO PIÙ ALTO per forzare apprendimento
-    min_learning_rate: float = 5e-5        # Più alto per evitare plateau
-    max_learning_rate: float = 5e-2        # Molto più aggressivo
+    # Core training settings - STABLE LEARNING FOR LSTM
+    initial_learning_rate: float = 1e-3     # REDUCED for LSTM stability
+    min_learning_rate: float = 1e-5        # Lower minimum for fine-tuning
+    max_learning_rate: float = 5e-3        # Much more conservative
     
     # Batch size settings - ANTI-OVERFITTING
     initial_batch_size: int = 32         # RIDOTTO da 128 per prevenire overfitting
@@ -52,9 +52,9 @@ class TrainingConfig:
     max_batch_size: int = 128            # RIDOTTO da 2048 per stabilità
     batch_size_increment: int = 16       # RIDOTTO da 32 per incrementi graduali
     
-    # Early stopping - PERMETTERE APPRENDIMENTO PROFONDO
-    early_stopping_patience: int = 100   # MOLTO PIÙ ALTO per LSTM learning
-    early_stopping_min_delta: float = 1e-6  # PIÙ SENSIBILE per piccoli miglioramenti
+    # Early stopping - REASONABLE FOR FINANCIAL DATA
+    early_stopping_patience: int = 20   # REDUCED from 100 for financial data
+    early_stopping_min_delta: float = 1e-5  # More reasonable threshold
     early_stopping_restore_best_weights: bool = True
     
     # Learning rate scheduling - OTTIMIZZATO PER APPRENDIMENTO REALE
@@ -63,10 +63,10 @@ class TrainingConfig:
     lr_factor: float = 0.9  # MENO AGGRESSIVO nella riduzione
     lr_cooldown: int = 20   # PIÙ STABILITÀ dopo riduzione LR
     
-    # Training stability - OPTIMIZED FOR LSTM
+    # Training stability - CONSERVATIVE FOR LSTM
     gradient_accumulation_steps: int = 4  # AUMENTATO da 1 per batch virtuali più grandi
-    max_grad_norm: float = 1.0           # AUMENTATO da 0.5 per permettere apprendimento LSTM
-    warmup_steps: int = 100              # AUMENTATO da 50 per stabilizzare LSTM
+    max_grad_norm: float = 0.5           # REDUCED for LSTM stability
+    warmup_steps: int = 200              # INCREASED for better warmup
     
     # Mixed precision
     use_mixed_precision: bool = True
@@ -334,9 +334,9 @@ class AdaptiveTrainer:
         self.optimizer = self._create_optimizer()
         self.lr_scheduler = AdaptiveLRScheduler(self.optimizer, config)
         
-        # Mixed precision - Fix for deprecated API
+        # Mixed precision - Proper device handling
         if config.use_mixed_precision and torch.cuda.is_available():
-            self.scaler = GradScaler('cuda')
+            self.scaler = GradScaler()  # Auto-detects device
         else:
             self.scaler = None
         
@@ -380,14 +380,14 @@ class AdaptiveTrainer:
         # Parameter groups with differential learning rates
         param_groups = []
         
-        # LSTM weight_hh gets 10x higher learning rate (like OptimizedLSTMTrainer)
+        # LSTM weight_hh gets CONSERVATIVE learning rate for stability
         if lstm_weight_hh_params:
             param_groups.append({
                 'params': lstm_weight_hh_params,
-                'lr': self.config.initial_learning_rate * 10.0,  # 10x LR for weight_hh
+                'lr': self.config.initial_learning_rate * 0.5,  # REDUCED from 10x to 0.5x for stability
                 'weight_decay': 1e-5  # Lower weight decay for critical params
             })
-            print(f"✅ Differential LR: weight_hh={self.config.initial_learning_rate * 10.0:.2e}")
+            print(f"✅ Differential LR: weight_hh={self.config.initial_learning_rate * 0.5:.2e}")
         
         # Other LSTM parameters get standard rate
         if lstm_other_params:
@@ -636,8 +636,8 @@ class AdaptiveTrainer:
             print(f"⚠️ Loss explosion detected, reducing LR to {param_group['lr']:.2e}")
         
         if 'gradient_explosion' in instabilities:
-            # Reduce gradient clipping threshold
-            self.config.max_grad_norm *= 0.5
+            # Reduce gradient clipping threshold MORE CONSERVATIVELY
+            self.config.max_grad_norm = max(self.config.max_grad_norm * 0.8, 0.1)  # Don't go below 0.1
             print(f"⚠️ Gradient explosion detected, reducing grad clip to {self.config.max_grad_norm}")
         
         if 'nan_loss' in instabilities:
@@ -685,9 +685,8 @@ class AdaptiveTrainer:
                     # Fix per weight_hh parameters (critical LSTM params)
                     if 'weight_hh' in name:
                         if param_grad_norm < 1e-6:  # Vanishing gradient detected
-                            # Gradient noise injection
-                            noise = torch.randn_like(param.grad) * 1e-6
-                            param.grad.data += noise
+                            # FAIL FAST: Log vanishing gradients without noise injection
+                            print(f"⚠️ Vanishing gradient detected in {name}: {param_grad_norm:.2e}")
                             weight_hh_fixed += 1
                         
                         # Selective clipping with lower threshold for weight_hh

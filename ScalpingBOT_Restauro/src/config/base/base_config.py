@@ -170,8 +170,7 @@ class AnalyzerConfig:
             'pattern_recognition': {'ticks': self.validation_pattern_ticks, 'minutes': self.validation_default_minutes * 2},
             'bias_detection': {'ticks': self.validation_bias_ticks, 'minutes': self.validation_default_minutes // 2},
             'trend_analysis': {'ticks': self.validation_trend_ticks, 'minutes': self.validation_default_minutes * 3},
-            'volatility_prediction': {'ticks': self.validation_sr_ticks + 50, 'minutes': self.validation_default_minutes + 2},
-            'momentum_analysis': {'ticks': self.validation_bias_ticks + 50, 'minutes': self.validation_default_minutes}
+            'volatility_prediction': {'ticks': self.validation_sr_ticks + 50, 'minutes': self.validation_default_minutes + 2}
         }
         
         # FAIL FAST - No default validation map

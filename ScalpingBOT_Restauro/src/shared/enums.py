@@ -21,7 +21,6 @@ class ModelType(Enum):
     BIAS_DETECTION = "bias_detection"
     TREND_ANALYSIS = "trend_analysis"
     VOLATILITY_PREDICTION = "volatility_prediction"
-    MOMENTUM_ANALYSIS = "momentum_analysis"
 
 
 class OptimizationProfile(Enum):

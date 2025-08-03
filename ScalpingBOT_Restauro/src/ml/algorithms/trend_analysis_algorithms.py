@@ -89,6 +89,8 @@ class TrendAnalysisAlgorithms:
         if model is None:
             raise ModelNotInitializedError('RandomForest_Trend')
         
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
         prices = np.array(market_data['price_history'][-100:])
         volumes = np.array(market_data['volume_history'][-100:])
         
@@ -141,6 +143,8 @@ class TrendAnalysisAlgorithms:
         if model is None:
             raise ModelNotInitializedError('LSTM_TrendPrediction')
         
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
         prices = np.array(market_data['price_history'][-60:])
         
         if len(prices) < 60:
@@ -205,6 +209,8 @@ class TrendAnalysisAlgorithms:
         if model is None:
             raise ModelNotInitializedError('GradientBoosting_Trend')
         
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
         prices = np.array(market_data['price_history'][-80:])
         volumes = np.array(market_data['volume_history'][-80:])
         
@@ -257,6 +263,8 @@ class TrendAnalysisAlgorithms:
         if model is None:
             raise ModelNotInitializedError('Transformer_Trend')
         
+        if 'price_history' not in market_data:
+            raise KeyError("Critical field 'price_history' missing from market_data")
         prices = np.array(market_data['price_history'][-100:])
         
         if len(prices) < 100:

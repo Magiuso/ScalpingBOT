@@ -278,6 +278,9 @@ class AdvancedLSTM(nn.Module):
         self.lstm = nn.LSTM(input_size, hidden_size, self.num_layers, 
                            batch_first=True, dropout=dropout, bidirectional=bidirectional)
         
+        # 🔧 CRITICAL FIX: Initialize forget gate bias to 1.0 for LSTM stability
+        self._initialize_lstm_weights()
+        
         # 🔧 FASE 2.2: ADD LAYER NORMALIZATION dopo ogni LSTM layer
         if self.architecture_fixes['layer_norm']:
             self.lstm_layer_norms = nn.ModuleList([
@@ -320,6 +323,23 @@ class AdvancedLSTM(nn.Module):
             logger.debug(f"[{category}] {message}")
         else:
             logger.info(f"[{category}] {message}")
+    
+    def _initialize_lstm_weights(self):
+        """Initialize LSTM weights properly, especially forget gate bias to 1.0"""
+        for name, param in self.lstm.named_parameters():
+            if 'weight_ih' in name:
+                # Initialize input-hidden weights with Xavier uniform
+                torch.nn.init.xavier_uniform_(param)
+            elif 'weight_hh' in name:
+                # Initialize hidden-hidden weights with orthogonal
+                torch.nn.init.orthogonal_(param)
+            elif 'bias' in name:
+                # Initialize all biases to 0, but forget gate bias to 1
+                torch.nn.init.zeros_(param)
+                # LSTM bias layout: [input_gate, forget_gate, cell_gate, output_gate]
+                # Set forget gate bias to 1.0 for each layer
+                n = param.size(0)
+                param.data[n//4:n//2].fill_(1.0)  # forget gate bias = 1.0
     
     def _get_or_create_adapter(self, actual_input_size: int) -> nn.Module:
         """Ottiene o crea un adapter per la dimensione specifica con caching ottimizzato"""
@@ -560,10 +580,10 @@ class AdvancedLSTM(nn.Module):
                 # Reshape per applicare Linear: (batch*seq, features)
                 x_reshaped = x.view(-1, features)
                 
-                # 🛡️ VALIDAZIONE DOPO RESHAPE
+                # 🛡️ FAIL FAST: NaN/Inf detection without silent fixing
                 if torch.isnan(x_reshaped).any() or torch.isinf(x_reshaped).any():
-                    self._log("❌ Tensor contiene NaN/Inf dopo reshape", "tensor_validation", "warning")
-                    x_reshaped = torch.nan_to_num(x_reshaped, nan=0.0, posinf=1.0, neginf=-1.0)
+                    self._log("❌ Tensor contiene NaN/Inf dopo reshape", "tensor_validation", "error")
+                    raise ValueError("Input tensor contains NaN/Inf values - fix data preprocessing instead of masking")
                 
                 # 🛡️ APPLICA ADAPTER CON PROTEZIONE
                 try:

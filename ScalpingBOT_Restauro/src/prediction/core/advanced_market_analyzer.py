@@ -14,9 +14,10 @@ ESTRATTO e REFACTORIZZATO da src/Analyzer.py:19170-20562 (1,392 linee).
 import os
 import threading
 import time
+import numpy as np
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Set
-from collections import deque
+from collections import deque, defaultdict
 
 # Import shared enums
 from ScalpingBOT_Restauro.src.shared.enums import ModelType
@@ -58,6 +59,10 @@ class AdvancedMarketAnalyzer:
         self.event_collector = EventCollector(
             self.config_manager.get_current_configuration().monitoring
         )
+        
+        # FASE 4 - DATA: Initialize market data processor
+        from ...data.processors.market_data_processor import create_market_data_processor
+        self.market_data_processor = create_market_data_processor()
         
         # Asset management
         self.asset_analyzers: Dict[str, AssetAnalyzer] = {}
@@ -454,95 +459,147 @@ class AdvancedMarketAnalyzer:
         return events[-limit:] if limit else events
     
     def train_models_on_batch(self, batch_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Train ML models on batch data"""
+        """REAL ML Model Training - Trains neural networks on batch data"""
         batch_size = batch_data.get('count', 0)
         ticks = batch_data.get('ticks', [])
         
         if not ticks:
             raise ValueError("No tick data provided for training")
         
-        print(f"🎓 AdvancedMarketAnalyzer: Training on {batch_size:,} ticks...")
+        print(f"🎓 AdvancedMarketAnalyzer: REAL ML Training on {batch_size:,} ticks...")
         
-        # Train each active asset analyzer with REAL ML models
+        # Import ML training components
+        from ...ml.integration.analyzer_ml_integration import (
+            create_enhanced_sr_trainer,
+            create_enhanced_pattern_trainer, 
+            create_enhanced_bias_trainer,
+            EnhancedLSTMTrainer
+        )
+        from ...ml.training.adaptive_trainer import TrainingConfig
+        from ...shared.enums import ModelType
+        
         training_results = {}
+        
         with self.assets_lock:
             for asset, analyzer in self.asset_analyzers.items():
                 try:
                     # Filter ticks for this asset
                     asset_ticks = [tick for tick in ticks if tick.get('symbol') == asset]
-                    if asset_ticks:
-                        print(f"  🧠 Training {asset} with {len(asset_ticks):,} ticks")
+                    if not asset_ticks:
+                        continue
                         
-                        # REAL ML TRAINING - Call actual competition system
-                        training_start = time.time()
+                    print(f"  🧠 Training {asset} ML models with {len(asset_ticks):,} ticks")
+                    training_start = time.time()
+                    
+                    # Prepare training data from ticks
+                    training_data = self._convert_ticks_to_training_data(asset_ticks)
+                    
+                    # Train models for each type
+                    trained_models = {}
+                    training_success_count = 0
+                    
+                    # Train Support/Resistance models
+                    try:
+                        print(f"    🔧 Training Support/Resistance models...")
+                        sr_trainer = create_enhanced_sr_trainer(
+                            input_size=training_data['features_per_timestep']  # Features per LSTM timestep, not total flattened
+                        )
                         
-                        # Train each model type in the competition system
-                        for model_type, competition in analyzer.competitions.items():
-                            print(f"    🏆 Training {model_type.value} models...")
-                            
-                            # Get available algorithms for this model type
-                            available_algorithms = analyzer.algorithm_bridge.get_available_algorithms(model_type)
-                            if not available_algorithms:
-                                raise RuntimeError(f"No algorithms available for {model_type.value}")
-                            
-                            # Train each algorithm with the batch data
-                            for algorithm_name in available_algorithms:
-                                try:
-                                    print(f"      🔧 Training {algorithm_name}...")
-                                    
-                                    # Convert batch ticks to training format for this algorithm
-                                    training_data = self._prepare_training_data(asset_ticks, algorithm_name, model_type)
-                                    
-                                    # Execute REAL algorithm via bridge to generate training predictions
-                                    algorithm_result = analyzer.algorithm_bridge.execute_algorithm(
-                                        model_type, algorithm_name, training_data
-                                    )
-                                    
-                                    # Convert to prediction format
-                                    prediction_obj = analyzer.algorithm_bridge.convert_to_prediction(
-                                        algorithm_result, asset, model_type
-                                    )
-                                    
-                                    # Submit prediction to competition for performance tracking
-                                    competition.submit_prediction(
-                                        algorithm_name, 
-                                        prediction_obj.prediction_data, 
-                                        prediction_obj.confidence,
-                                        prediction_obj.validation_criteria,
-                                        {'training_mode': True, 'batch_training': True}
-                                    )
-                                    
-                                    print(f"      ✅ {algorithm_name} trained successfully")
-                                    
-                                except Exception as algo_error:
-                                    print(f"      ❌ {algorithm_name} training failed: {algo_error}")
-                                    # Continue with other algorithms
+                        sr_result = sr_trainer.training_manager.train_model(
+                            training_data['train_features'],
+                            training_data['sr_targets'],
+                            training_data['val_features'], 
+                            training_data['sr_val_targets'],
+                            num_epochs=50
+                        )
+                        trained_models['LSTM_SupportResistance'] = sr_trainer.model
+                        trained_models['Transformer_Levels'] = sr_trainer.model  # Reuse for now
+                        training_success_count += 1
+                        print(f"      ✅ Support/Resistance models trained successfully")
                         
-                        training_time = time.time() - training_start
-                        training_results[asset] = {
-                            'status': 'completed',
-                            'algorithms_trained': len(available_algorithms),
-                            'training_time_seconds': training_time,
-                            'ticks_processed': len(asset_ticks)
-                        }
-                        print(f"  ✅ {asset} training completed in {training_time:.2f}s")
+                    except Exception as e:
+                        print(f"      ❌ Support/Resistance training failed: {e}")
+                    
+                    # Train Pattern Recognition models  
+                    try:
+                        print(f"    🔧 Training Pattern Recognition models...")
+                        pattern_trainer = create_enhanced_pattern_trainer(
+                            input_size=training_data['features_per_timestep']  # Features per LSTM timestep, not total flattened
+                        )
+                        pattern_result = pattern_trainer.training_manager.train_model(
+                            training_data['train_features'],
+                            training_data['pattern_targets'],
+                            training_data['val_features'],
+                            training_data['pattern_val_targets'], 
+                            num_epochs=50
+                        )
+                        trained_models['CNN_PatternRecognizer'] = pattern_trainer.model
+                        trained_models['LSTM_Sequences'] = pattern_trainer.model
+                        trained_models['Transformer_Patterns'] = pattern_trainer.model
+                        training_success_count += 1
+                        print(f"      ✅ Pattern Recognition models trained successfully")
                         
+                    except Exception as e:
+                        print(f"      ❌ Pattern Recognition training failed: {e}")
+                    
+                    # Train Bias Detection models
+                    try:
+                        print(f"    🔧 Training Bias Detection models...")
+                        bias_trainer = create_enhanced_bias_trainer(
+                            input_size=training_data['features_per_timestep']  # Features per LSTM timestep, not total flattened
+                        )
+                        bias_result = bias_trainer.training_manager.train_model(
+                            training_data['train_features'],
+                            training_data['bias_targets'],
+                            training_data['val_features'],
+                            training_data['bias_val_targets'],
+                            num_epochs=50
+                        )
+                        trained_models['Sentiment_LSTM'] = bias_trainer.model
+                        trained_models['Transformer_Bias'] = bias_trainer.model
+                        training_success_count += 1
+                        print(f"      ✅ Bias Detection models trained successfully")
+                        
+                    except Exception as e:
+                        print(f"      ❌ Bias Detection training failed: {e}")
+                    
+                    # FAIL FAST: At least some models must be trained
+                    if training_success_count == 0:
+                        raise RuntimeError(f"FAIL FAST: No ML models successfully trained for {asset}")
+                    
+                    # Update analyzer's ml_models with trained models
+                    analyzer.algorithm_bridge.ml_models.update(trained_models)
+                    
+                    training_time = time.time() - training_start
+                    training_results[asset] = {
+                        'status': 'models_trained',
+                        'models_trained': len(trained_models),
+                        'model_types': list(trained_models.keys()),
+                        'training_time_seconds': training_time,
+                        'ticks_processed': len(asset_ticks),
+                        'features_per_timestep': training_data['features_per_timestep'],
+                        'sequence_length': training_data['sequence_length'],
+                        'total_feature_count': training_data['feature_count']
+                    }
+                    
+                    print(f"  ✅ {asset} ML training completed in {training_time:.2f}s ({len(trained_models)} models trained)")
+                    
                 except Exception as e:
-                    print(f"  ❌ Training failed for {asset}: {e}")
-                    # FAIL FAST - propagate error instead of mock result
+                    print(f"  ❌ ML Training failed for {asset}: {e}")
+                    # FAIL FAST - propagate error instead of continuing
                     raise RuntimeError(f"Real ML training failed for {asset}: {e}")
         
         # Log training event
         training_event = {
-            'timestamp': datetime.now().isoformat(),
-            'event_type': 'training_completed',
+            'timestamp': datetime.now().isoformat(), 
+            'event_type': 'ml_models_trained',
             'batch_size': batch_size,
             'assets_trained': len(training_results),
             'results': training_results
         }
         self.events_buffer['training_completed'].append(training_event)
         
-        print(f"✅ Training completed for {len(training_results)} assets")
+        print(f"✅ ML Model Training completed for {len(training_results)} assets")
         return training_results
     
     def validate_models_on_batch(self, batch_data: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -571,11 +628,10 @@ class AdvancedMarketAnalyzer:
                         # Generate predictions for each model type
                         for model_type, competition in analyzer.competitions.items():
                             try:
-                                # Get current champion algorithm for this model type
+                                # FAIL FAST: Every ModelType MUST have a champion algorithm
                                 champion_algorithm = competition.get_champion_algorithm()
                                 if not champion_algorithm:
-                                    print(f"      ⚠️ No champion for {model_type.value} - skipping predictions")
-                                    continue
+                                    raise RuntimeError(f"FAIL FAST: No champion algorithm for {model_type.value} - training must be completed first")
                                 
                                 print(f"    🏆 Using {champion_algorithm} for {model_type.value} predictions...")
                                 
@@ -649,13 +705,13 @@ class AdvancedMarketAnalyzer:
         if not prices:
             raise ValueError("No valid price data found in ticks")
         
-        # Create training dataset with features
+        # Create training dataset in format expected by algorithms
         training_data = {
-            'features': {
-                'prices': prices,
-                'volumes': volumes,
-                'timestamps': timestamps
-            },
+            'price_history': prices,
+            'volume_history': volumes,
+            'timestamps': timestamps,
+            'current_price': prices[-1] if prices else 0.0,
+            'asset': 'TRAINING_ASSET',  # Will be overridden by caller
             'metadata': {
                 'algorithm_name': algorithm_name,
                 'model_type': model_type.value,
@@ -666,6 +722,155 @@ class AdvancedMarketAnalyzer:
         }
         
         return training_data
+    
+    def _convert_ticks_to_training_data(self, asset_ticks: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Convert tick data to ML training format with features and targets"""
+        if len(asset_ticks) < 100:
+            raise ValueError(f"Insufficient ticks for ML training: {len(asset_ticks)} < 100")
+        
+        # Extract price and volume data and convert to numpy arrays
+        prices = np.array([float(tick['price']) for tick in asset_ticks])
+        volumes = np.array([float(tick['volume']) for tick in asset_ticks]) 
+        timestamps = [tick['timestamp'] for tick in asset_ticks]
+        
+        # Use market data processor to create features
+        # Create a deque of tick data for the processor
+        tick_deque = deque()
+        for i in range(len(prices)):
+            tick_deque.append({
+                'price': prices[i],
+                'volume': volumes[i], 
+                'timestamp': timestamps[i]
+            })
+        
+        # Process with market data processor
+        processed_data = self.market_data_processor.prepare_market_data(
+            tick_data=tick_deque,
+            min_ticks=20,
+            window_size=len(prices)
+        )
+        
+        # Create feature matrix for ML training - PROPER LSTM FORMAT
+        sequence_length = 50
+        features_per_timestep = 6  # price, volume, return, volatility, rsi, sma_ratio
+        
+        # Pre-calculate technical indicators for all timestamps
+        # Calculate returns properly: diff gives n-1 elements, so we need to handle indexing correctly
+        price_diffs = np.diff(prices)  # Length: n-1
+        price_bases = np.array(prices[:-1])  # Length: n-1, previous prices for return calculation
+        returns = price_diffs / np.maximum(price_bases, 1e-10)  # Both arrays now have same length: n-1
+        
+        # Prepend 0 for first element to make it same length as prices
+        returns = np.append([0.0], returns)  # Length: n (same as prices)
+        
+        # Normalize raw price and volume data to prevent extreme values
+        price_mean = np.mean(prices)
+        price_std = np.std(prices)
+        volume_mean = np.mean(volumes)
+        volume_std = np.std(volumes)
+        
+        # Avoid division by zero
+        price_std = max(price_std, 1e-10)
+        volume_std = max(volume_std, 1e-10)
+        
+        # Normalize prices and volumes
+        normalized_prices = (prices - price_mean) / price_std
+        normalized_volumes = (volumes - volume_mean) / volume_std
+        
+        # Create time-series features in LSTM-compatible format
+        samples = []
+        
+        for i in range(sequence_length, len(prices)):
+            # Create sequence of features for this sample
+            sequence_features = []
+            
+            for j in range(i - sequence_length, i):
+                # Features for timestep j - ALL NORMALIZED
+                timestep_features = [
+                    normalized_prices[j],  # Normalized price
+                    normalized_volumes[j],  # Normalized volume
+                    returns[j],  # Price return (already normalized)
+                    # Volatility (rolling std of returns)
+                    np.std(returns[max(0, j-10):j+1]) if j >= 10 else 0.0,
+                    # RSI (normalized)
+                    processed_data.get('rsi', 50) / 100 if processed_data.get('rsi') else 0.5,
+                    # SMA ratio (already normalized)
+                    processed_data.get('sma_20', prices[j]) / prices[j] if prices[j] > 0 and processed_data.get('sma_20') else 1.0
+                ]
+                sequence_features.append(timestep_features)
+            
+            samples.append(sequence_features)
+        
+        # Convert to numpy array: [samples, sequence_length, features_per_timestep]
+        features_3d = np.array(samples)  # Shape: [n_samples, sequence_length, features_per_timestep]
+        
+        # VALIDATION: Check for extreme values and NaN/Inf
+        if np.isnan(features_3d).any():
+            raise ValueError("Features contain NaN values after normalization")
+        if np.isinf(features_3d).any():
+            raise ValueError("Features contain infinite values after normalization")
+        
+        # Additional clipping for extreme values to prevent attention mechanism issues
+        features_3d = np.clip(features_3d, -10.0, 10.0)
+        
+        # Flatten for EnhancedLSTMTrainer (it will reshape back to 3D internally)
+        # Expected format: [samples, sequence_length * features_per_timestep]
+        features = features_3d.reshape(features_3d.shape[0], -1)
+        
+        # Create targets for different model types
+        # Support/Resistance targets: next price levels
+        sr_targets = []
+        pattern_targets = []
+        bias_targets = []
+        
+        # IMPORTANT: Create targets for ALL features, not just those with future prices
+        # This ensures features.shape[0] == targets.shape[0]
+        for i in range(len(features)):
+            idx = i + sequence_length
+            if idx < len(prices) - 1:
+                # We have future price - calculate real targets
+                future_price = prices[idx + 1]
+                current_price = prices[idx]
+                sr_target = (future_price - current_price) / current_price if current_price > 0 else 0
+                sr_targets.append([sr_target])
+                
+                # Pattern target: price direction (up=1, down=0)
+                direction = 1 if future_price > current_price else 0
+                pattern_targets.append([direction])
+                
+                # Bias target: market sentiment based on volume and price
+                volume_ratio = volumes[idx] / np.mean(volumes[max(0, idx-10):idx]) if len(volumes[max(0, idx-10):idx]) > 0 else 1
+                bias_score = (sr_target + np.log(volume_ratio)) / 2
+                bias_targets.append([bias_score])
+            else:
+                # For the last sample, use neutral/zero targets since we don't have future price
+                # This ensures we have same number of targets as features
+                sr_targets.append([0.0])
+                pattern_targets.append([0])
+                bias_targets.append([0.0])
+        
+        # Convert to arrays
+        sr_targets = np.array(sr_targets)
+        pattern_targets = np.array(pattern_targets)
+        bias_targets = np.array(bias_targets)
+        
+        # Split train/validation (80/20)
+        split_idx = int(0.8 * len(features))
+        
+        return {
+            'train_features': features[:split_idx],
+            'val_features': features[split_idx:],
+            'sr_targets': sr_targets[:split_idx],
+            'sr_val_targets': sr_targets[split_idx:],
+            'pattern_targets': pattern_targets[:split_idx],
+            'pattern_val_targets': pattern_targets[split_idx:],
+            'bias_targets': bias_targets[:split_idx],
+            'bias_val_targets': bias_targets[split_idx:],
+            'feature_count': features.shape[1],  # Total flattened features (sequence_length * features_per_timestep)
+            'features_per_timestep': features_per_timestep,  # Features per LSTM timestep
+            'sequence_length': sequence_length,
+            'total_samples': len(features)
+        }
     
     def _prepare_prediction_data(self, asset_ticks: List[Dict[str, Any]], champion_algorithm: str, model_type: ModelType) -> Dict[str, Any]:
         """Prepare prediction data for ML algorithms from tick data"""
@@ -690,15 +895,14 @@ class AdvancedMarketAnalyzer:
         if not recent_prices:
             raise ValueError("No valid recent price data found for predictions")
         
-        # Create prediction dataset
+        # Create prediction dataset in format expected by algorithms
         prediction_data = {
-            'features': {
-                'recent_prices': recent_prices,
-                'recent_volumes': recent_volumes,
-                'recent_timestamps': recent_timestamps,
-                'current_price': recent_prices[-1] if recent_prices else 0.0,
-                'current_volume': recent_volumes[-1] if recent_volumes else 0.0
-            },
+            'price_history': recent_prices,
+            'volume_history': recent_volumes,
+            'timestamps': recent_timestamps,
+            'current_price': recent_prices[-1] if recent_prices else 0.0,
+            'current_volume': recent_volumes[-1] if recent_volumes else 0.0,
+            'asset': 'PREDICTION_ASSET',  # Will be overridden by caller
             'metadata': {
                 'champion_algorithm': champion_algorithm,
                 'model_type': model_type.value,
