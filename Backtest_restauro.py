@@ -778,7 +778,7 @@ def ask_user_for_asset() -> str:
 
 
 def ask_user_for_model_selection(asset_symbol: str) -> List[str]:
-    """Ask user which ML models to train - INTERACTIVE SELECTION"""
+    """Ask user which ML models to train - INTERACTIVE SELECTION WITH LOOP"""
     
     try:
         # Import model selection system
@@ -787,29 +787,43 @@ def ask_user_for_model_selection(asset_symbol: str) -> List[str]:
         # Create model selection manager
         model_manager = create_model_selection_manager()
         
-        # Get interactive selection
-        selected_models = model_manager.get_interactive_selection(asset_symbol)
-        
-        # Validate selection
-        if not model_manager.validate_selection(selected_models):
-            safe_print("❌ Model selection validation failed")
-            sys.exit(1)
-        
-        # Show training summary
-        summary = model_manager.get_training_summary(selected_models, asset_symbol)
-        safe_print(f"\n📋 TRAINING SUMMARY:")
-        safe_print(f"   Asset: {summary['asset_symbol']}")
-        safe_print(f"   Models: {summary['total_models']}")
-        safe_print(f"   Estimated time: {summary['estimated_total_hours']:.1f} hours")
-        safe_print(f"   Complexity: {summary['complexity_breakdown']['low']} low, {summary['complexity_breakdown']['medium']} medium, {summary['complexity_breakdown']['high']} high")
-        
-        # Final confirmation
-        confirm = input(f"\n✅ Proceed with training {summary['total_models']} models? (y/n): ").strip().lower()
-        if confirm != 'y':
-            safe_print("🛑 Training cancelled by user")
-            sys.exit(0)
-        
-        return selected_models
+        # Loop until user confirms a selection
+        while True:
+            try:
+                # Get interactive selection
+                selected_models = model_manager.get_interactive_selection(asset_symbol)
+                
+                # Validate selection
+                if not model_manager.validate_selection(selected_models):
+                    safe_print("❌ Model selection validation failed")
+                    continue  # Try again instead of exiting
+                
+                # Show training summary
+                summary = model_manager.get_training_summary(selected_models, asset_symbol)
+                safe_print(f"\n📋 TRAINING SUMMARY:")
+                safe_print(f"   Asset: {summary['asset_symbol']}")
+                safe_print(f"   Models: {summary['total_models']}")
+                safe_print(f"   Estimated time: {summary['estimated_total_hours']:.1f} hours")
+                safe_print(f"   Complexity: {summary['complexity_breakdown']['low']} low, {summary['complexity_breakdown']['medium']} medium, {summary['complexity_breakdown']['high']} high")
+                
+                # Final confirmation
+                confirm = input(f"\n✅ Proceed with training {summary['total_models']} models? (y/n): ").strip().lower()
+                if confirm == 'y':
+                    return selected_models
+                elif confirm == 'n':
+                    safe_print("🔄 Let's try a different model selection...\n")
+                    continue  # Go back to model selection
+                else:
+                    safe_print("❌ Please answer 'y' or 'n'")
+                    continue
+                    
+            except KeyboardInterrupt:
+                safe_print("\n🛑 Model selection cancelled by user")
+                sys.exit(0)
+            except Exception as e:
+                safe_print(f"❌ Error in model selection: {e}")
+                safe_print("🔄 Let's try again...\n")
+                continue
         
     except ImportError as e:
         raise ImportError(f"Model selection system not available: {e} - Check migrated system integrity")
