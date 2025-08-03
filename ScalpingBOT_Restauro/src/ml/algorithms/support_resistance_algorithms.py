@@ -55,6 +55,17 @@ class SupportResistanceAlgorithms:
             'last_execution': None
         }
     
+    def get_model(self, model_name: str, asset: Optional[str] = None) -> Any:
+        """Get model with asset-specific support - NO FALLBACKS (BIBBIA)"""
+        if not asset:
+            raise ValueError("Asset is mandatory for model loading - no default allowed (BIBBIA compliance)")
+        
+        asset_model_name = f"{asset}_{model_name}"
+        if asset_model_name not in self.ml_models:
+            raise ModelNotInitializedError(f"Asset-specific model '{asset_model_name}' not found")
+        
+        return self.ml_models[asset_model_name]
+    
     def run_algorithm(self, algorithm_name: str, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Esegue algoritmo Support/Resistance specificato
@@ -173,9 +184,9 @@ class SupportResistanceAlgorithms:
         LSTM per Support/Resistance detection
         ESTRATTO IDENTICO da src/Analyzer.py:12895-12996
         """
-        model = self.ml_models.get('LSTM_SupportResistance')
-        if model is None:
-            raise ModelNotInitializedError('LSTM_SupportResistance')
+        # Get asset from market_data for asset-specific model loading
+        asset = market_data.get('asset', 'UNKNOWN')
+        model = self.get_model('LSTM_SupportResistance', asset)
         
         # Prepara input
         if 'price_history' not in market_data:
@@ -321,9 +332,9 @@ class SupportResistanceAlgorithms:
         Transformer-based S/R level detection
         PARTE DI src/Analyzer.py - completare implementazione
         """
-        model = self.ml_models.get('Transformer_Levels')
-        if model is None:
-            raise ModelNotInitializedError('Transformer_Levels')
+        # Get asset from market_data for asset-specific model loading
+        asset = market_data.get('asset', 'UNKNOWN')
+        model = self.get_model('Transformer_Levels', asset)
         
         # Placeholder per ora - da implementare completamente
         if 'current_price' not in market_data:

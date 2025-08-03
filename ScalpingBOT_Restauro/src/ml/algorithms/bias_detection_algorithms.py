@@ -53,6 +53,17 @@ class BiasDetectionAlgorithms:
             'last_execution': None
         }
     
+    def get_model(self, model_name: str, asset: Optional[str] = None) -> Any:
+        """Get model with asset-specific support - NO FALLBACKS (BIBBIA)"""
+        if not asset:
+            raise ValueError("Asset is mandatory for model loading - no default allowed (BIBBIA compliance)")
+        
+        asset_model_name = f"{asset}_{model_name}"
+        if asset_model_name not in self.ml_models:
+            raise ModelNotInitializedError(f"Asset-specific model '{asset_model_name}' not found")
+        
+        return self.ml_models[asset_model_name]
+    
     def run_algorithm(self, algorithm_name: str, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Esegue algoritmo Bias Detection specificato
@@ -86,9 +97,9 @@ class BiasDetectionAlgorithms:
         LSTM Sentiment Analysis per directional bias
         ESTRATTO IDENTICO da src/Analyzer.py:13399-13445
         """
-        model = self.ml_models.get('Sentiment_LSTM')
-        if model is None:
-            raise ModelNotInitializedError('Sentiment_LSTM')
+        # Get asset from market_data for asset-specific model loading
+        asset = market_data.get('asset', 'UNKNOWN')
+        model = self.get_model('Sentiment_LSTM', asset)
         
         # Prepara features per sentiment
         if 'price_history' not in market_data:
@@ -358,9 +369,9 @@ class BiasDetectionAlgorithms:
         Transformer-based Advanced Bias Detection
         ESTRATTO IDENTICO da src/Analyzer.py:13595-13643
         """
-        model = self.ml_models.get('Transformer_Bias')
-        if model is None:
-            raise ModelNotInitializedError('Transformer_Bias')
+        # Get asset from market_data for asset-specific model loading
+        asset = market_data.get('asset', 'UNKNOWN')
+        model = self.get_model('Transformer_Bias', asset)
         
         if 'price_history' not in market_data:
             raise KeyError("Critical field 'price_history' missing from market_data")

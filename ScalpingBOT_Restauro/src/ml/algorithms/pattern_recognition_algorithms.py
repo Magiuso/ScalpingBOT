@@ -53,6 +53,17 @@ class PatternRecognitionAlgorithms:
             'last_execution': None
         }
     
+    def get_model(self, model_name: str, asset: Optional[str] = None) -> Any:
+        """Get model with asset-specific support - NO FALLBACKS (BIBBIA)"""
+        if not asset:
+            raise ValueError("Asset is mandatory for model loading - no default allowed (BIBBIA compliance)")
+        
+        asset_model_name = f"{asset}_{model_name}"
+        if asset_model_name not in self.ml_models:
+            raise ModelNotInitializedError(f"Asset-specific model '{asset_model_name}' not found")
+        
+        return self.ml_models[asset_model_name]
+    
     def run_algorithm(self, algorithm_name: str, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Esegue algoritmo Pattern Recognition specificato
@@ -86,9 +97,9 @@ class PatternRecognitionAlgorithms:
         CNN Pattern Recognition
         ESTRATTO IDENTICO da src/Analyzer.py:13086-13148
         """
-        model = self.ml_models.get('CNN_PatternRecognizer')
-        if model is None:
-            raise ModelNotInitializedError('CNN_PatternRecognizer')
+        # Get asset from market_data for asset-specific model loading
+        asset = market_data.get('asset', 'UNKNOWN')
+        model = self.get_model('CNN_PatternRecognizer', asset)
         
         if 'price_history' not in market_data:
             raise KeyError("Critical field 'price_history' missing from market_data")
@@ -249,9 +260,9 @@ class PatternRecognitionAlgorithms:
         LSTM Sequence Pattern Recognition
         ESTRATTO IDENTICO da src/Analyzer.py:13225-13273
         """
-        model = self.ml_models.get('LSTM_Sequences')
-        if model is None:
-            raise ModelNotInitializedError('LSTM_Sequences')
+        # Get asset from market_data for asset-specific model loading
+        asset = market_data.get('asset', 'UNKNOWN')
+        model = self.get_model('LSTM_Sequences', asset)
         
         if 'price_history' not in market_data:
             raise KeyError("Critical field 'price_history' missing from market_data")
@@ -300,9 +311,9 @@ class PatternRecognitionAlgorithms:
         Transformer Pattern Recognition
         ESTRATTO IDENTICO da src/Analyzer.py:13274-13332
         """
-        model = self.ml_models.get('Transformer_Patterns')
-        if model is None:
-            raise ModelNotInitializedError('Transformer_Patterns')
+        # Get asset from market_data for asset-specific model loading
+        asset = market_data.get('asset', 'UNKNOWN')
+        model = self.get_model('Transformer_Patterns', asset)
         
         if 'price_history' not in market_data:
             raise KeyError("Critical field 'price_history' missing from market_data")

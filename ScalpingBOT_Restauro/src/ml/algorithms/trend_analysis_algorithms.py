@@ -52,6 +52,17 @@ class TrendAnalysisAlgorithms:
             'last_execution': None
         }
     
+    def get_model(self, model_name: str, asset: Optional[str] = None) -> Any:
+        """Get model with asset-specific support - NO FALLBACKS (BIBBIA)"""
+        if not asset:
+            raise ValueError("Asset is mandatory for model loading - no default allowed (BIBBIA compliance)")
+        
+        asset_model_name = f"{asset}_{model_name}"
+        if asset_model_name not in self.ml_models:
+            raise ModelNotInitializedError(f"Asset-specific model '{asset_model_name}' not found")
+        
+        return self.ml_models[asset_model_name]
+    
     def run_algorithm(self, algorithm_name: str, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Esegue algoritmo Trend Analysis specificato
@@ -85,9 +96,9 @@ class TrendAnalysisAlgorithms:
         Random Forest Trend Analysis
         ESTRATTO IDENTICO da src/Analyzer.py:13691-13769
         """
-        model = self.ml_models.get('RandomForest_Trend')
-        if model is None:
-            raise ModelNotInitializedError('RandomForest_Trend')
+        # Get asset from market_data for asset-specific model loading
+        asset = market_data.get('asset', 'UNKNOWN')
+        model = self.get_model('RandomForest_Trend', asset)
         
         if 'price_history' not in market_data:
             raise KeyError("Critical field 'price_history' missing from market_data")
@@ -139,9 +150,9 @@ class TrendAnalysisAlgorithms:
         LSTM Trend Prediction
         ESTRATTO IDENTICO da src/Analyzer.py:13770-13870
         """
-        model = self.ml_models.get('LSTM_TrendPrediction')
-        if model is None:
-            raise ModelNotInitializedError('LSTM_TrendPrediction')
+        # Get asset from market_data for asset-specific model loading
+        asset = market_data.get('asset', 'UNKNOWN')
+        model = self.get_model('LSTM_TrendPrediction', asset)
         
         if 'price_history' not in market_data:
             raise KeyError("Critical field 'price_history' missing from market_data")
@@ -205,9 +216,9 @@ class TrendAnalysisAlgorithms:
         Gradient Boosting Trend Analysis
         ESTRATTO IDENTICO da src/Analyzer.py:13871-13910
         """
-        model = self.ml_models.get('GradientBoosting_Trend')
-        if model is None:
-            raise ModelNotInitializedError('GradientBoosting_Trend')
+        # Get asset from market_data for asset-specific model loading
+        asset = market_data.get('asset', 'UNKNOWN')
+        model = self.get_model('GradientBoosting_Trend', asset)
         
         if 'price_history' not in market_data:
             raise KeyError("Critical field 'price_history' missing from market_data")
@@ -259,9 +270,9 @@ class TrendAnalysisAlgorithms:
         Transformer Trend Analysis
         ESTRATTO IDENTICO da src/Analyzer.py:13911-13951
         """
-        model = self.ml_models.get('Transformer_Trend')
-        if model is None:
-            raise ModelNotInitializedError('Transformer_Trend')
+        # Get asset from market_data for asset-specific model loading
+        asset = market_data.get('asset', 'UNKNOWN')
+        model = self.get_model('Transformer_Trend', asset)
         
         if 'price_history' not in market_data:
             raise KeyError("Critical field 'price_history' missing from market_data")

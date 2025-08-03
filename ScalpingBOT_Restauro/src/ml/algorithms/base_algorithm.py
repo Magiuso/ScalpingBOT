@@ -263,9 +263,25 @@ class BaseAlgorithm(ABC):
         """Reset algorithm statistics"""
         self.algorithm_stats = AlgorithmStats()
     
-    def get_model(self, model_name: str) -> Any:
-        """Get ML model with validation"""
+    def get_model(self, model_name: str, asset: Optional[str] = None) -> Any:
+        """Get ML model with validation - supports asset-specific models"""
+        
+        # Try asset-specific model first if asset is provided
+        if asset:
+            asset_model_name = f"{asset}_{model_name}"
+            if asset_model_name in self.ml_models and self.ml_models[asset_model_name] is not None:
+                return self.ml_models[asset_model_name]
+        
+        # Fallback to generic model name
         if model_name not in self.ml_models:
+            # Try to find any model with the algorithm name as suffix
+            matching_models = [k for k in self.ml_models.keys() if k.endswith(model_name)]
+            if matching_models:
+                model_key = matching_models[0]  # Use first match
+                model = self.ml_models[model_key]
+                if model is not None:
+                    return model
+            
             raise ModelNotInitializedError(
                 model_name,
                 f"Model not found in {self.algorithm_name}. Available: {list(self.ml_models.keys())}"

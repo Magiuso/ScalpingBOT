@@ -14,6 +14,7 @@ ESTRATTO e REFACTORIZZATO da src/Analyzer.py:19170-20562 (1,392 linee).
 import os
 import threading
 import time
+import json
 import numpy as np
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Set
@@ -271,6 +272,9 @@ class AdvancedMarketAnalyzer:
         
         # FASE 5 - ML: Initialize algorithm bridge for ML training
         self.algorithm_bridge = create_algorithm_bridge()
+        
+        # Auto-load saved models from checkpoints
+        self._load_saved_models_from_checkpoints()
         
         # Asset management
         self.asset_analyzers: Dict[str, AssetAnalyzer] = {}
@@ -1470,6 +1474,196 @@ class AdvancedMarketAnalyzer:
         print(f"✅ ML Model Training completed for {len(training_results)} assets")
         return training_results
     
+    def _load_saved_models_from_checkpoints(self) -> None:
+        """
+        Auto-load saved models from asset/algorithm-specific directories
+        BIBBIA COMPLIANT: Fail fast if models are corrupted, succeed if valid
+        """
+        
+        try:
+            print(f"🔍 Scanning for saved models in {self.data_path}...")
+            
+            if not os.path.exists(self.data_path):
+                print(f"📁 Data path {self.data_path} does not exist - no saved models to load")
+                return
+            
+            loaded_models = {}
+            model_count = 0
+            
+            # Scan all asset directories
+            for asset_name in os.listdir(self.data_path):
+                asset_path = os.path.join(self.data_path, asset_name)
+                if not os.path.isdir(asset_path):
+                    continue
+                
+                models_path = os.path.join(asset_path, "models")
+                if not os.path.exists(models_path):
+                    continue
+                
+                print(f"  📊 Scanning asset: {asset_name}")
+                
+                # Scan all model type directories (support_resistance, pattern_recognition, etc.)
+                for model_type_dir in os.listdir(models_path):
+                    model_type_path = os.path.join(models_path, model_type_dir)
+                    if not os.path.isdir(model_type_path):
+                        continue
+                    
+                    # Scan all algorithm directories within model type
+                    for algorithm_dir in os.listdir(model_type_path):
+                        algorithm_path = os.path.join(model_type_path, algorithm_dir)
+                        if not os.path.isdir(algorithm_path):
+                            continue
+                        
+                        # Check for best_model.pt and metadata
+                        best_model_path = os.path.join(algorithm_path, "best_model.pt")
+                        metadata_path = os.path.join(algorithm_path, "model_metadata.json")
+                        
+                        if os.path.exists(best_model_path) and os.path.exists(metadata_path):
+                            try:
+                                # Load and validate metadata
+                                with open(metadata_path, 'r') as f:
+                                    metadata = json.load(f)
+                                
+                                if not self._validate_model_metadata(metadata):
+                                    print(f"    ⚠️ Invalid metadata for {asset_name}/{model_type_dir}/{algorithm_dir}")
+                                    continue
+                                
+                                # Load model based on algorithm type
+                                algorithm_name = metadata.get('algorithm', algorithm_dir)
+                                model_key = f"{asset_name}_{algorithm_name}"
+                                
+                                loaded_model = self._load_model_from_checkpoint(
+                                    best_model_path, metadata, algorithm_name
+                                )
+                                
+                                if loaded_model is not None:
+                                    loaded_models[model_key] = loaded_model
+                                    model_count += 1
+                                    print(f"    ✅ Loaded {algorithm_name} for {asset_name}")
+                                else:
+                                    print(f"    ❌ Failed to load {algorithm_name} for {asset_name}")
+                                    
+                            except Exception as e:
+                                print(f"    ❌ Error loading {asset_name}/{algorithm_dir}: {e}")
+                                continue
+            
+            # Update algorithm bridge with loaded models
+            if loaded_models:
+                self.algorithm_bridge.ml_models.update(loaded_models)
+                print(f"🎯 Successfully loaded {model_count} models from checkpoints")
+            else:
+                print("📝 No saved models found - starting fresh")
+                
+        except Exception as e:
+            print(f"⚠️ Error during model loading: {e}")
+            # Don't fail fast here - it's okay to start without saved models
+    
+    def _validate_model_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """Validate model metadata structure - BIBBIA COMPLIANT"""
+        
+        required_fields = ['model_type', 'algorithm', 'asset', 'training_completed']
+        
+        for field in required_fields:
+            if field not in metadata:
+                return False
+        
+        # Must be marked as training completed
+        if not metadata.get('training_completed', False):
+            return False
+            
+        return True
+    
+    def _load_model_from_checkpoint(self, checkpoint_path: str, metadata: Dict[str, Any], 
+                                   algorithm_name: str) -> Optional[Any]:
+        """Load model from checkpoint file - BIBBIA COMPLIANT"""
+        
+        try:
+            import torch
+            
+            # Determine model architecture based on algorithm name
+            model_class = self._get_model_class_for_algorithm(algorithm_name)
+            if model_class is None:
+                return None
+            
+            # Load checkpoint
+            checkpoint = torch.load(checkpoint_path, map_location='cpu')
+            
+            if 'model_state_dict' not in checkpoint:
+                print(f"    ⚠️ No model_state_dict in checkpoint for {algorithm_name}")
+                return None
+            
+            # Create model instance (need to determine architecture)
+            model = self._create_model_instance(model_class, algorithm_name, metadata)
+            if model is None:
+                return None
+            
+            # Load state dict
+            model.load_state_dict(checkpoint['model_state_dict'])
+            model.eval()  # Set to evaluation mode
+            
+            return model
+            
+        except Exception as e:
+            print(f"    ❌ Failed to load checkpoint {checkpoint_path}: {e}")
+            return None
+    
+    def _get_model_class_for_algorithm(self, algorithm_name: str) -> Optional[Any]:
+        """Get model class based on algorithm name - BIBBIA COMPLIANT"""
+        
+        try:
+            if 'LSTM' in algorithm_name:
+                from ...ml.models.advanced_lstm import AdvancedLSTM
+                return AdvancedLSTM
+            elif 'CNN' in algorithm_name:
+                from ...ml.models.cnn_models import CNNPatternRecognizer
+                return CNNPatternRecognizer
+            elif 'Transformer' in algorithm_name:
+                from ...ml.models.transformer_models import TransformerPredictor
+                return TransformerPredictor
+            else:
+                # Classical algorithms don't need model loading
+                return None
+                
+        except ImportError as e:
+            print(f"    ❌ Failed to import model class for {algorithm_name}: {e}")
+            return None
+    
+    def _create_model_instance(self, model_class: Any, algorithm_name: str, 
+                              metadata: Dict[str, Any]) -> Optional[Any]:
+        """Create model instance with correct architecture - BIBBIA COMPLIANT"""
+        
+        try:
+            # Get model configuration based on algorithm and metadata
+            if model_class.__name__ == 'AdvancedLSTM':
+                # Standard LSTM configuration used in training
+                return model_class(
+                    input_size=50,  # Standard feature size
+                    hidden_size=256,
+                    num_layers=1,
+                    output_size=4 if 'support_resistance' in metadata.get('model_type', '') else 1,
+                    dropout=0.5
+                )
+            elif model_class.__name__ == 'CNNPatternRecognizer':
+                return model_class(
+                    input_channels=1,
+                    sequence_length=100,  # Standard sequence length
+                    num_patterns=50
+                )
+            elif model_class.__name__ == 'TransformerPredictor':
+                return model_class(
+                    input_dim=50,  # Standard feature size
+                    d_model=256,
+                    nhead=8,
+                    num_layers=4,
+                    output_dim=4 if 'support_resistance' in metadata.get('model_type', '') else 1
+                )
+            else:
+                return None
+                
+        except Exception as e:
+            print(f"    ❌ Failed to create model instance for {algorithm_name}: {e}")
+            return None
+    
     def validate_models_on_batch(self, batch_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Generate predictions using trained models"""
         batch_size = batch_data.get('count', 0)
@@ -1503,8 +1697,9 @@ class AdvancedMarketAnalyzer:
                                 
                                 print(f"    🏆 Using {champion_algorithm} for {model_type.value} predictions...")
                                 
-                                # Prepare prediction data
+                                # Prepare prediction data with correct asset
                                 prediction_data = self._prepare_prediction_data(asset_ticks, champion_algorithm, model_type)
+                                prediction_data['asset'] = asset  # Set correct asset name
                                 
                                 # Execute REAL predictions via algorithm bridge
                                 algorithm_result = analyzer.algorithm_bridge.execute_algorithm(

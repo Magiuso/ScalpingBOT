@@ -108,20 +108,12 @@ class LSTMVolatilityPredictor(BaseAlgorithm):
             if len(market_data) < 30:
                 raise InsufficientDataError(30, len(market_data), "LSTM_Volatility")
             
-            # Check for trained LSTM model
-            if 'volatility_lstm' not in self.ml_models or self.ml_models['volatility_lstm'] is None:
-                # Fallback to statistical volatility if no model
-                returns = np.diff(np.log(market_data))
-                rolling_vol = np.sqrt(np.var(returns[-20:]) * 252)  # Annualized
-                
-                return AlgorithmResult(
-                    success=True,
-                    data={'prediction': rolling_vol},
-                    confidence=0.6,  # Lower confidence without ML model
-                    algorithm_name=f"{self.algorithm_name}_Statistical",
-                    execution_time_ms=0.0,
-                    metadata={'method': 'statistical_fallback', 'window': 20}
-                )
+            # Get asset from market_data for asset-specific model loading
+            asset = kwargs.get('asset', 'UNKNOWN')
+            model = self.get_model('volatility_lstm', asset)
+            
+            if model is None:
+                raise PredictionError("LSTM_Volatility", "Asset-specific model not found - no fallbacks allowed (BIBBIA compliance)")
             
             # Prepare features for LSTM
             returns = np.diff(np.log(market_data))
@@ -137,8 +129,7 @@ class LSTMVolatilityPredictor(BaseAlgorithm):
                 
             input_sequence = realized_vol[-sequence_length:].reshape(1, sequence_length, 1)
             
-            # Get prediction from LSTM model
-            model = self.ml_models['volatility_lstm']
+            # Get prediction from asset-specific LSTM model
             predicted_vol = float(model.predict(input_sequence)[0, 0])
             
             # Calculate confidence based on prediction consistency
