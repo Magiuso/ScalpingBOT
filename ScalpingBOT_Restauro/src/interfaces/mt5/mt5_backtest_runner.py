@@ -764,8 +764,13 @@ class MT5BacktestRunner:
                     # Determine batch phase (training or validation)
                     batch_phase = self._determine_batch_phase(current_batch, validation_start_date)
                     
+                    # Calculate temporal progress (BIBBIA COMPLIANT - no fallbacks)
+                    progress_info = self._calculate_temporal_progress(current_batch, validation_start_date, batch_phase)
+                    
                     # Process the batch
                     print(f"🔄 Processing BATCH #{batch_number} ({batch_phase} phase)...")
+                    if progress_info:
+                        print(f"📅 Progress: {progress_info}")
                     batch_process_start = time.time()
                     
                     if batch_phase == "training":
@@ -799,6 +804,13 @@ class MT5BacktestRunner:
             print(f"📚 Training ticks: {total_training_ticks:,}")
             print(f"🧪 Validation ticks: {total_validation_ticks:,}")
             
+            # Temporal summary (BIBBIA COMPLIANT)
+            if validation_start_date:
+                training_days = (validation_start_date - self.config.start_date).days
+                total_days = (self.config.end_date - self.config.start_date).days
+                validation_days = total_days - training_days
+                print(f"📅 Temporal split: {training_days} training days + {validation_days} validation days = {total_days} total days")
+            
             self.total_ticks_processed = total_ticks_processed
             return True
             
@@ -820,6 +832,45 @@ class MT5BacktestRunner:
             return "training" if tick_time < validation_start_date else "validation"
         
         return "training"
+    
+    def _calculate_temporal_progress(self, batch: List[Dict], validation_start_date, batch_phase: str) -> Optional[str]:
+        """Calculate temporal progress for training/validation phases - BIBBIA COMPLIANT"""
+        
+        if not batch or not validation_start_date:
+            return None
+        
+        try:
+            # Get timestamp from middle tick of batch
+            middle_tick = batch[len(batch) // 2]
+            timestamp_str = middle_tick.get('timestamp')
+            if not timestamp_str:
+                return None
+            
+            current_time = parse_mt5_timestamp(timestamp_str)
+            
+            if batch_phase == "training":
+                # Calculate training progress toward validation_start_date
+                days_until_validation = (validation_start_date - current_time).days
+                
+                if days_until_validation <= 0:
+                    return "Training phase COMPLETED - switching to validation"
+                else:
+                    return f"Training: {days_until_validation} days until validation phase"
+            
+            elif batch_phase == "validation":
+                # Calculate validation progress (how far into validation we are)
+                days_into_validation = (current_time - validation_start_date).days
+                
+                if days_into_validation < 0:
+                    return "ERROR: Validation batch before validation start date"
+                else:
+                    return f"Validation: Day {days_into_validation + 1} of validation phase"
+            
+            return None
+            
+        except Exception as e:
+            # BIBBIA COMPLIANCE: Don't hide errors but don't break processing
+            return f"Progress calculation failed: {str(e)}"
     
     def _train_models_on_batch(self, batch: List[Dict], analyzer_system, selected_models: Optional[List[str]] = None):
         """Train ML models on batch data (no predictions)"""
