@@ -309,7 +309,9 @@ class AdaptiveTrainer:
         model.train()
         self.model = model
         self.config = config
-        self.save_dir = Path(save_dir) if save_dir else Path("./training_checkpoints")
+        if not save_dir:
+            raise ValueError("save_dir is mandatory - no default allowed (BIBBIA compliance)")
+        self.save_dir = Path(save_dir)
         self.save_dir.mkdir(exist_ok=True)
         
         # Training state

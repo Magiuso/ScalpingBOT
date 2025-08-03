@@ -35,6 +35,7 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 import traceback
+from typing import List, Optional
 
 # Add ScalpingBOT_Restauro paths for migrated system
 base_path = r"C:\ScalpingBOT"
@@ -111,10 +112,13 @@ class BacktestRestauro:
     ZERO FALLBACK - Uses only migrated modular components
     """
     
-    def __init__(self, test_data_path: str = "./test_analyzer_data", asset_symbol: str = "USTEC"):
+    def __init__(self, test_data_path: str = "./test_analyzer_data", asset_symbol: str = "USTEC", selected_models: Optional[List[str]] = None):
         self.test_data_path = test_data_path
         self.test_start_time = datetime.now()
         self.asset_symbol = asset_symbol  # TRULY MULTIASSET - accepts any symbol
+        if not selected_models:
+            raise ValueError("No models selected for training - model selection is mandatory")
+        self.selected_models = selected_models
         
         # Migrated components
         self.config_manager = None
@@ -135,6 +139,7 @@ class BacktestRestauro:
             'health_metrics': False,
             'error_scenarios': False,
             'multiasset_verification': False,
+            'model_selection_setup': False,
             'details': {}
         }
         
@@ -145,6 +150,7 @@ class BacktestRestauro:
         
         safe_print(f"🧪 Backtest Restauro initialized")
         safe_print(f"📊 Asset Symbol: {self.asset_symbol}")
+        safe_print(f"🎯 Selected Models: {len(self.selected_models)} models")
         safe_print(f"📅 Export period: {self.export_days} days, Training period: {self.learning_days} days")
         safe_print(f"📁 Test data path: {self.test_data_path}")
     
@@ -161,6 +167,11 @@ class BacktestRestauro:
             # FASE 1: Setup Migrated System
             safe_print("\n📋 PHASE 1: MIGRATED SYSTEM SETUP")
             if not await self._test_migrated_system_setup():
+                return False
+            
+            # FASE 1.5: Model Selection Setup
+            safe_print("\n🤖 PHASE 1.5: MODEL SELECTION SETUP")
+            if not await self._test_model_selection_setup():
                 return False
             
             # FASE 2: Asset Configuration (MULTIASSET)
@@ -257,6 +268,45 @@ class BacktestRestauro:
             
         except Exception as e:
             safe_print(f"❌ PHASE 1 FAILED: Migrated system setup error: {e}")
+            return False
+    
+    async def _test_model_selection_setup(self) -> bool:
+        """Test setup del sistema di selezione modelli"""
+        
+        try:
+            # Verify selected models
+            if not self.selected_models:
+                raise ValueError("No models selected for training")
+            
+            safe_print(f"🎯 Selected models: {len(self.selected_models)}")
+            
+            # Import and validate model selection system
+            from ScalpingBOT_Restauro.src.config.domain.model_selection_config import create_model_selection_manager
+            
+            model_manager = create_model_selection_manager()
+            
+            # Validate selection
+            if not model_manager.validate_selection(self.selected_models):
+                raise RuntimeError("Model selection validation failed")
+            
+            # Get training summary
+            summary = model_manager.get_training_summary(self.selected_models, self.asset_symbol)
+            
+            safe_print(f"📊 Training Summary:")
+            safe_print(f"   Total models: {summary['total_models']}")
+            safe_print(f"   Estimated time: {summary['estimated_total_hours']:.1f} hours")
+            safe_print(f"   Complexity: {summary['complexity_breakdown']['low']} low, {summary['complexity_breakdown']['medium']} medium, {summary['complexity_breakdown']['high']} high")
+            
+            # Show models by category
+            for category, models in summary['models_by_category'].items():
+                safe_print(f"   {category.replace('_', ' ').title()}: {len(models)} models")
+            
+            self.test_results['model_selection_setup'] = True
+            safe_print("✅ PHASE 1.5 COMPLETED: Model selection setup successful")
+            return True
+            
+        except Exception as e:
+            safe_print(f"❌ PHASE 1.5 FAILED: Model selection setup error: {e}")
             return False
     
     async def _test_asset_configuration(self) -> bool:
@@ -652,7 +702,7 @@ class BacktestRestauro:
             safe_print(f"⚠️ Cleanup error: {e}")
 
 
-async def run_backtest_restauro(asset_symbol: str = "USTEC") -> bool:
+async def run_backtest_restauro(asset_symbol: str = "USTEC", selected_models: Optional[List[str]] = None) -> bool:
     """
     Esegue test completo del sistema ScalpingBOT_Restauro
     """
@@ -661,13 +711,19 @@ async def run_backtest_restauro(asset_symbol: str = "USTEC") -> bool:
     safe_print("🚀 BACKTEST RESTAURO - MIGRATED SYSTEM TEST")
     safe_print("="*70)
     safe_print(f"📊 Asset: {asset_symbol}")
+    if not selected_models:
+        raise ValueError("No models specified for backtest execution - model selection is mandatory")
+    safe_print(f"🎯 Models: {len(selected_models)}")
     safe_print("📋 CRITERIA: Health >70%, Confidence >70%, Champions active")
     safe_print("🛡️ ERROR TESTING: Mandatory")
     safe_print("♾️ MULTIASSET: Dynamic asset support")
     safe_print("="*70)
     
-    # Create test suite
-    backtest_suite = BacktestRestauro(asset_symbol=asset_symbol)
+    # Create test suite with selected models
+    backtest_suite = BacktestRestauro(
+        asset_symbol=asset_symbol, 
+        selected_models=selected_models
+    )
     
     # Run complete test
     success = await backtest_suite.run_complete_test()
@@ -721,6 +777,46 @@ def ask_user_for_asset() -> str:
             continue
 
 
+def ask_user_for_model_selection(asset_symbol: str) -> List[str]:
+    """Ask user which ML models to train - INTERACTIVE SELECTION"""
+    
+    try:
+        # Import model selection system
+        from ScalpingBOT_Restauro.src.config.domain.model_selection_config import create_model_selection_manager
+        
+        # Create model selection manager
+        model_manager = create_model_selection_manager()
+        
+        # Get interactive selection
+        selected_models = model_manager.get_interactive_selection(asset_symbol)
+        
+        # Validate selection
+        if not model_manager.validate_selection(selected_models):
+            safe_print("❌ Model selection validation failed")
+            sys.exit(1)
+        
+        # Show training summary
+        summary = model_manager.get_training_summary(selected_models, asset_symbol)
+        safe_print(f"\n📋 TRAINING SUMMARY:")
+        safe_print(f"   Asset: {summary['asset_symbol']}")
+        safe_print(f"   Models: {summary['total_models']}")
+        safe_print(f"   Estimated time: {summary['estimated_total_hours']:.1f} hours")
+        safe_print(f"   Complexity: {summary['complexity_breakdown']['low']} low, {summary['complexity_breakdown']['medium']} medium, {summary['complexity_breakdown']['high']} high")
+        
+        # Final confirmation
+        confirm = input(f"\n✅ Proceed with training {summary['total_models']} models? (y/n): ").strip().lower()
+        if confirm != 'y':
+            safe_print("🛑 Training cancelled by user")
+            sys.exit(0)
+        
+        return selected_models
+        
+    except ImportError as e:
+        raise ImportError(f"Model selection system not available: {e} - Check migrated system integrity")
+    except Exception as e:
+        raise RuntimeError(f"Model selection failed: {e} - Cannot proceed without valid model selection")
+
+
 def main():
     """Main function per Backtest Restauro"""
     
@@ -737,9 +833,13 @@ def main():
         asset_symbol = ask_user_for_asset()
         safe_print(f"🎯 Selected asset: {asset_symbol}")
     
+    # Model selection: interactive
+    selected_models = ask_user_for_model_selection(asset_symbol)
+    safe_print(f"🤖 Selected models: {len(selected_models)}")
+    
     # Run test
     try:
-        result = asyncio.run(run_backtest_restauro(asset_symbol))
+        result = asyncio.run(run_backtest_restauro(asset_symbol, selected_models))
     except KeyboardInterrupt:
         safe_print("\n🛑 Test interrupted by user")
         result = False
@@ -756,6 +856,7 @@ def main():
         safe_print("   • Multiasset capabilities verified") 
         safe_print("   • All components integrated")
         safe_print("   • Competition system active")
+        safe_print(f"   • Models tested: {len(selected_models)}")
     else:
         safe_print("\n❌ BACKTEST RESTAURO FAILED")
         safe_print("🔧 Address issues before proceeding")
