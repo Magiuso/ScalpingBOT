@@ -501,8 +501,8 @@ class AdvancedMarketAnalyzer:
                             input_size=training_data['features_per_timestep'],
                             hidden_size=256,
                             num_layers=1,  # Single layer for stability
-                            output_size=2,  # Support and Resistance
-                            dropout=0.3
+                            output_size=4,  # [dist_support, dist_resistance, support_strength, resistance_strength]
+                            dropout=0.5  # Increased for regularization
                         )
                         sr_config = create_adaptive_trainer_config(
                             initial_learning_rate=5e-4,
@@ -515,7 +515,7 @@ class AdvancedMarketAnalyzer:
                         sr_result = sr_trainer.train_model_protected(
                             training_data['train_features'],
                             training_data['sr_targets'],
-                            epochs=50,
+                            epochs=30,  # Reduced to prevent overfitting
                             X_val=training_data['val_features'],
                             y_val=training_data['sr_val_targets']
                         )
@@ -540,7 +540,7 @@ class AdvancedMarketAnalyzer:
                             hidden_size=256,
                             num_layers=1,  # Single layer for stability
                             output_size=1,  # Pattern probability
-                            dropout=0.3
+                            dropout=0.5  # Increased for regularization
                         )
                         pattern_config = create_adaptive_trainer_config(
                             initial_learning_rate=5e-4,
@@ -553,7 +553,7 @@ class AdvancedMarketAnalyzer:
                         pattern_result = pattern_trainer.train_model_protected(
                             training_data['train_features'],
                             training_data['pattern_targets'],
-                            epochs=50,
+                            epochs=30,  # Reduced to prevent overfitting
                             X_val=training_data['val_features'],
                             y_val=training_data['pattern_val_targets']
                         )
@@ -579,7 +579,7 @@ class AdvancedMarketAnalyzer:
                             hidden_size=256,
                             num_layers=1,  # Single layer for stability
                             output_size=1,  # Bias score
-                            dropout=0.3
+                            dropout=0.5  # Increased for regularization
                         )
                         bias_config = create_adaptive_trainer_config(
                             initial_learning_rate=5e-4,
@@ -592,7 +592,7 @@ class AdvancedMarketAnalyzer:
                         bias_result = bias_trainer.train_model_protected(
                             training_data['train_features'],
                             training_data['bias_targets'],
-                            epochs=50,
+                            epochs=30,  # Reduced to prevent overfitting
                             X_val=training_data['val_features'],
                             y_val=training_data['bias_val_targets']
                         )
@@ -872,35 +872,36 @@ class AdvancedMarketAnalyzer:
         print(f"         Features created: {len(features)}")
         print(f"         Sequence length: {sequence_length}")
         
-        # IMPORTANT: Create targets for ALL features, not just those with future prices
-        # This ensures features.shape[0] == targets.shape[0]
+        # 🎯 REAL SUPPORT/RESISTANCE TARGET CALCULATION
+        print(f"      🔧 Calculating REAL S/R levels...")
+        sr_levels = self._calculate_support_resistance_levels(prices)
+        print(f"      📊 Found {len(sr_levels['support'])} support and {len(sr_levels['resistance'])} resistance levels")
+        
+        # Create targets for ALL features
         for i in range(len(features)):
-            idx = i + sequence_length  # idx is the current price index for this feature
-            if idx < len(prices) - 1:
-                # We have future price - calculate real targets
-                future_price = prices[idx + 1]
-                current_price = prices[idx]
-                sr_target = (future_price - current_price) / current_price if current_price > 0 else 0
-                sr_targets.append([sr_target])
-                
-                # Debug first few targets
-                if i < 3:
-                    print(f"         Feature {i}: current_price[{idx}]={current_price:.4f}, future_price[{idx+1}]={future_price:.4f}, target={sr_target:.6f}")
-                
-                # Pattern target: price direction (up=1, down=0)
-                direction = 1 if future_price > current_price else 0
-                pattern_targets.append([direction])
-                
-                # Bias target: market sentiment based on volume and price
-                volume_ratio = volumes[idx] / np.mean(volumes[max(0, idx-10):idx]) if len(volumes[max(0, idx-10):idx]) > 0 else 1
-                bias_score = (sr_target + np.log(volume_ratio)) / 2
-                bias_targets.append([bias_score])
+            idx = i + sequence_length  # Current price index for this feature
+            current_price = prices[idx]
+            
+            # Calculate REAL S/R targets: [dist_support, dist_resistance, support_strength, resistance_strength]
+            sr_target = self._calculate_sr_target(current_price, sr_levels, prices, idx)
+            sr_targets.append(sr_target)
+            
+            # Debug first few targets
+            if i < 3:
+                print(f"         Feature {i}: price={current_price:.4f}")
+                print(f"                    S/R=[dist_support={sr_target[0]:.4f}, dist_resistance={sr_target[1]:.4f}, support_str={sr_target[2]:.3f}, resistance_str={sr_target[3]:.3f}]")
+            
+            # Pattern target: based on S/R context
+            if sr_target[0] < 0.01:  # Near support (within 1%)
+                pattern_targets.append([1])  # Expect bounce up
+            elif sr_target[1] < 0.01:  # Near resistance (within 1%)
+                pattern_targets.append([-1])  # Expect rejection down
             else:
-                # For the last sample, use neutral/zero targets since we don't have future price
-                # This ensures we have same number of targets as features
-                sr_targets.append([0.0])
-                pattern_targets.append([0])
-                bias_targets.append([0.0])
+                pattern_targets.append([0])  # Neutral zone
+            
+            # Bias target: S/R strength difference
+            bias_score = (sr_target[2] - sr_target[3]) / 2  # Support strength - Resistance strength
+            bias_targets.append([bias_score])
         
         # Convert to arrays
         sr_targets = np.array(sr_targets)
@@ -934,6 +935,81 @@ class AdvancedMarketAnalyzer:
             'sequence_length': sequence_length,
             'total_samples': len(features)
         }
+    
+    def _calculate_support_resistance_levels(self, prices) -> Dict[str, List[float]]:
+        """Calculate Support and Resistance levels from price data"""
+        import numpy as np
+        
+        prices_array = np.array(prices)
+        
+        # Find local minima (support levels) and maxima (resistance levels)
+        window = 20  # Look for peaks/valleys in 20-tick windows
+        
+        support_levels = []
+        resistance_levels = []
+        
+        for i in range(window, len(prices_array) - window):
+            window_prices = prices_array[i-window:i+window+1]
+            current_price = prices_array[i]
+            
+            # Support: local minimum
+            if current_price == np.min(window_prices):
+                support_levels.append(current_price)
+            
+            # Resistance: local maximum
+            if current_price == np.max(window_prices):
+                resistance_levels.append(current_price)
+        
+        # Remove duplicates and sort
+        support_levels = sorted(list(set([round(level, 2) for level in support_levels])))
+        resistance_levels = sorted(list(set([round(level, 2) for level in resistance_levels])))
+        
+        return {
+            'support': support_levels,
+            'resistance': resistance_levels
+        }
+    
+    def _calculate_sr_target(self, current_price: float, sr_levels: Dict[str, List[float]], 
+                           prices, current_idx: int) -> List[float]:
+        """Calculate real S/R target: [dist_support, dist_resistance, support_strength, resistance_strength]"""
+        
+        support_levels = sr_levels['support']
+        resistance_levels = sr_levels['resistance']
+        
+        # 1. Distance to nearest support (below current price)
+        nearest_support = None
+        for support in reversed(support_levels):  # Start from highest support
+            if support <= current_price:
+                nearest_support = support
+                break
+        
+        dist_support = (current_price - nearest_support) / current_price if nearest_support else 0.1  # 10% if no support found
+        
+        # 2. Distance to nearest resistance (above current price)
+        nearest_resistance = None
+        for resistance in resistance_levels:  # Start from lowest resistance
+            if resistance >= current_price:
+                nearest_resistance = resistance
+                break
+        
+        dist_resistance = (nearest_resistance - current_price) / current_price if nearest_resistance else 0.1  # 10% if no resistance found
+        
+        # 3. Support strength (how many times price bounced from this level)
+        support_strength = 0.5  # Default medium strength
+        if nearest_support:
+            # Count how many times price touched this support level
+            touches = sum(1 for price in prices[max(0, current_idx-100):current_idx] 
+                         if abs(price - nearest_support) / nearest_support < 0.001)  # Within 0.1%
+            support_strength = min(touches / 10.0, 1.0)  # Normalize to 0-1
+        
+        # 4. Resistance strength
+        resistance_strength = 0.5  # Default medium strength
+        if nearest_resistance:
+            touches = sum(1 for price in prices[max(0, current_idx-100):current_idx] 
+                         if abs(price - nearest_resistance) / nearest_resistance < 0.001)  # Within 0.1%
+            resistance_strength = min(touches / 10.0, 1.0)  # Normalize to 0-1
+        
+        return [dist_support, dist_resistance, support_strength, resistance_strength]
     
     def _prepare_prediction_data(self, asset_ticks: List[Dict[str, Any]], champion_algorithm: str, model_type: ModelType) -> Dict[str, Any]:
         """Prepare prediction data for ML algorithms from tick data"""

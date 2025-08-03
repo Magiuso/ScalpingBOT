@@ -380,7 +380,7 @@ class AdaptiveTrainer:
             param_groups.append({
                 'params': lstm_weight_hh_params,
                 'lr': self.config.initial_learning_rate * 2.0,  # REDUCED multiplier for stability
-                'weight_decay': 1e-5  # Slightly higher weight decay
+                'weight_decay': 1e-3  # INCREASED for anti-overfitting
             })
             print(f"✅ Differential LR: weight_hh={self.config.initial_learning_rate * 2.0:.2e}")
         
@@ -389,7 +389,7 @@ class AdaptiveTrainer:
             param_groups.append({
                 'params': lstm_other_params,
                 'lr': self.config.initial_learning_rate,
-                'weight_decay': 5e-4  # INCREASED from 1e-4 for stronger L2 regularization
+                'weight_decay': 1e-3  # FURTHER INCREASED for anti-overfitting
             })
         
         if attention_params:
@@ -403,7 +403,7 @@ class AdaptiveTrainer:
             param_groups.append({
                 'params': other_params,
                 'lr': self.config.initial_learning_rate * 2.0,
-                'weight_decay': 5e-4  # INCREASED from 1e-4 for stronger L2 regularization
+                'weight_decay': 1e-3  # FURTHER INCREASED for anti-overfitting
             })
         
         # Use AdamW optimizer
