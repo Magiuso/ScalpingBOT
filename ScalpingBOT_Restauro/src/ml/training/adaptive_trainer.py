@@ -850,7 +850,8 @@ class AdaptiveTrainer:
             }
         }
     
-    def train_model_protected(self, X: np.ndarray, y: np.ndarray, epochs: int = 1000) -> Dict[str, Any]:
+    def train_model_protected(self, X: np.ndarray, y: np.ndarray, epochs: int = 1000, 
+                            X_val: Optional[np.ndarray] = None, y_val: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """
         Interfaccia compatibile con OptimizedLSTMTrainer per drop-in replacement
         """
@@ -867,6 +868,14 @@ class AdaptiveTrainer:
             dataset = TensorDataset(X_tensor, y_tensor)
             data_loader = DataLoader(dataset, batch_size=self.config.initial_batch_size, shuffle=True)
             
+            # Create validation loader if validation data provided
+            validation_loader = None
+            if X_val is not None and y_val is not None:
+                X_val_tensor = torch.FloatTensor(X_val).to(device)
+                y_val_tensor = torch.FloatTensor(y_val).to(device)
+                val_dataset = TensorDataset(X_val_tensor, y_val_tensor)
+                validation_loader = DataLoader(val_dataset, batch_size=self.config.initial_batch_size, shuffle=False)
+            
             # Create criterion - HUBER LOSS per robustezza contro outliers
             criterion = torch.nn.HuberLoss(delta=0.1)  # Più robusto di MSE per trading reale
             
@@ -876,7 +885,7 @@ class AdaptiveTrainer:
             
             for epoch in range(epochs):
                 try:
-                    step_result = self.train_step(data_loader, criterion)
+                    step_result = self.train_step(data_loader, criterion, validation_loader)
                     
                     current_loss = step_result['epoch_loss']
                     training_metrics.append({

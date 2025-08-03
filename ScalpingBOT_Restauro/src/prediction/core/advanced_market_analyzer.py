@@ -511,11 +511,13 @@ class AdvancedMarketAnalyzer:
                         )
                         sr_trainer = AdaptiveTrainer(sr_model, sr_config)
                         
-                        # Train model
+                        # Train model with validation data
                         sr_result = sr_trainer.train_model_protected(
                             training_data['train_features'],
                             training_data['sr_targets'],
-                            epochs=50
+                            epochs=50,
+                            X_val=training_data['val_features'],
+                            y_val=training_data['sr_val_targets']
                         )
                         
                         if sr_result['training_completed']:
@@ -547,11 +549,13 @@ class AdvancedMarketAnalyzer:
                         )
                         pattern_trainer = AdaptiveTrainer(pattern_model, pattern_config)
                         
-                        # Train model
+                        # Train model with validation data
                         pattern_result = pattern_trainer.train_model_protected(
                             training_data['train_features'],
                             training_data['pattern_targets'],
-                            epochs=50
+                            epochs=50,
+                            X_val=training_data['val_features'],
+                            y_val=training_data['pattern_val_targets']
                         )
                         
                         if pattern_result['training_completed']:
@@ -584,11 +588,13 @@ class AdvancedMarketAnalyzer:
                         )
                         bias_trainer = AdaptiveTrainer(bias_model, bias_config)
                         
-                        # Train model
+                        # Train model with validation data
                         bias_result = bias_trainer.train_model_protected(
                             training_data['train_features'],
                             training_data['bias_targets'],
-                            epochs=50
+                            epochs=50,
+                            X_val=training_data['val_features'],
+                            y_val=training_data['bias_val_targets']
                         )
                         
                         if bias_result['training_completed']:

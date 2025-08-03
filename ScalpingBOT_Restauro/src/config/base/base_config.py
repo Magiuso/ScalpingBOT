@@ -37,12 +37,12 @@ class AnalyzerConfig:
     emergency_score_decline: float = 0.4  # 🔧 RILASSATO: Declino 40% in 24h (era 25%)
     
     # ========== MODEL TRAINING ==========
-    training_batch_size: int = 128  # Era 32 -> 4x per RTX 3080 optimization
+    training_batch_size: int = 32  # BIBBIA COMPLIANT: Smaller batch for better generalization
     training_epochs: int = 100  # Epoch per training
     training_patience: int = 15  # Early stopping patience
     training_test_split: float = 0.8  # Train/test split ratio
     max_grad_norm: float = 1.0  # 🔧 FIXED: Gradient clipping meno aggressivo per permettere apprendimento
-    learning_rate: float = 1e-3  # 🔧 FIXED: Learning rate aumentato per combattere vanishing gradients
+    learning_rate: float = 5e-4  # 🔧 BIBBIA COMPLIANT: Reduced for stability as per AdaptiveTrainer config
     
     # ========== LSTM CONFIGURATION ==========
     lstm_sequence_length: int = 30  # Lunghezza sequenza LSTM
