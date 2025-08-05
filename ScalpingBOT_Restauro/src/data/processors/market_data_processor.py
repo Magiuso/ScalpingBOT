@@ -105,7 +105,7 @@ class MarketDataProcessor:
             price_history = prices
             volume_history = volumes
             
-            # 🔧 SOLUZIONE: Price changes con finestra dinamica e fallback più intelligente
+            # 🔧 BIBBIA COMPLIANT: Price changes con finestra dinamica - single path solution
             price_change_1m = self._calculate_price_change(prices, current_price, 20, n_ticks)
             price_change_5m = self._calculate_price_change(prices, current_price, 100, n_ticks)
             
@@ -199,7 +199,7 @@ class MarketDataProcessor:
     def _calculate_price_change(self, prices: np.ndarray, current_price: float, 
                                lookback: int, n_ticks: int) -> float:
         """
-        Calcola price change con fallback intelligente
+        Calcola price change con logica adattiva - BIBBIA COMPLIANT
         ESTRATTO da AssetAnalyzer._prepare_market_data()
         """
         if n_ticks > lookback and prices[-lookback] != 0:

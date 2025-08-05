@@ -81,7 +81,10 @@ class GARCHVolatilityPredictor(BaseAlgorithm):
     
     def _execute_algorithm(self, market_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """Execute GARCH volatility prediction algorithm"""
-        result = self.predict(market_data.get('prices', np.array([])), **kwargs)
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback to empty array
+        if 'prices' not in market_data:
+            raise KeyError("FAIL FAST: Missing required field 'prices' in market_data")
+        result = self.predict(market_data['prices'], **kwargs)
         return {'prediction': result.data['prediction'], 'confidence': result.confidence}
     
     def get_algorithm_info(self) -> Dict[str, Any]:
@@ -109,7 +112,10 @@ class LSTMVolatilityPredictor(BaseAlgorithm):
                 raise InsufficientDataError(30, len(market_data), "LSTM_Volatility")
             
             # Get asset from market_data for asset-specific model loading
-            asset = kwargs.get('asset', 'UNKNOWN')
+            # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'UNKNOWN'
+            if 'asset' not in kwargs:
+                raise KeyError("FAIL FAST: Missing required field 'asset' in kwargs")
+            asset = kwargs['asset']
             model = self.get_model('volatility_lstm', asset)
             
             if model is None:
@@ -156,7 +162,10 @@ class LSTMVolatilityPredictor(BaseAlgorithm):
     
     def _execute_algorithm(self, market_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """Execute LSTM volatility prediction algorithm"""
-        result = self.predict(market_data.get('prices', np.array([])), **kwargs)
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback to empty array
+        if 'prices' not in market_data:
+            raise KeyError("FAIL FAST: Missing required field 'prices' in market_data")
+        result = self.predict(market_data['prices'], **kwargs)
         return {'prediction': result.data['prediction'], 'confidence': result.confidence}
     
     def get_algorithm_info(self) -> Dict[str, Any]:
@@ -229,7 +238,10 @@ class RealizedVolatilityPredictor(BaseAlgorithm):
     
     def _execute_algorithm(self, market_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """Execute realized volatility prediction algorithm"""
-        result = self.predict(market_data.get('prices', np.array([])), **kwargs)
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback to empty array
+        if 'prices' not in market_data:
+            raise KeyError("FAIL FAST: Missing required field 'prices' in market_data")
+        result = self.predict(market_data['prices'], **kwargs)
         return {'prediction': result.data['prediction'], 'confidence': result.confidence}
     
     def get_algorithm_info(self) -> Dict[str, Any]:

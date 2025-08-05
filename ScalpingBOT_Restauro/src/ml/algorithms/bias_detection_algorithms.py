@@ -98,7 +98,10 @@ class BiasDetectionAlgorithms:
         ESTRATTO IDENTICO da src/Analyzer.py:13399-13445
         """
         # Get asset from market_data for asset-specific model loading
-        asset = market_data.get('asset', 'UNKNOWN')
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'UNKNOWN'
+        if 'asset' not in market_data:
+            raise KeyError("FAIL FAST: Missing required field 'asset' in market_data")
+        asset = market_data['asset']
         model = self.get_model('Sentiment_LSTM', asset)
         
         # Prepara features per sentiment
@@ -370,7 +373,10 @@ class BiasDetectionAlgorithms:
         ESTRATTO IDENTICO da src/Analyzer.py:13595-13643
         """
         # Get asset from market_data for asset-specific model loading
-        asset = market_data.get('asset', 'UNKNOWN')
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'UNKNOWN'
+        if 'asset' not in market_data:
+            raise KeyError("FAIL FAST: Missing required field 'asset' in market_data")
+        asset = market_data['asset']
         model = self.get_model('Transformer_Bias', asset)
         
         if 'price_history' not in market_data:

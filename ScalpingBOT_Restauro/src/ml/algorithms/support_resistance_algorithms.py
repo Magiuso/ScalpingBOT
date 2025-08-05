@@ -81,18 +81,20 @@ class SupportResistanceAlgorithms:
         self.algorithm_stats['executions'] += 1
         self.algorithm_stats['last_execution'] = datetime.now()
         
-        if algorithm_name == "PivotPoints_Classic":
-            return self._pivot_points_classic(market_data)
-        elif algorithm_name == "VolumeProfile_Advanced":
-            return self._volume_profile_advanced(market_data)
-        elif algorithm_name == "LSTM_SupportResistance":
-            return self._lstm_support_resistance(market_data)
-        elif algorithm_name == "StatisticalLevels_ML":
-            return self._statistical_levels_ml(market_data)
-        elif algorithm_name == "Transformer_Levels":
-            return self._transformer_levels(market_data)
-        else:
-            raise ValueError(f"Unknown Support/Resistance algorithm: {algorithm_name}")
+        # BIBBIA COMPLIANT: Single path lookup - no multiple if/elif alternatives
+        algorithms = {
+            "PivotPoints_Classic": self._pivot_points_classic,
+            "VolumeProfile_Advanced": self._volume_profile_advanced,
+            "LSTM_SupportResistance": self._lstm_support_resistance,
+            "StatisticalLevels_ML": self._statistical_levels_ml,
+            "Transformer_Levels": self._transformer_levels
+        }
+        
+        # BIBBIA COMPLIANT: FAIL FAST if algorithm not found
+        if algorithm_name not in algorithms:
+            raise ValueError(f"FAIL FAST: Unknown Support/Resistance algorithm: {algorithm_name}")
+            
+        return algorithms[algorithm_name](market_data)
     
     def _pivot_points_classic(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -117,14 +119,109 @@ class SupportResistanceAlgorithms:
         support3 = low - 2 * (high - pivot)
         resistance3 = high + 2 * (pivot - low)
         
+        # BIBBIA COMPLIANT: Test-based predictions - validate S/R levels and generate predictions
+        current_price = close
+        
+        # BIBBIA COMPLIANT: Single path linear logic - test which level is about to be tested
+        test_result = self._analyze_level_test(current_price, pivot, support1, support2, support3, resistance1, resistance2, resistance3, market_data)
+        
+        if not test_result['will_test_level']:
+            # No level being tested - return just levels without prediction
+            return {
+                "support_levels": sorted([support3, support2, support1]),
+                "resistance_levels": sorted([resistance1, resistance2, resistance3]),
+                "pivot": pivot,
+                "confidence": 0.75,
+                "method": "Classic_Pivot_Points",
+                "prediction_generated": False,
+                "reason": "No level currently being tested"
+            }
+        
+        # A level is being tested - generate prediction about its validity
         self.algorithm_stats['successful_predictions'] += 1
         
         return {
             "support_levels": sorted([support3, support2, support1]),
             "resistance_levels": sorted([resistance1, resistance2, resistance3]),
             "pivot": pivot,
-            "confidence": 0.75,
-            "method": "Classic_Pivot_Points"
+            "confidence": test_result['confidence'],
+            "method": "Classic_Pivot_Points",
+            # NEW: Test-based prediction fields
+            "test_prediction": test_result['prediction_text'],
+            "level_being_tested": test_result['level_value'],
+            "level_type": test_result['level_type'],
+            "expected_outcome": test_result['expected_outcome'],
+            "prediction_generated": True
+        }
+
+    def _analyze_level_test(self, current_price: float, pivot: float, 
+                           support1: float, support2: float, support3: float,
+                           resistance1: float, resistance2: float, resistance3: float,
+                           market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        BIBBIA COMPLIANT: Analyze if price is testing a S/R level - STATELESS single execution
+        No state persistence, no multiple paths, linear logic only
+        """
+        
+        # BIBBIA COMPLIANT: Define test tolerance (price must be very close to level)
+        test_tolerance = current_price * 0.0005  # 0.05% tolerance for level testing
+        
+        # BIBBIA COMPLIANT: Linear checks - find closest level being tested
+        levels_to_check = [
+            (support1, "Support1", "will_hold"),
+            (support2, "Support2", "will_hold"), 
+            (support3, "Support3", "will_hold"),
+            (resistance1, "Resistance1", "will_hold"),
+            (resistance2, "Resistance2", "will_hold"),
+            (resistance3, "Resistance3", "will_hold"),
+            (pivot, "Pivot", "will_act_as_magnet")
+        ]
+        
+        # BIBBIA COMPLIANT: Find the level currently being tested (closest within tolerance)
+        closest_level = None
+        min_distance = float('inf')
+        
+        for level_value, level_name, expected_behavior in levels_to_check:
+            distance = abs(current_price - level_value)
+            if distance <= test_tolerance and distance < min_distance:
+                min_distance = distance
+                closest_level = {
+                    'level_value': level_value,
+                    'level_type': level_name,
+                    'expected_outcome': expected_behavior,
+                    'distance': distance
+                }
+        
+        if not closest_level:
+            # No level being tested
+            return {
+                'will_test_level': False,
+                'prediction_text': "No level currently being tested",
+                'confidence': 0.0,
+                'level_value': 0.0,
+                'level_type': 'none',
+                'expected_outcome': 'none'
+            }
+        
+        # BIBBIA COMPLIANT: Generate test prediction
+        level_val = closest_level['level_value']
+        level_type = closest_level['level_type']
+        expected = closest_level['expected_outcome']
+        
+        # BIBBIA COMPLIANT: Calculate confidence based on level strength and distance
+        base_confidence = 0.80 if 'Support1' in level_type or 'Resistance1' in level_type else 0.70
+        distance_factor = max(0.1, 1.0 - (closest_level['distance'] / test_tolerance))
+        final_confidence = base_confidence * distance_factor
+        
+        prediction_text = f"Price testing {level_type}@{level_val:.2f} - Expected: {expected}"
+        
+        return {
+            'will_test_level': True,
+            'prediction_text': prediction_text,
+            'confidence': final_confidence,
+            'level_value': level_val,
+            'level_type': level_type,
+            'expected_outcome': expected
         }
     
     def _volume_profile_advanced(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -185,7 +282,10 @@ class SupportResistanceAlgorithms:
         ESTRATTO IDENTICO da src/Analyzer.py:12895-12996
         """
         # Get asset from market_data for asset-specific model loading
-        asset = market_data.get('asset', 'UNKNOWN')
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'UNKNOWN'
+        if 'asset' not in market_data:
+            raise KeyError("FAIL FAST: Missing required field 'asset' in market_data")
+        asset = market_data['asset']
         model = self.get_model('LSTM_SupportResistance', asset)
         
         # Prepara input
@@ -333,7 +433,10 @@ class SupportResistanceAlgorithms:
         PARTE DI src/Analyzer.py - completare implementazione
         """
         # Get asset from market_data for asset-specific model loading
-        asset = market_data.get('asset', 'UNKNOWN')
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'UNKNOWN'
+        if 'asset' not in market_data:
+            raise KeyError("FAIL FAST: Missing required field 'asset' in market_data")
+        asset = market_data['asset']
         model = self.get_model('Transformer_Levels', asset)
         
         # Placeholder per ora - da implementare completamente

@@ -98,7 +98,10 @@ class PatternRecognitionAlgorithms:
         ESTRATTO IDENTICO da src/Analyzer.py:13086-13148
         """
         # Get asset from market_data for asset-specific model loading
-        asset = market_data.get('asset', 'UNKNOWN')
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'UNKNOWN'
+        if 'asset' not in market_data:
+            raise KeyError("FAIL FAST: Missing required field 'asset' in market_data")
+        asset = market_data['asset']
         model = self.get_model('CNN_PatternRecognizer', asset)
         
         if 'price_history' not in market_data:
@@ -261,7 +264,10 @@ class PatternRecognitionAlgorithms:
         ESTRATTO IDENTICO da src/Analyzer.py:13225-13273
         """
         # Get asset from market_data for asset-specific model loading
-        asset = market_data.get('asset', 'UNKNOWN')
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'UNKNOWN'
+        if 'asset' not in market_data:
+            raise KeyError("FAIL FAST: Missing required field 'asset' in market_data")
+        asset = market_data['asset']
         model = self.get_model('LSTM_Sequences', asset)
         
         if 'price_history' not in market_data:
@@ -312,7 +318,10 @@ class PatternRecognitionAlgorithms:
         ESTRATTO IDENTICO da src/Analyzer.py:13274-13332
         """
         # Get asset from market_data for asset-specific model loading
-        asset = market_data.get('asset', 'UNKNOWN')
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'UNKNOWN'
+        if 'asset' not in market_data:
+            raise KeyError("FAIL FAST: Missing required field 'asset' in market_data")
+        asset = market_data['asset']
         model = self.get_model('Transformer_Patterns', asset)
         
         if 'price_history' not in market_data:

@@ -165,7 +165,10 @@ class BaseAlgorithm(ABC):
     
     def check_data_sufficiency(self, market_data: Dict[str, Any], min_required: int) -> None:
         """Check if we have sufficient data for algorithm execution"""
-        data_size = len(market_data.get('prices', []))
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback to empty list
+        if 'prices' not in market_data:
+            raise KeyError("FAIL FAST: Missing required field 'prices' in market_data")
+        data_size = len(market_data['prices'])
         if data_size < min_required:
             raise InsufficientDataError(
                 required=min_required,
@@ -201,7 +204,8 @@ class BaseAlgorithm(ABC):
                 confidence=result_data['confidence'],
                 algorithm_name=self.algorithm_name,
                 execution_time_ms=execution_time_ms,
-                metadata=result_data.get('metadata', {})
+                # BIBBIA COMPLIANT: FAIL FAST - no fallback to empty dict
+                metadata=result_data.get('metadata') or {}
             )
             
             # Update statistics

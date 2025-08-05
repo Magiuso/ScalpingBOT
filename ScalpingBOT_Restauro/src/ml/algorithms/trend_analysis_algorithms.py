@@ -97,7 +97,10 @@ class TrendAnalysisAlgorithms:
         ESTRATTO IDENTICO da src/Analyzer.py:13691-13769
         """
         # Get asset from market_data for asset-specific model loading
-        asset = market_data.get('asset', 'UNKNOWN')
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'UNKNOWN'
+        if 'asset' not in market_data:
+            raise KeyError("FAIL FAST: Missing required field 'asset' in market_data")
+        asset = market_data['asset']
         model = self.get_model('RandomForest_Trend', asset)
         
         if 'price_history' not in market_data:
@@ -151,7 +154,10 @@ class TrendAnalysisAlgorithms:
         ESTRATTO IDENTICO da src/Analyzer.py:13770-13870
         """
         # Get asset from market_data for asset-specific model loading
-        asset = market_data.get('asset', 'UNKNOWN')
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'UNKNOWN'
+        if 'asset' not in market_data:
+            raise KeyError("FAIL FAST: Missing required field 'asset' in market_data")
+        asset = market_data['asset']
         model = self.get_model('LSTM_TrendPrediction', asset)
         
         if 'price_history' not in market_data:
@@ -217,7 +223,10 @@ class TrendAnalysisAlgorithms:
         ESTRATTO IDENTICO da src/Analyzer.py:13871-13910
         """
         # Get asset from market_data for asset-specific model loading
-        asset = market_data.get('asset', 'UNKNOWN')
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'UNKNOWN'
+        if 'asset' not in market_data:
+            raise KeyError("FAIL FAST: Missing required field 'asset' in market_data")
+        asset = market_data['asset']
         model = self.get_model('GradientBoosting_Trend', asset)
         
         if 'price_history' not in market_data:
@@ -271,7 +280,10 @@ class TrendAnalysisAlgorithms:
         ESTRATTO IDENTICO da src/Analyzer.py:13911-13951
         """
         # Get asset from market_data for asset-specific model loading
-        asset = market_data.get('asset', 'UNKNOWN')
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'UNKNOWN'
+        if 'asset' not in market_data:
+            raise KeyError("FAIL FAST: Missing required field 'asset' in market_data")
+        asset = market_data['asset']
         model = self.get_model('Transformer_Trend', asset)
         
         if 'price_history' not in market_data:

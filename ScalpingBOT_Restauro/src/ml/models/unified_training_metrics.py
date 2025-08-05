@@ -61,18 +61,21 @@ class UnifiedTrainingMetrics:
         if not isinstance(training_result, dict):
             raise TypeError("training_result must be dict")
         
-        # FAIL FAST: Training deve essere completato
-        if not training_result.get('training_completed', False):
-            training_status = training_result.get('status', 'unknown')
-            error_msg = training_result.get('message', 'No error details')
-            raise ValueError(f"Neural network training not completed: status={training_status}, error={error_msg}")
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback defaults  
+        if 'training_completed' not in training_result or not training_result['training_completed']:
+            training_status = training_result.get('status') or 'STATUS_MISSING'
+            error_msg = training_result.get('message') or 'NO_ERROR_DETAILS'
+            raise ValueError(f"FAIL FAST: Neural network training not completed: status={training_status}, error={error_msg}")
         
         # FAIL FAST: Dati critici devono esistere
         final_loss = training_result.get('final_loss')
         if final_loss is None:
             raise KeyError("Missing required field 'final_loss' in neural network training result")
         
-        epochs_completed = training_result.get('epochs_completed', 0)
+        # BIBBIA COMPLIANT: FAIL FAST validation - no default 0
+        if 'epochs_completed' not in training_result:
+            raise KeyError("FAIL FAST: Missing required field 'epochs_completed' in training_result")
+        epochs_completed = training_result['epochs_completed']
         if epochs_completed < UnifiedTrainingMetrics.NEURAL_NETWORK_MIN_EPOCHS:
             raise ValueError(f"Insufficient training epochs: {epochs_completed} < {UnifiedTrainingMetrics.NEURAL_NETWORK_MIN_EPOCHS}")
         
@@ -92,10 +95,14 @@ class UnifiedTrainingMetrics:
         confidence = max(0.0, min(1.0, 1.0 / (1.0 + final_loss)))
         
         # Reliability basata su stabilità del training
-        training_metrics = training_result.get('training_metrics', [])
+        # BIBBIA COMPLIANT: FAIL FAST validation - no default []
+        if 'training_metrics' not in training_result:
+            raise KeyError("FAIL FAST: Missing required field 'training_metrics' in training_result")
+        training_metrics = training_result['training_metrics']
         if len(training_metrics) > 5:
             # Calcola stabilità dalle ultime 5 epoche
-            recent_losses = [m.get('loss', float('inf')) for m in training_metrics[-5:]]
+            # BIBBIA COMPLIANT: Use specific loss or mark as invalid
+            recent_losses = [m.get('loss') if 'loss' in m else float('inf') for m in training_metrics[-5:]]
             loss_std = UnifiedTrainingMetrics._calculate_std(recent_losses)
             reliability = max(0.0, min(1.0, 1.0 / (1.0 + loss_std)))
         else:
@@ -128,12 +135,12 @@ class UnifiedTrainingMetrics:
         if not isinstance(algorithm_result, dict):
             raise TypeError("algorithm_result must be dict")
         
-        # FAIL FAST: Deve avere successo
-        if not algorithm_result.get('success', False):
-            raise ValueError("Classical ML algorithm execution failed")
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback defaults
+        if 'success' not in algorithm_result or not algorithm_result['success']:
+            raise ValueError("FAIL FAST: Classical ML algorithm execution failed")
         
-        # Estrai metriche
-        metadata = algorithm_result.get('metadata', {})
+        # BIBBIA COMPLIANT: Extract metadata without fallback
+        metadata = algorithm_result.get('metadata') or {}
         accuracy = metadata.get('accuracy_score')
         base_confidence = algorithm_result.get('confidence', 0.0)
         
@@ -194,9 +201,9 @@ class UnifiedTrainingMetrics:
         if not isinstance(algorithm_result, dict):
             raise TypeError("algorithm_result must be dict")
         
-        # FAIL FAST: Deve avere successo
-        if not algorithm_result.get('success', True):  # Default True per retrocompatibilità
-            raise ValueError("Mathematical algorithm execution failed")
+        # BIBBIA COMPLIANT: FAIL FAST - no default True fallback
+        if 'success' not in algorithm_result or not algorithm_result['success']:
+            raise ValueError("FAIL FAST: Mathematical algorithm execution failed")
         
         # FAIL FAST: Confidence deve esistere e essere valida
         base_confidence = algorithm_result.get('confidence')

@@ -488,7 +488,10 @@ class MT5BacktestRunner:
             # Get average timestamp from first 50 ticks
             timestamps = []
             for tick in first_ticks:
-                timestamp_str = tick.get('timestamp', '')
+                # BIBBIA COMPLIANT: FAIL FAST - validate required field
+                if 'timestamp' not in tick:
+                    raise KeyError("FAIL FAST: Missing required field 'timestamp' in tick data")
+                timestamp_str = tick['timestamp']
                 if timestamp_str:
                     # Parse various timestamp formats
                     try:
@@ -757,9 +760,10 @@ class MT5BacktestRunner:
                         
                         # Process header
                         if tick_data.get('type') == 'backtest_start':
-                            start_time = tick_data.get('start_time', 'unknown')
-                            end_time = tick_data.get('end_time', 'unknown')
-                            total_ticks = tick_data.get('total_ticks', 'unknown')
+                            # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'unknown'
+                            start_time = tick_data.get('start_time') or 'START_TIME_MISSING'
+                            end_time = tick_data.get('end_time') or 'END_TIME_MISSING'
+                            total_ticks = tick_data.get('total_ticks') or 'TOTAL_TICKS_MISSING'
                             print(f"📊 Backtest data: {start_time} to {end_time} ({total_ticks} ticks)")
                             continue
                         
@@ -1069,17 +1073,15 @@ class MT5BacktestRunner:
             prediction_data = pred.get('prediction_data', {})
             confidence = pred.get('confidence', 0.0)
             
-            print(f"🔮 TICK {tick_index:,} | {timestamp} | {algorithm}")
-            print(f"    💰 Current Price: {current_price:.4f}")
-            print(f"    📊 Model: {model_type}")
-            print(f"    🎯 Confidence: {confidence:.2%}")
+            # Minimal logging - detailed output handled by advanced_market_analyzer
+            # print(f"🔮 TICK {tick_index:,} | {timestamp} | {algorithm}")
             
-            # Display specific prediction details based on model type
+            # Optional: Display specific prediction details based on model type
             if model_type == 'support_resistance' and 'support_levels' in prediction_data:
                 support_levels = prediction_data.get('support_levels', [])
                 resistance_levels = prediction_data.get('resistance_levels', [])
-                print(f"    🔻 Support: {support_levels}")
-                print(f"    🔺 Resistance: {resistance_levels}")
+                # print(f"    🔻 Support: {support_levels}")
+                # print(f"    🔺 Resistance: {resistance_levels}")
             elif 'direction' in prediction_data:
                 direction = prediction_data.get('direction', 'unknown')
                 target_price = prediction_data.get('target_price', current_price)

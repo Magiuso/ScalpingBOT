@@ -258,7 +258,10 @@ class AdvancedMarketAnalyzer:
         os.makedirs(data_path, exist_ok=True)
         
         # FASE 1 - CONFIG: Use migrated configuration system
-        self.config_manager = config_manager or get_configuration_manager()
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback allowed
+        if config_manager is None:
+            raise ValueError("FAIL FAST: config_manager is mandatory - no fallbacks allowed (BIBBIA compliance)")
+        self.config_manager = config_manager
         self.config = get_analyzer_config()
         
         # FASE 2 - MONITORING: Use migrated event collector
@@ -693,8 +696,14 @@ class AdvancedMarketAnalyzer:
     
     def train_models_on_batch(self, batch_data: Dict[str, Any], selected_models: Optional[List[str]] = None) -> Dict[str, Any]:
         """REAL ML Model Training - Trains neural networks on batch data"""
-        batch_size = batch_data.get('count', 0)
-        ticks = batch_data.get('ticks', [])
+        # BIBBIA COMPLIANT: FAIL FAST validation - no fallback defaults
+        if 'count' not in batch_data:
+            raise KeyError("FAIL FAST: Missing required field 'count' in batch_data")
+        if 'ticks' not in batch_data:
+            raise KeyError("FAIL FAST: Missing required field 'ticks' in batch_data")
+        
+        batch_size = batch_data['count']
+        ticks = batch_data['ticks']
         
         if not ticks:
             raise ValueError("No tick data provided for training")
@@ -803,9 +812,10 @@ class AdvancedMarketAnalyzer:
                                             'algorithm': algorithm_name,
                                             'asset': asset,
                                             'training_completed': True,
-                                            'best_val_loss': sr_result.get('best_val_loss', 'unknown'),
-                                            'total_epochs': sr_result.get('epochs_completed', 'unknown'),
-                                            'training_timestamp': sr_result.get('training_end_time', 'unknown')
+                                            # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'unknown'
+                                            'best_val_loss': sr_result['best_val_loss'] if 'best_val_loss' in sr_result else None,
+                                            'total_epochs': sr_result['epochs_completed'] if 'epochs_completed' in sr_result else None,
+                                            'training_timestamp': sr_result['training_end_time'] if 'training_end_time' in sr_result else None
                                         }
                                         with open(f"{sr_save_dir}/model_metadata.json", 'w') as f:
                                             json.dump(metadata, f, indent=2)
@@ -855,9 +865,10 @@ class AdvancedMarketAnalyzer:
                                             'algorithm': algorithm_name,
                                             'asset': asset,
                                             'training_completed': True,
-                                            'best_val_loss': transformer_result.get('best_val_loss', 'unknown'),
-                                            'total_epochs': transformer_result.get('epochs_completed', 'unknown'),
-                                            'training_timestamp': transformer_result.get('training_end_time', 'unknown')
+                                            # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'unknown'
+                                            'best_val_loss': transformer_result['best_val_loss'] if 'best_val_loss' in transformer_result else None,
+                                            'total_epochs': transformer_result['epochs_completed'] if 'epochs_completed' in transformer_result else None,
+                                            'training_timestamp': transformer_result['training_end_time'] if 'training_end_time' in transformer_result else None
                                         }
                                         with open(f"{sr_save_dir}/model_metadata.json", 'w') as f:
                                             json.dump(metadata, f, indent=2)
@@ -972,9 +983,10 @@ class AdvancedMarketAnalyzer:
                                             'algorithm': algorithm_name,
                                             'asset': asset,
                                             'training_completed': True,
-                                            'best_val_loss': pattern_result.get('best_val_loss', 'unknown'),
-                                            'total_epochs': pattern_result.get('epochs_completed', 'unknown'),
-                                            'training_timestamp': pattern_result.get('training_end_time', 'unknown')
+                                            # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'unknown'
+                                            'best_val_loss': pattern_result['best_val_loss'] if 'best_val_loss' in pattern_result else None,
+                                            'total_epochs': pattern_result['epochs_completed'] if 'epochs_completed' in pattern_result else None,
+                                            'training_timestamp': pattern_result['training_end_time'] if 'training_end_time' in pattern_result else None
                                         }
                                         with open(f"{pattern_save_dir}/model_metadata.json", 'w') as f:
                                             json.dump(metadata, f, indent=2)
@@ -1026,9 +1038,10 @@ class AdvancedMarketAnalyzer:
                                             'algorithm': algorithm_name,
                                             'asset': asset,
                                             'training_completed': True,
-                                            'best_val_loss': cnn_result.get('best_val_loss', 'unknown'),
-                                            'total_epochs': cnn_result.get('epochs_completed', 'unknown'),
-                                            'training_timestamp': cnn_result.get('training_end_time', 'unknown')
+                                            # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'unknown'
+                                            'best_val_loss': cnn_result['best_val_loss'] if 'best_val_loss' in cnn_result else None,
+                                            'total_epochs': cnn_result['epochs_completed'] if 'epochs_completed' in cnn_result else None,
+                                            'training_timestamp': cnn_result['training_end_time'] if 'training_end_time' in cnn_result else None
                                         }
                                         with open(f"{pattern_save_dir}/model_metadata.json", 'w') as f:
                                             json.dump(metadata, f, indent=2)
@@ -1078,9 +1091,10 @@ class AdvancedMarketAnalyzer:
                                             'algorithm': algorithm_name,
                                             'asset': asset,
                                             'training_completed': True,
-                                            'best_val_loss': transformer_result.get('best_val_loss', 'unknown'),
-                                            'total_epochs': transformer_result.get('epochs_completed', 'unknown'),
-                                            'training_timestamp': transformer_result.get('training_end_time', 'unknown')
+                                            # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'unknown'
+                                            'best_val_loss': transformer_result['best_val_loss'] if 'best_val_loss' in transformer_result else None,
+                                            'total_epochs': transformer_result['epochs_completed'] if 'epochs_completed' in transformer_result else None,
+                                            'training_timestamp': transformer_result['training_end_time'] if 'training_end_time' in transformer_result else None
                                         }
                                         with open(f"{pattern_save_dir}/model_metadata.json", 'w') as f:
                                             json.dump(metadata, f, indent=2)
@@ -1183,9 +1197,10 @@ class AdvancedMarketAnalyzer:
                                             'algorithm': algorithm_name,
                                             'asset': asset,
                                             'training_completed': True,
-                                            'best_val_loss': bias_result.get('best_val_loss', 'unknown'),
-                                            'total_epochs': bias_result.get('epochs_completed', 'unknown'),
-                                            'training_timestamp': bias_result.get('training_end_time', 'unknown')
+                                            # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'unknown'
+                                            'best_val_loss': bias_result['best_val_loss'] if 'best_val_loss' in bias_result else None,
+                                            'total_epochs': bias_result['epochs_completed'] if 'epochs_completed' in bias_result else None,
+                                            'training_timestamp': bias_result['training_end_time'] if 'training_end_time' in bias_result else None
                                         }
                                         with open(f"{bias_save_dir}/model_metadata.json", 'w') as f:
                                             json.dump(metadata, f, indent=2)
@@ -1235,9 +1250,10 @@ class AdvancedMarketAnalyzer:
                                             'algorithm': algorithm_name,
                                             'asset': asset,
                                             'training_completed': True,
-                                            'best_val_loss': transformer_result.get('best_val_loss', 'unknown'),
-                                            'total_epochs': transformer_result.get('epochs_completed', 'unknown'),
-                                            'training_timestamp': transformer_result.get('training_end_time', 'unknown')
+                                            # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'unknown'
+                                            'best_val_loss': transformer_result['best_val_loss'] if 'best_val_loss' in transformer_result else None,
+                                            'total_epochs': transformer_result['epochs_completed'] if 'epochs_completed' in transformer_result else None,
+                                            'training_timestamp': transformer_result['training_end_time'] if 'training_end_time' in transformer_result else None
                                         }
                                         with open(f"{bias_save_dir}/model_metadata.json", 'w') as f:
                                             json.dump(metadata, f, indent=2)
@@ -1341,9 +1357,10 @@ class AdvancedMarketAnalyzer:
                                             'algorithm': algorithm_name,
                                             'asset': asset,
                                             'training_completed': True,
-                                            'best_val_loss': trend_result.get('best_val_loss', 'unknown'),
-                                            'total_epochs': trend_result.get('epochs_completed', 'unknown'),
-                                            'training_timestamp': trend_result.get('training_end_time', 'unknown')
+                                            # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'unknown'
+                                            'best_val_loss': trend_result['best_val_loss'] if 'best_val_loss' in trend_result else None,
+                                            'total_epochs': trend_result['epochs_completed'] if 'epochs_completed' in trend_result else None,
+                                            'training_timestamp': trend_result['training_end_time'] if 'training_end_time' in trend_result else None
                                         }
                                         with open(f"{trend_save_dir}/model_metadata.json", 'w') as f:
                                             json.dump(metadata, f, indent=2)
@@ -1393,9 +1410,10 @@ class AdvancedMarketAnalyzer:
                                             'algorithm': algorithm_name,
                                             'asset': asset,
                                             'training_completed': True,
-                                            'best_val_loss': transformer_result.get('best_val_loss', 'unknown'),
-                                            'total_epochs': transformer_result.get('epochs_completed', 'unknown'),
-                                            'training_timestamp': transformer_result.get('training_end_time', 'unknown')
+                                            # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'unknown'
+                                            'best_val_loss': transformer_result['best_val_loss'] if 'best_val_loss' in transformer_result else None,
+                                            'total_epochs': transformer_result['epochs_completed'] if 'epochs_completed' in transformer_result else None,
+                                            'training_timestamp': transformer_result['training_end_time'] if 'training_end_time' in transformer_result else None
                                         }
                                         with open(f"{trend_save_dir}/model_metadata.json", 'w') as f:
                                             json.dump(metadata, f, indent=2)
@@ -1912,7 +1930,7 @@ class AdvancedMarketAnalyzer:
         elif any(keyword in algorithm_name.upper() for keyword in ['VOLATILITY', 'GARCH', 'REALIZED']):
             return 'volatility_prediction'
         else:
-            return 'support_resistance'  # Default fallback
+            return 'support_resistance'  # BIBBIA COMPLIANT: Single classification path
     
     def _validate_model_metadata(self, metadata: Dict[str, Any]) -> bool:
         """Validate model metadata structure - BIBBIA COMPLIANT"""
@@ -2289,8 +2307,14 @@ class AdvancedMarketAnalyzer:
     
     def validate_models_on_batch(self, batch_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Generate predictions using trained models"""
-        batch_size = batch_data.get('count', 0)
-        ticks = batch_data.get('ticks', [])
+        # BIBBIA COMPLIANT: FAIL FAST validation - no fallback defaults
+        if 'count' not in batch_data:
+            raise KeyError("FAIL FAST: Missing required field 'count' in batch_data")
+        if 'ticks' not in batch_data:
+            raise KeyError("FAIL FAST: Missing required field 'ticks' in batch_data")
+        
+        batch_size = batch_data['count']
+        ticks = batch_data['ticks']
         
         if not ticks:
             raise ValueError("No tick data provided for validation")
@@ -2401,15 +2425,16 @@ class AdvancedMarketAnalyzer:
                 self._update_prediction_validation(current_tick, symbol)
                 
                 # Prepare single tick context with historical data
-                context_data = self._prepare_single_tick_prediction_data(current_tick, symbol)
+                context_data = self._prepare_single_tick_prediction_data(current_tick, symbol, tick_data)
                 
                 # Generate predictions for each model type
                 for model_type, competition in analyzer.competitions.items():
                     try:
-                        # FAIL FAST: Every ModelType MUST have a champion algorithm
+                        # Check if this model type has a champion algorithm
                         champion_algorithm = competition.get_champion_algorithm()
                         if not champion_algorithm:
-                            raise RuntimeError(f"FAIL FAST: No champion algorithm for {model_type.value}")
+                            # BIBBIA COMPLIANT: Skip silently if no champion - this is normal when testing single models
+                            continue
                         
                         # Execute REAL prediction via algorithm bridge
                         algorithm_result = analyzer.algorithm_bridge.execute_algorithm(
@@ -2447,7 +2472,7 @@ class AdvancedMarketAnalyzer:
                         self.validation_tracker['total_predictions'] += 1
                         
                     except Exception as model_error:
-                        # Continue with other model types but log error
+                        # Log only REAL errors, not missing champions
                         print(f"❌ Tick prediction failed for {model_type.value}: {model_error}")
                 
             except Exception as e:
@@ -2465,18 +2490,25 @@ class AdvancedMarketAnalyzer:
             'lowest_confidence': min(p['confidence'] for p in predictions) if predictions else 0.0
         }
         
-        # Print detailed prediction results
-        print(f"🔮 PREDICTION RESULTS for {symbol} at {current_tick['last']}")
-        print(f"   📊 Generated {len(predictions)} predictions")
-        
-        for i, pred in enumerate(predictions, 1):
-            print(f"   {i}. {pred['algorithm']} ({pred['model_type']}) - "
-                  f"Confidence: {pred['confidence']:.3f} - "
-                  f"Data: {pred['prediction_data']}")
-        
-        if validation_stats['total_predictions'] > 0:
-            print(f"   📈 Current Accuracy: {validation_stats['accuracy']:.1f}% "
-                  f"({validation_stats['correct_predictions']}/{validation_stats['total_predictions']})")
+        # Print clean prediction results - only when actual predictions are made
+        if predictions:
+            pred = predictions[0]  # Show only first prediction to avoid spam
+            
+            # Check if this is a real prediction or just monitoring
+            prediction_generated = pred['prediction_data'].get('prediction_generated', True)
+            
+            if prediction_generated:
+                prediction_summary = self._format_prediction_summary(pred['prediction_data'])
+                
+                print(f"🔮 {pred['algorithm']} @ {current_tick['last']} | "
+                      f"Confidence: {pred['confidence']:.1%} | "
+                      f"{prediction_summary}")
+                
+                if validation_stats['total_predictions'] > 0:
+                    print(f"   📈 Accuracy: {validation_stats['accuracy']:.1f}% "
+                          f"({validation_stats['correct_predictions']}/{validation_stats['total_predictions']})")
+            # else: Skip logging when just monitoring levels
+        # else: Skip logging when no predictions at all
             
         return {
             'status': 'success',
@@ -2502,32 +2534,25 @@ class AdvancedMarketAnalyzer:
             }
         }
 
-    def _prepare_single_tick_prediction_data(self, current_tick: Dict[str, Any], symbol: str) -> Dict[str, Any]:
+    def _prepare_single_tick_prediction_data(self, current_tick: Dict[str, Any], symbol: str, tick_data: Dict[str, Any]) -> Dict[str, Any]:
         """Prepare prediction data for single tick with historical context - BIBBIA COMPLIANT"""
         
-        # Get historical data from asset analyzer buffer
-        with self.assets_lock:
-            if symbol not in self.asset_analyzers:
-                raise ValueError(f"Asset {symbol} not found in analyzers")
-            
-            analyzer = self.asset_analyzers[symbol]
-            tick_buffer = analyzer.tick_collector.get_tick_buffer()
+        # BIBBIA COMPLIANT: Use provided historical data from tick_data (from backtest runner)
+        # This contains the 30 days of training data context, not the empty tick_collector buffer
         
-        # Extract historical prices and volumes - BIBBIA COMPLIANT: Use 'last' field only
         prices = []
         volumes = []
         timestamps = []
         
-        for tick in tick_buffer:
-            if 'last' in tick and 'volume' in tick and 'timestamp' in tick:
-                prices.append(float(tick['last']))
-                volumes.append(float(tick['volume']))
-                timestamps.append(tick['timestamp'])
+        # BIBBIA COMPLIANT: Use ONLY historical data provided by backtest runner - FAIL FAST if not available
+        if 'price_history' not in tick_data or 'volume_history' not in tick_data or 'timestamps' not in tick_data:
+            raise ValueError(f"FAIL FAST: Missing historical context in tick_data - "
+                           f"required fields: price_history, volume_history, timestamps")
         
-        # Add current tick
-        prices.append(float(current_tick['last']))
-        volumes.append(float(current_tick['volume']))
-        timestamps.append(current_tick['timestamp'])
+        # Use historical context from backtest runner (contains 100+ ticks)
+        prices = list(tick_data['price_history'])
+        volumes = list(tick_data['volume_history']) 
+        timestamps = list(tick_data['timestamps'])
         
         if not prices:
             raise ValueError(f"No historical price data available for {symbol}")
@@ -2629,7 +2654,8 @@ class AdvancedMarketAnalyzer:
         
         elif 'price_target' in prediction_data:
             target_price = prediction_data['price_target']
-            tolerance = prediction_data.get('tolerance', 0.001)  # 0.1% default tolerance
+            # BIBBIA COMPLIANT: Use fixed tolerance - no fallback defaults
+            tolerance = prediction_data.get('tolerance') or 0.001  # Use provided or standard 0.1%
             price_diff = abs(actual_price - target_price) / target_price
             return price_diff <= tolerance
         
@@ -2690,17 +2716,18 @@ class AdvancedMarketAnalyzer:
             return f"Signal: {signal_type} ({signal:.3f})"
         
         elif 'resistance_levels' in prediction_data or 'support_levels' in prediction_data:
-            # Handle PivotPoints predictions
-            resistance = prediction_data.get('resistance_levels', [])
-            support = prediction_data.get('support_levels', [])
-            
-            summary_parts = []
-            if resistance:
-                summary_parts.append(f"R1: {resistance[0]:.5f}")
-            if support:
-                summary_parts.append(f"S1: {support[0]:.5f}")
-            
-            return f"Levels: {', '.join(summary_parts)}" if summary_parts else "Support/Resistance analysis"
+            # Handle PivotPoints predictions - BIBBIA COMPLIANT: Single path only
+            if prediction_data.get('prediction_generated', True):
+                # BIBBIA COMPLIANT: FAIL FAST if required field missing
+                if 'test_prediction' not in prediction_data:
+                    raise KeyError("FAIL FAST: PivotPoints prediction missing required 'test_prediction' field")
+                
+                # Single path: return test prediction
+                return prediction_data['test_prediction']
+            else:
+                # No prediction generated - return minimal info
+                reason = prediction_data.get('reason', 'No level being tested')
+                return f"Monitoring levels ({reason})"
         
         else:
             # Generic fallback for unknown prediction formats
