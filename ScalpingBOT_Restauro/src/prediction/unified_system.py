@@ -566,39 +566,39 @@ class UnifiedAnalyzerSystem:
             
             raise RuntimeError(f"Batch training failed: {e}")
     
-    def validate_on_batch(self, batch_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Generate predictions using trained models on a batch of tick data"""
+    def validate_on_tick(self, tick_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate predictions using trained models on single tick - BIBBIA COMPLIANT"""
         if not self.is_running:
             raise RuntimeError("System not running - call start() first")
         
-        batch_size = batch_data.get('count', 0)
-        if batch_size == 0:
-            raise ValueError("Empty batch data provided for validation")
+        if not tick_data or 'current_tick' not in tick_data:
+            raise ValueError("Invalid tick data provided for validation")
         
-        print(f"🔮 UnifiedAnalyzerSystem: Generating predictions on {batch_size:,} ticks...")
+        current_tick = tick_data['current_tick']
+        symbol = tick_data.get('symbol', 'UNKNOWN')
         
         try:
-            # Generate predictions using market analyzer
-            predictions = self.market_analyzer.validate_models_on_batch(batch_data)
+            # Generate predictions using market analyzer for single tick
+            predictions = self.market_analyzer.validate_models_on_tick(tick_data)
             
             # Update system stats
             with self.system_lock:
-                self.system_stats['total_ticks_processed'] += batch_size
-                if predictions:
-                    self.system_stats['total_predictions_generated'] += len(predictions)
+                self.system_stats['total_ticks_processed'] += 1
+                if predictions and predictions.get('predictions'):
+                    self.system_stats['total_predictions_generated'] += len(predictions['predictions'])
             
             # Emit validation event
             self.event_collector.emit_manual_event(
                 EventType.SYSTEM_STATUS,
                 {
-                    'action': 'batch_validation_completed',
-                    'batch_size': batch_size,
-                    'predictions_count': len(predictions) if predictions else 0
+                    'action': 'tick_validation_completed',
+                    'symbol': symbol,
+                    'tick_price': current_tick.get('last', 0),
+                    'predictions_count': len(predictions.get('predictions', [])) if predictions else 0
                 },
                 EventSeverity.INFO
             )
             
-            print(f"✅ Generated {len(predictions) if predictions else 0} predictions")
             return predictions
             
         except Exception as e:
@@ -611,14 +611,14 @@ class UnifiedAnalyzerSystem:
                 EventType.ERROR_EVENT,
                 {
                     'component': 'unified_system',
-                    'method': 'validate_on_batch',
+                    'method': 'validate_on_tick',
                     'error': str(e),
-                    'batch_size': batch_size
+                    'symbol': symbol
                 },
                 EventSeverity.ERROR
             )
             
-            raise RuntimeError(f"Batch validation failed: {e}")
+            raise RuntimeError(f"Tick validation failed: {e}")
 
 
 # Factory functions

@@ -457,13 +457,23 @@ class AssetAnalyzer:
                 if comp_health.get('status') == 'healthy':
                     healthy_competitions += 1
         
-        # Overall health assessment
+        # Overall health assessment - BIBBIA COMPLIANT: Realistic for single algorithm scenarios
+        total_competitions = len(self.competitions)
+        
         if healthy_competitions == 0:
             health['overall_status'] = 'critical'
             health['issues'].append('No healthy competitions')
-        elif healthy_competitions < len(self.competitions) / 2:
+        elif total_competitions == 1:
+            # Single algorithm scenario - if it's healthy, system is healthy
+            if healthy_competitions == 1:
+                health['overall_status'] = 'healthy'
+            else:
+                health['overall_status'] = 'critical'
+                health['issues'].append('Single algorithm is not healthy')
+        elif healthy_competitions < total_competitions / 2:
+            # Multiple algorithms scenario - need majority healthy
             health['overall_status'] = 'degraded'
-            health['issues'].append('Less than 50% competitions healthy')
+            health['issues'].append(f'Only {healthy_competitions}/{total_competitions} competitions healthy')
         
         # Check data flow
         if self.stats['ticks_processed'] == 0:

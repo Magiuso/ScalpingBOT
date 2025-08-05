@@ -806,9 +806,9 @@ class MT5BacktestRunner:
                         self._train_models_on_batch(current_batch, analyzer_system, selected_models)
                         total_training_ticks += len(current_batch)
                     else:
-                        # Validation: use trained models for predictions
-                        self._validate_models_on_batch(current_batch, analyzer_system) 
-                        total_validation_ticks += len(current_batch)
+                        # Validation: use trained models for tick-by-tick predictions - BIBBIA COMPLIANT
+                        processed_ticks = self._validate_models_tick_by_tick(current_batch, analyzer_system) 
+                        total_validation_ticks += processed_ticks
                     
                     batch_process_time = time.time() - batch_process_start
                     total_ticks_processed += len(current_batch)
@@ -971,23 +971,123 @@ class MT5BacktestRunner:
             }
         }
     
-    def _validate_models_on_batch(self, batch: List[Dict], analyzer_system):
-        """Use trained models to make predictions on batch"""
-        print(f"🧪 Validating models with {len(batch):,} ticks...")
+    def _validate_models_tick_by_tick(self, ticks: List[Dict], analyzer_system) -> int:
+        """Use trained models for tick-by-tick predictions - BIBBIA COMPLIANT"""
+        if not ticks:
+            raise ValueError("No ticks provided for validation")
         
-        # Convert batch to validation data format
-        validation_data = self._convert_batch_to_ml_data(batch)
+        if not hasattr(analyzer_system, 'validate_on_tick'):
+            raise AttributeError("analyzer_system missing required method 'validate_on_tick' - cannot validate models tick-by-tick")
         
-        # FAIL FAST - analyzer MUST have validate_on_batch method  
-        if not hasattr(analyzer_system, 'validate_on_batch'):
-            raise AttributeError("analyzer_system missing required method 'validate_on_batch' - cannot validate models")
+        print(f"🔮 Starting tick-by-tick validation with {len(ticks):,} ticks...")
         
-        # Generate predictions using trained models
-        print(f"🔮 Generating predictions with trained models...")
-        predictions = analyzer_system.validate_on_batch(validation_data)
-        print(f"✅ Generated {len(predictions) if predictions else 0} predictions")
+        processed_count = 0
+        prediction_window_size = 100  # Use last 100 ticks for context
+        
+        for tick_index, current_tick in enumerate(ticks):
+            try:
+                # FAIL FAST - current tick must be valid
+                if 'last' not in current_tick or 'timestamp' not in current_tick:
+                    raise ValueError(f"Invalid tick at index {tick_index}: missing 'last' or 'timestamp'")
+                
+                # Build prediction context window (last N ticks + current tick)
+                window_start = max(0, tick_index - prediction_window_size + 1)
+                context_ticks = ticks[window_start:tick_index + 1]
+                
+                if len(context_ticks) < 10:  # Need minimum context
+                    continue  # Skip early ticks without sufficient context
+                
+                # Convert to format expected by analyzer
+                tick_data = self._convert_single_tick_for_prediction(current_tick, context_ticks)
+                
+                # Generate prediction for this tick
+                prediction_result = analyzer_system.validate_on_tick(tick_data)
+                
+                # Process and display prediction result
+                if prediction_result:
+                    self._process_tick_prediction_result(current_tick, prediction_result, tick_index)
+                
+                processed_count += 1
+                
+                # Progress reporting every 1000 ticks
+                if processed_count % 1000 == 0:
+                    progress_pct = (tick_index + 1) / len(ticks) * 100
+                    print(f"  🔮 Tick-by-tick progress: {processed_count:,}/{len(ticks):,} ({progress_pct:.1f}%)")
+                
+            except Exception as e:
+                # FAIL FAST - any tick processing error stops validation
+                raise RuntimeError(f"Tick validation failed at index {tick_index}: {e}")
+        
+        print(f"✅ Tick-by-tick validation completed: {processed_count:,} ticks processed")
+        return processed_count
     
+    def _convert_single_tick_for_prediction(self, current_tick: Dict, context_ticks: List[Dict]) -> Dict[str, Any]:
+        """Convert single tick + context to prediction format - BIBBIA COMPLIANT"""
+        if not current_tick or not context_ticks:
+            raise ValueError("Invalid tick or context data for prediction")
+        
+        # Extract price history from context
+        price_history = []
+        volume_history = []
+        timestamps = []
+        
+        for tick in context_ticks:
+            if 'last' not in tick:
+                raise ValueError("Context tick missing 'last' field - MT5 format required")
+            price_history.append(float(tick['last']))
+            volume_history.append(float(tick.get('volume', 0)))
+            timestamps.append(tick['timestamp'])
+        
+        return {
+            'current_tick': current_tick,
+            'price_history': price_history,
+            'volume_history': volume_history,
+            'timestamps': timestamps,
+            'current_price': float(current_tick['last']),
+            'current_volume': float(current_tick.get('volume', 0)),
+            'symbol': current_tick.get('symbol', self.config.symbol),
+            'context_size': len(context_ticks)
+        }
     
+    def _process_tick_prediction_result(self, current_tick: Dict, prediction_result: Dict, tick_index: int):
+        """Process and display tick prediction result - BIBBIA COMPLIANT"""
+        if not prediction_result:
+            return
+        
+        current_price = current_tick['last']
+        timestamp = current_tick['timestamp']
+        
+        # Extract prediction data
+        predictions = prediction_result.get('predictions', [])
+        if not predictions:
+            return
+        
+        # Display each prediction
+        for pred in predictions:
+            model_type = pred.get('model_type', 'unknown')
+            algorithm = pred.get('algorithm', 'unknown')
+            prediction_data = pred.get('prediction_data', {})
+            confidence = pred.get('confidence', 0.0)
+            
+            print(f"🔮 TICK {tick_index:,} | {timestamp} | {algorithm}")
+            print(f"    💰 Current Price: {current_price:.4f}")
+            print(f"    📊 Model: {model_type}")
+            print(f"    🎯 Confidence: {confidence:.2%}")
+            
+            # Display specific prediction details based on model type
+            if model_type == 'support_resistance' and 'support_levels' in prediction_data:
+                support_levels = prediction_data.get('support_levels', [])
+                resistance_levels = prediction_data.get('resistance_levels', [])
+                print(f"    🔻 Support: {support_levels}")
+                print(f"    🔺 Resistance: {resistance_levels}")
+            elif 'direction' in prediction_data:
+                direction = prediction_data.get('direction', 'unknown')
+                target_price = prediction_data.get('target_price', current_price)
+                print(f"    📈 Direction: {direction}")
+                print(f"    🎯 Target: {target_price:.4f}")
+            
+            print("")  # Empty line for readability
+
     def _load_csv_data(self, csv_file: str, symbol: str) -> List[Dict[str, Any]]:
         """Load tick data from CSV file - FAIL FAST version"""
         
