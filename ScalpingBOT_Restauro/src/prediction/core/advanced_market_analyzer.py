@@ -2716,22 +2716,19 @@ class AdvancedMarketAnalyzer:
             return f"Signal: {signal_type} ({signal:.3f})"
         
         elif 'resistance_levels' in prediction_data or 'support_levels' in prediction_data:
-            # Handle PivotPoints predictions - BIBBIA COMPLIANT: Single path only
-            if prediction_data.get('prediction_generated', True):
-                # BIBBIA COMPLIANT: FAIL FAST if required field missing
-                if 'test_prediction' not in prediction_data:
-                    raise KeyError("FAIL FAST: PivotPoints prediction missing required 'test_prediction' field")
-                
-                # Single path: return test prediction
-                return prediction_data['test_prediction']
-            else:
-                # No prediction generated - return minimal info
-                reason = prediction_data.get('reason', 'No level being tested')
-                return f"Monitoring levels ({reason})"
+            # BIBBIA COMPLIANT: FAIL FAST - no fallback defaults
+            if 'prediction_generated' not in prediction_data:
+                raise KeyError("FAIL FAST: PivotPoints prediction missing required 'prediction_generated' field")
+            if 'test_prediction' not in prediction_data:
+                raise KeyError("FAIL FAST: PivotPoints prediction missing required 'test_prediction' field")
+            
+            # Single path: always use test_prediction
+            return prediction_data['test_prediction']
         
         else:
-            # Generic fallback for unknown prediction formats
-            return f"Custom prediction: {str(prediction_data)[:50]}..."
+            # BIBBIA COMPLIANT: FAIL FAST - no fallback for unknown formats
+            available_fields = list(prediction_data.keys())
+            raise ValueError(f"FAIL FAST: Unknown prediction format. Available fields: {available_fields}")
     
     def _prepare_training_data(self, asset_ticks: List[Dict[str, Any]], algorithm_name: str, model_type: ModelType) -> Dict[str, Any]:
         """Prepare training data for ML algorithms from tick data"""

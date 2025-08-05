@@ -126,15 +126,18 @@ class SupportResistanceAlgorithms:
         test_result = self._analyze_level_test(current_price, pivot, support1, support2, support3, resistance1, resistance2, resistance3, market_data)
         
         if not test_result['will_test_level']:
-            # No level being tested - return just levels without prediction
+            # No level being tested - return default test fields to satisfy bridge requirements
             return {
                 "support_levels": sorted([support3, support2, support1]),
                 "resistance_levels": sorted([resistance1, resistance2, resistance3]),
                 "pivot": pivot,
                 "confidence": 0.75,
                 "method": "Classic_Pivot_Points",
-                "prediction_generated": False,
-                "reason": "No level currently being tested"
+                "test_prediction": "No level currently being tested",
+                "level_being_tested": 0.0,
+                "level_type": "none",
+                "expected_outcome": "none",
+                "prediction_generated": False
             }
         
         # A level is being tested - generate prediction about its validity

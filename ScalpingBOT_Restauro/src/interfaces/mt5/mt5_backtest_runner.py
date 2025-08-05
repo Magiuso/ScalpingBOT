@@ -1061,33 +1061,38 @@ class MT5BacktestRunner:
         current_price = current_tick['last']
         timestamp = current_tick['timestamp']
         
-        # Extract prediction data
-        predictions = prediction_result.get('predictions', [])
+        # BIBBIA COMPLIANT: Extract prediction data - FAIL FAST if missing
+        if 'predictions' not in prediction_result:
+            raise KeyError(f"FAIL FAST: Missing required 'predictions' field in prediction_result at tick {tick_index}")
+        predictions = prediction_result['predictions']
         if not predictions:
             return
         
-        # Display each prediction
+        # BIBBIA COMPLIANT: Display each prediction - FAIL FAST for missing fields
         for pred in predictions:
-            model_type = pred.get('model_type', 'unknown')
-            algorithm = pred.get('algorithm', 'unknown')
-            prediction_data = pred.get('prediction_data', {})
-            confidence = pred.get('confidence', 0.0)
+            if 'model_type' not in pred:
+                raise KeyError(f"FAIL FAST: Missing required 'model_type' field in prediction at tick {tick_index}")
+            if 'algorithm' not in pred:
+                raise KeyError(f"FAIL FAST: Missing required 'algorithm' field in prediction at tick {tick_index}")
+            if 'prediction_data' not in pred:
+                raise KeyError(f"FAIL FAST: Missing required 'prediction_data' field in prediction at tick {tick_index}")
+            if 'confidence' not in pred:
+                raise KeyError(f"FAIL FAST: Missing required 'confidence' field in prediction at tick {tick_index}")
             
-            # Minimal logging - detailed output handled by advanced_market_analyzer
-            # print(f"🔮 TICK {tick_index:,} | {timestamp} | {algorithm}")
+            model_type = pred['model_type']
+            algorithm = pred['algorithm']
+            prediction_data = pred['prediction_data'] 
+            confidence = pred['confidence']
             
-            # Optional: Display specific prediction details based on model type
-            if model_type == 'support_resistance' and 'support_levels' in prediction_data:
-                support_levels = prediction_data.get('support_levels', [])
-                resistance_levels = prediction_data.get('resistance_levels', [])
-                # print(f"    🔻 Support: {support_levels}")
-                # print(f"    🔺 Resistance: {resistance_levels}")
-            elif 'direction' in prediction_data:
-                direction = prediction_data.get('direction', 'unknown')
-                target_price = prediction_data.get('target_price', current_price)
-                print(f"    📈 Direction: {direction}")
-                print(f"    🎯 Target: {target_price:.4f}")
+            # BIBBIA COMPLIANT: Show predictions - FAIL FAST if format wrong
+            print(f"🔮 TICK {tick_index:,} | {timestamp} | {algorithm} | Conf: {confidence:.3f}")
             
+            # BIBBIA COMPLIANT: FAIL FAST - require new test-based format
+            if model_type == 'support_resistance':
+                if 'test_prediction' not in prediction_data:
+                    raise KeyError(f"FAIL FAST: Missing required 'test_prediction' field in S/R prediction at tick {tick_index}")
+                test_prediction = prediction_data['test_prediction']
+                print(f"    🧪 Test: {test_prediction}")
             print("")  # Empty line for readability
 
     def _load_csv_data(self, csv_file: str, symbol: str) -> List[Dict[str, Any]]:

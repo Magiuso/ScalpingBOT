@@ -252,11 +252,24 @@ class AlgorithmBridge:
             if 'confidence' not in algorithm_result:
                 raise KeyError("Missing required field 'confidence' from S/R algorithm result")
             
+            # BIBBIA COMPLIANT: Use new test-based prediction format - eliminate old format
+            if 'test_prediction' not in algorithm_result:
+                raise KeyError("Missing required field 'test_prediction' from S/R algorithm result")
+            if 'level_being_tested' not in algorithm_result:
+                raise KeyError("Missing required field 'level_being_tested' from S/R algorithm result")
+            if 'expected_outcome' not in algorithm_result:
+                raise KeyError("Missing required field 'expected_outcome' from S/R algorithm result")
+            
             prediction_value = {
                 'support_levels': algorithm_result['support_levels'],
                 'resistance_levels': algorithm_result['resistance_levels'],
-                'pivot': algorithm_result['pivot'] if 'pivot' in algorithm_result else None,  # Explicit check for optional field
-                'method': algorithm_result['method']
+                'pivot': algorithm_result['pivot'] if 'pivot' in algorithm_result else None,
+                'method': algorithm_result['method'],
+                'test_prediction': algorithm_result['test_prediction'],
+                'level_being_tested': algorithm_result['level_being_tested'],
+                'level_type': algorithm_result['level_type'],
+                'expected_outcome': algorithm_result['expected_outcome'],
+                'prediction_generated': algorithm_result['prediction_generated']
             }
             confidence = algorithm_result['confidence']
             
