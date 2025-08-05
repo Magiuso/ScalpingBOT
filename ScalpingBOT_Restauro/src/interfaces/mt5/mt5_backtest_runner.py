@@ -16,7 +16,7 @@ import os
 import sys
 import json
 import time
-import pandas as pd  # type: ignore
+import pandas as pd
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
@@ -183,6 +183,9 @@ class MT5DataExporter:
             chunk_days = self._calculate_dynamic_chunk_size(total_days, initial_memory)
             total_ticks_exported = 0
             
+            # Track export start time for progress calculations
+            export_start = datetime.now()
+            
             # Create output directory
             os.makedirs(os.path.dirname(output_file), exist_ok=True)
             
@@ -196,7 +199,14 @@ class MT5DataExporter:
                     # Calculate chunk end
                     chunk_end = min(current_date + timedelta(days=chunk_days), end_date)
                     
-                    self.logger.info(f"Processing chunk {chunk_number}: {current_date} to {chunk_end}")
+                    # Calculate progress
+                    days_processed = (current_date - start_date).days
+                    days_remaining = (end_date - current_date).days
+                    progress_percentage = (days_processed / total_days * 100) if total_days > 0 else 0
+                    
+                    self.logger.info(f"\n📊 EXPORT PROGRESS: {progress_percentage:.1f}% complete")
+                    self.logger.info(f"📅 Days: {days_processed}/{total_days} processed, {days_remaining} remaining")
+                    self.logger.info(f"🔄 Processing chunk {chunk_number}: {current_date.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}")
                     
                     # Process chunk
                     chunk_ticks = self._process_chunk_memory_safe(
@@ -221,6 +231,17 @@ class MT5DataExporter:
                     current_date = chunk_end
                     chunk_number += 1
                     
+                    # Estimate completion time based on average chunk processing time
+                    if chunk_number > 2:  # After a few chunks, estimate completion
+                        elapsed_time = (datetime.now() - export_start).total_seconds()
+                        avg_time_per_day = elapsed_time / days_processed if days_processed > 0 else 0
+                        estimated_remaining_seconds = avg_time_per_day * days_remaining
+                        
+                        if estimated_remaining_seconds > 0:
+                            eta_hours = int(estimated_remaining_seconds // 3600)
+                            eta_minutes = int((estimated_remaining_seconds % 3600) // 60)
+                            self.logger.info(f"⏰ Estimated time remaining: {eta_hours}h {eta_minutes}m")
+                    
                     # Emergency memory check
                     if self._get_memory_usage() > 90:
                         raise RuntimeError("Memory usage exceeded 90% - stopping export")
@@ -234,9 +255,16 @@ class MT5DataExporter:
             
             self.mt5_adapter.shutdown()
             
-            self.logger.info(f"Export completed: {total_ticks_exported:,} total ticks")
-            self.logger.info(f"File: {output_file}")
-            self.logger.info(f"Final memory: {final_memory:.1f}% (started: {initial_memory:.1f}%)")
+            # Final summary
+            export_duration = (datetime.now() - export_start).total_seconds()
+            avg_ticks_per_second = total_ticks_exported / export_duration if export_duration > 0 else 0
+            
+            self.logger.info(f"\n✅ EXPORT COMPLETED!")
+            self.logger.info(f"📊 Total ticks exported: {total_ticks_exported:,}")
+            self.logger.info(f"⏱️ Total time: {int(export_duration // 60)}m {int(export_duration % 60)}s")
+            self.logger.info(f"⚡ Average speed: {avg_ticks_per_second:,.0f} ticks/second")
+            self.logger.info(f"📁 File: {output_file}")
+            self.logger.info(f"💾 Final memory: {final_memory:.1f}% (started: {initial_memory:.1f}%)")
             
             # Emit completion event
             if self.event_collector:
@@ -355,9 +383,9 @@ class MT5DataExporter:
                 m5_tick_counter[m5_key] = 0
             m5_tick_counter[m5_key] += 1
             
-            # Use tick count as volume if real volume is 0
-            if tick_volume == 0:
-                tick_volume = m5_tick_counter[m5_key]
+            # Always use M5 tick count as volume (represents real trading activity)
+            # This is intentional design, not a fallback
+            tick_volume = m5_tick_counter[m5_key]
             
             # Update template
             tick_data["timestamp"] = tick_datetime.strftime('%Y.%m.%d %H:%M:%S')
@@ -916,10 +944,10 @@ class MT5BacktestRunner:
             if not timestamp_str:
                 continue
             
-            # Convert to standard format expected by ML algorithms
+            # BIBBIA COMPLIANT: Keep original MT5 format - NO DUPLICATIONS!
             converted_tick = {
                 'timestamp': timestamp_str,
-                'price': float(price),
+                'last': float(price),  # Keep 'last' field name from MT5
                 'volume': float(volume),
                 'bid': float(bid) if bid > 0 else None,
                 'ask': float(ask) if ask > 0 else None,
