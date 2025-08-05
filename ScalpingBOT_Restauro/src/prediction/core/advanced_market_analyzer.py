@@ -273,16 +273,16 @@ class AdvancedMarketAnalyzer:
         # FASE 5 - ML: Initialize algorithm bridge for ML training
         self.algorithm_bridge = create_algorithm_bridge()
         
-        # Auto-load saved models from checkpoints
-        self._load_saved_models_from_checkpoints()
-        
-        # Asset management
+        # Asset management - MUST BE INITIALIZED BEFORE loading models
         self.asset_analyzers: Dict[str, AssetAnalyzer] = {}
         self.active_assets: Set[str] = set()
         
-        # Threading
+        # Threading - MUST BE INITIALIZED BEFORE loading models (used by _create_asset_analyzer)
         self.assets_lock = threading.RLock()
         self.stats_lock = threading.RLock()
+        
+        # Auto-load saved models from checkpoints
+        self._load_saved_models_from_checkpoints()
         
         # Global statistics
         self.global_stats = {
@@ -467,7 +467,7 @@ class AdvancedMarketAnalyzer:
             self.events_buffer['tick_processed'].append({
                 'asset': asset,
                 'timestamp': timestamp,
-                'price': price,
+                'last': price,  # BIBBIA COMPLIANT: Use MT5 format with 'last' field
                 'volume': volume,
                 'result': result
             })
@@ -2362,8 +2362,9 @@ class AdvancedMarketAnalyzer:
         timestamps = []
         
         for tick in asset_ticks:
-            if 'price' in tick and 'volume' in tick and 'timestamp' in tick:
-                prices.append(float(tick['price']))
+            # BIBBIA COMPLIANT: Use MT5 format with 'last' field - FAIL FAST, no fallbacks
+            if 'last' in tick and 'volume' in tick and 'timestamp' in tick:
+                prices.append(float(tick['last']))
                 volumes.append(float(tick['volume']))
                 timestamps.append(tick['timestamp'])
         
@@ -2393,8 +2394,8 @@ class AdvancedMarketAnalyzer:
         if len(asset_ticks) < 100:
             raise ValueError(f"Insufficient ticks for ML training: {len(asset_ticks)} < 100")
         
-        # Extract price and volume data and convert to numpy arrays
-        prices = np.array([float(tick['price']) for tick in asset_ticks])
+        # Extract price and volume data and convert to numpy arrays - BIBBIA COMPLIANT
+        prices = np.array([float(tick['last']) for tick in asset_ticks])  # Use MT5 'last' field
         volumes = np.array([float(tick['volume']) for tick in asset_ticks]) 
         timestamps = [tick['timestamp'] for tick in asset_ticks]
         
@@ -2710,8 +2711,9 @@ class AdvancedMarketAnalyzer:
         recent_ticks = asset_ticks[-prediction_window:]
         
         for tick in recent_ticks:
-            if 'price' in tick and 'volume' in tick and 'timestamp' in tick:
-                recent_prices.append(float(tick['price']))
+            # BIBBIA COMPLIANT: Use MT5 format with 'last' field - FAIL FAST, no fallbacks
+            if 'last' in tick and 'volume' in tick and 'timestamp' in tick:
+                recent_prices.append(float(tick['last']))
                 recent_volumes.append(float(tick['volume']))
                 recent_timestamps.append(tick['timestamp'])
         

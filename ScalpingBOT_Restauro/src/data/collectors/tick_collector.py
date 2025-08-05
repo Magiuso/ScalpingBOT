@@ -91,7 +91,7 @@ class TickCollector:
             # Store tick data - IDENTICO da AssetAnalyzer
             tick_data = {
                 'timestamp': timestamp,
-                'price': price,
+                'last': price,  # BIBBIA COMPLIANT: Use MT5 format with 'last' field
                 'volume': volume,
                 'bid': bid or price,
                 'ask': ask or price,
@@ -121,7 +121,7 @@ class TickCollector:
         ESTRATTO IDENTICO da AssetAnalyzer._update_aggregated_data()
         """
         current_timestamp = tick['timestamp']
-        price = tick['price']
+        price = tick['last']  # BIBBIA COMPLIANT: Use MT5 format with 'last' field
         volume = tick['volume']
         
         # Implementa aggregazioni per 1m, 5m, 15m, 1h, 4h, 1d

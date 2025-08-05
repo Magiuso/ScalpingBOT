@@ -85,14 +85,11 @@ class MarketDataProcessor:
             with self.data_lock:  # Secondo lock minimale per accesso sicuro
                 for i, tick_idx in enumerate(recent_ticks_range):
                     tick = tick_data[tick_idx]
-                    # 🔧 SOLUZIONE: Supporta sia formato 'price' che 'bid/ask'
-                    if 'price' in tick:
-                        prices[i] = tick['price']
-                    elif 'bid' in tick and 'ask' in tick:
-                        # Usa il mid price tra bid e ask
-                        prices[i] = (tick['bid'] + tick['ask']) / 2.0
+                    # BIBBIA COMPLIANT: Use MT5 format with 'last' field - FAIL FAST, no fallbacks
+                    if 'last' in tick:
+                        prices[i] = tick['last']
                     else:
-                        raise ValueError(f"Critical price fields missing from tick data at index {i} - no 'price', 'bid' or 'ask' available")
+                        raise ValueError(f"Critical field 'last' missing from tick data at index {i} - MT5 format required")
                     if 'volume' not in tick:
                         raise KeyError(f"Critical field 'volume' missing from tick data at index {i}")
                     volumes[i] = tick['volume']
