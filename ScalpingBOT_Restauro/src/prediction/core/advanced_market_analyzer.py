@@ -1852,8 +1852,17 @@ class AdvancedMarketAnalyzer:
                 competition = analyzer.competitions[model_type]
                 competition.register_algorithm(best_algorithm['algorithm'])
                 
-                # TODO: Set initial performance based on confidence score
-                # This would require updating the competition system to accept initial scores
+                # Set training performance using the new unified system
+                try:
+                    competition.set_training_performance(
+                        best_algorithm['algorithm'], 
+                        best_algorithm['model_data'],
+                        algorithm_type='auto'  # Auto-detect type
+                    )
+                    print(f"    ✅ Training performance set for {best_algorithm['algorithm']}")
+                except Exception as perf_error:
+                    print(f"    ⚠️ Failed to set training performance for {best_algorithm['algorithm']}: {perf_error}")
+                    # Non bloccare l'inizializzazione per questo errore
                 
         except Exception as e:
             raise RuntimeError(f"FAIL FAST: Failed to initialize champions for {asset_name}: {e}")

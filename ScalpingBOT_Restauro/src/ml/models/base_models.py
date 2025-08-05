@@ -67,6 +67,13 @@ class AlgorithmPerformance:
     # ANNOTAZIONE CORRETTA
     rolling_window_performances: Deque[float] = field(default_factory=lambda: deque(maxlen=100))
     
+    # Training performance attributes - BIBBIA COMPLIANT: aggiunti per unified metrics system
+    training_score: float = 0.0
+    training_confidence: float = 0.0
+    training_reliability: float = 0.0
+    training_completed: bool = False
+    raw_training_metrics: Optional[Dict[str, Any]] = None
+    
     @property
     def final_score(self) -> float:
         """Score finale con confidence decay applicato"""

@@ -39,6 +39,7 @@ from pathlib import Path
 from .base_models import Prediction, AlgorithmPerformance
 from ...shared.enums import ModelType
 from ...config.base.base_config import get_analyzer_config, AnalyzerConfig
+from .unified_training_metrics import UnifiedTrainingMetrics
 # Removed safe_print import - using fail-fast error handling instead
 
 
@@ -986,25 +987,137 @@ class AlgorithmCompetition:
         
         
     def register_algorithm(self, name: str) -> None:
-        """Registra un nuovo algoritmo nella competizione - VERSIONE PULITA"""
+        """Registra un nuovo algoritmo nella competizione - NO AUTO-CHAMPION"""
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Algorithm name must be non-empty string")
+        
+        if name in self.algorithms:
+            raise ValueError(f"Algorithm '{name}' already registered")
+        
         self.algorithms[name] = AlgorithmPerformance(
             name=name,
             model_type=self.model_type
         )
         
-        # Se è il primo algoritmo, diventa automaticamente champion
-        if self.champion is None:
-            self.champion = name
-            self.algorithms[name].is_champion = True
-            
+        # BIBBIA COMPLIANCE: NO auto-champion - deve guadagnarselo
+        # Champion rimane None finché un algoritmo non dimostra il suo valore
+        
         # 🧹 PULITO: Sostituito logger con event storage
         self._store_system_event('algorithm_registered', {
             'algorithm_name': name,
             'asset': self.asset,
             'model_type': self.model_type.value,
-            'is_first_champion': self.champion == name,
+            'has_champion': self.champion is not None,
             'timestamp': datetime.now()
         })
+    
+    def set_training_performance(self, name: str, training_data: Dict[str, Any], 
+                               algorithm_type: Optional[str] = None) -> None:
+        """
+        Imposta performance dall'addestramento usando UnifiedTrainingMetrics
+        
+        Args:
+            name: Nome algoritmo
+            training_data: Dati di training/evaluation
+            algorithm_type: Tipo algoritmo ('neural_network', 'classical_ml', 'mathematical', 'pivot_points', 'auto')
+            
+        Raises:
+            ValueError: Se algoritmo non registrato o training invalido
+        """
+        if name not in self.algorithms:
+            raise ValueError(f"Algorithm '{name}' not registered. Call register_algorithm() first.")
+        
+        if not isinstance(training_data, dict):
+            raise TypeError("training_data must be dict")
+        
+        try:
+            # Auto-detect se non specificato
+            if algorithm_type is None or algorithm_type == 'auto':
+                normalized_metrics = UnifiedTrainingMetrics.auto_normalize_metrics(training_data, name)
+            else:
+                # Usa metodo specifico basato sul tipo
+                if algorithm_type == 'neural_network':
+                    normalized_metrics = UnifiedTrainingMetrics.normalize_neural_network_metrics(training_data)
+                elif algorithm_type == 'classical_ml':
+                    normalized_metrics = UnifiedTrainingMetrics.normalize_classical_ml_metrics(training_data)
+                elif algorithm_type == 'mathematical':
+                    normalized_metrics = UnifiedTrainingMetrics.normalize_mathematical_metrics(training_data)
+                elif algorithm_type == 'pivot_points':
+                    normalized_metrics = UnifiedTrainingMetrics.normalize_pivot_points_metrics(training_data)
+                else:
+                    raise ValueError(f"Unknown algorithm_type: {algorithm_type}")
+            
+        except Exception as e:
+            # FAIL FAST: Se normalizzazione fallisce, è un errore grave
+            raise RuntimeError(f"Failed to normalize training metrics for {name}: {e}")
+        
+        # Imposta metriche normalizzate sull'algoritmo
+        algorithm = self.algorithms[name]
+        algorithm.training_score = normalized_metrics['performance_score']
+        algorithm.training_confidence = normalized_metrics['confidence']
+        algorithm.training_reliability = normalized_metrics['reliability']
+        algorithm.training_completed = True
+        
+        # Store raw metrics per debugging (opzionale)
+        if algorithm.raw_training_metrics is None:
+            algorithm.raw_training_metrics = {}
+        algorithm.raw_training_metrics.update(normalized_metrics)
+        
+        # Log evento
+        self._store_system_event('training_performance_set', {
+            'algorithm_name': name,
+            'performance_score': normalized_metrics['performance_score'],
+            'confidence': normalized_metrics['confidence'],
+            'reliability': normalized_metrics['reliability'],
+            'algorithm_type': normalized_metrics['algorithm_type'],
+            'timestamp': datetime.now()
+        })
+        
+        # Valuta se può diventare champion
+        self._update_champion_from_training()
+    
+    def _update_champion_from_training(self) -> None:
+        """Aggiorna champion basandosi su metriche di training - BIBBIA COMPLIANT"""
+        if not self.algorithms:
+            return
+        
+        # Trova il migliore algoritmo che ha completato il training
+        best_candidate = None
+        best_training_score = self.champion_threshold  # Es: 70.0
+        
+        for name, algorithm in self.algorithms.items():
+            if (hasattr(algorithm, 'training_completed') and 
+                algorithm.training_completed and
+                hasattr(algorithm, 'training_score') and
+                algorithm.training_score > best_training_score):
+                
+                # Verifica reliability minima
+                reliability = getattr(algorithm, 'training_reliability', 0.0)
+                if reliability >= 0.5:  # Reliability minima 50%
+                    best_candidate = name
+                    best_training_score = algorithm.training_score
+        
+        # Aggiorna champion se trovato un candidato migliore
+        if best_candidate:
+            old_champion = self.champion
+            
+            # Detronizza vecchio champion se esiste
+            if self.champion and self.champion in self.algorithms:
+                self.algorithms[self.champion].is_champion = False
+            
+            # Nuovo champion
+            self.champion = best_candidate
+            self.algorithms[best_candidate].is_champion = True
+            
+            # Log cambio champion
+            self._store_system_event('champion_selected_from_training', {
+                'old_champion': old_champion,
+                'new_champion': best_candidate,
+                'training_score': best_training_score,
+                'confidence': getattr(self.algorithms[best_candidate], 'training_confidence', 0.0),
+                'reliability': getattr(self.algorithms[best_candidate], 'training_reliability', 0.0),
+                'timestamp': datetime.now()
+            })
     
     def _store_system_event(self, event_type: str, event_data: Dict) -> None:
         """Store system events in memory for future processing by slave module"""
