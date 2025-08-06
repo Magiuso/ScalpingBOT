@@ -284,6 +284,10 @@ class AssetAnalyzer:
                         model_type, champion_algorithm, market_data
                     )
                     
+                    # ANTI-SPAM: Skip None results (no significant predictions)
+                    if algorithm_result is None:
+                        continue
+                    
                     # Convert to prediction format
                     prediction_obj = self.algorithm_bridge.convert_to_prediction(
                         algorithm_result, self.asset, model_type

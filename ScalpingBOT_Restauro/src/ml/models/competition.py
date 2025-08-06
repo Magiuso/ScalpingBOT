@@ -128,7 +128,10 @@ class RealityChecker:
     """Sistema per validare che i pattern appresi siano ancora validi"""
     
     def __init__(self, config: Optional[AnalyzerConfig] = None):
-        self.config = config or get_analyzer_config()  # 🔧 ADDED
+        # BIBBIA COMPLIANT: FAIL FAST - no config fallback
+        if config is None:
+            raise ValueError("FAIL FAST: RealityChecker requires explicit configuration - no fallback allowed")
+        self.config = config
         self.validation_threshold = self.config.accuracy_threshold  # 🔧 CHANGED
         self.reality_checks: Dict[str, List[Dict]] = defaultdict(list)
         self.pattern_validity: Dict[str, Dict[str, float]] = defaultdict(dict)
@@ -298,7 +301,10 @@ class EmergencyStopSystem:
     
     def __init__(self, logger, config: Optional[AnalyzerConfig] = None):
         self.logger = logger
-        self.config = config or get_analyzer_config()  # 🔧 ADDED
+        # BIBBIA COMPLIANT: FAIL FAST - no config fallback
+        if config is None:
+            raise ValueError("FAIL FAST: Component requires explicit configuration - no fallback allowed")
+        self.config = config
         
         self.performance_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=getattr(self.config, 'performance_window_size', 100) or 100))  # 🔧 FIXED
         

@@ -93,10 +93,10 @@ class TickCollector:
                 'timestamp': timestamp,
                 'last': price,  # BIBBIA COMPLIANT: Use MT5 format with 'last' field
                 'volume': volume,
-                'bid': bid or price,
-                'ask': ask or price,
-                'spread': (ask - bid) if ask and bid else 0,
-                **(additional_data or {})
+                'bid': bid if bid is not None else price,
+                'ask': ask if ask is not None else price,
+                'spread': (ask - bid) if (ask is not None and bid is not None) else 0,
+                **(additional_data if additional_data is not None else {})
             }
             self.tick_data.append(tick_data)
             
@@ -143,7 +143,9 @@ class TickCollector:
                     self.aggregated_data[timeframe]['volumes'].pop(0)
                     
         except Exception as e:
+            # BIBBIA COMPLIANT: FAIL FAST - aggregation errors are critical for market data integrity
             self.collection_stats['aggregation_errors'] += 1
+            raise RuntimeError(f"FAIL FAST: Tick aggregation failed - critical for market data integrity: {e}")
     
     def get_tick_buffer(self) -> List[Dict[str, Any]]:
         """

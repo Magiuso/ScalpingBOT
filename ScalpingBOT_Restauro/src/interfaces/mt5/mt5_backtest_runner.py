@@ -929,13 +929,26 @@ class MT5BacktestRunner:
         converted_ticks = []
         
         for tick in batch:
-            # Extract fields from MT5 tick format
-            timestamp_str = tick.get('timestamp', '')
-            tick_last = tick.get('last', 0.0)
-            volume = tick.get('volume', 0.0)
-            bid = tick.get('bid', 0.0)
-            ask = tick.get('ask', 0.0)
-            symbol = tick.get('symbol', self.config.symbol)
+            # BIBBIA COMPLIANT: Extract fields from MT5 tick format - FAIL FAST
+            if 'timestamp' not in tick:
+                raise ValueError(f"FAIL FAST: Missing required 'timestamp' field in tick data")
+            if 'last' not in tick:
+                raise ValueError(f"FAIL FAST: Missing required 'last' field in tick data")
+            if 'volume' not in tick:
+                raise ValueError(f"FAIL FAST: Missing required 'volume' field in tick data")
+            if 'bid' not in tick:
+                raise ValueError(f"FAIL FAST: Missing required 'bid' field in tick data")
+            if 'ask' not in tick:
+                raise ValueError(f"FAIL FAST: Missing required 'ask' field in tick data")
+            if 'symbol' not in tick:
+                raise ValueError(f"FAIL FAST: Missing required 'symbol' field in tick data")
+            
+            timestamp_str = tick['timestamp']
+            tick_last = tick['last']
+            volume = tick['volume']
+            bid = tick['bid']
+            ask = tick['ask']
+            symbol = tick['symbol']
             
             # Calculate price from bid/ask for CFD data (when last=0)
             try:
@@ -998,7 +1011,7 @@ class MT5BacktestRunner:
                 window_start = max(0, tick_index - prediction_window_size + 1)
                 context_ticks = ticks[window_start:tick_index + 1]
                 
-                if len(context_ticks) < 10:  # Need minimum context
+                if len(context_ticks) < 20:  # Need minimum context for PivotPoints and other algorithms
                     continue  # Skip early ticks without sufficient context
                 
                 # Convert to format expected by analyzer
@@ -1089,9 +1102,15 @@ class MT5BacktestRunner:
             
             # BIBBIA COMPLIANT: FAIL FAST - require new test-based format
             if model_type == 'support_resistance':
-                if 'test_prediction' not in prediction_data:
+                # Check if prediction_data has nested structure from algorithm_bridge
+                if 'prediction_value' in prediction_data:
+                    actual_prediction = prediction_data['prediction_value']
+                else:
+                    actual_prediction = prediction_data
+                
+                if 'test_prediction' not in actual_prediction:
                     raise KeyError(f"FAIL FAST: Missing required 'test_prediction' field in S/R prediction at tick {tick_index}")
-                test_prediction = prediction_data['test_prediction']
+                test_prediction = actual_prediction['test_prediction']
                 print(f"    🧪 Test: {test_prediction}")
             print("")  # Empty line for readability
 

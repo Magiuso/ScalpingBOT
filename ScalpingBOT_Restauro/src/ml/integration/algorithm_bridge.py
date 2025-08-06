@@ -148,9 +148,10 @@ class AlgorithmBridge:
         return self.algorithm_registry[model_type]
     
     def execute_algorithm(self, model_type: ModelType, algorithm_name: str, 
-                         market_data: Dict[str, Any]) -> Dict[str, Any]:
+                         market_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Esegue algoritmo specificato per il ModelType
+        ANTI-SPAM: Può ritornare None se nessuna predizione significativa
         
         Args:
             model_type: Tipo di modello (SUPPORT_RESISTANCE, PATTERN_RECOGNITION, etc.)
@@ -158,7 +159,7 @@ class AlgorithmBridge:
             market_data: Dati di mercato processati
             
         Returns:
-            Risultati algoritmo in formato standardizzato
+            Risultati algoritmo in formato standardizzato oppure None se no prediction
             
         Raises:
             ValueError: Se model_type o algorithm_name non supportati
@@ -197,6 +198,10 @@ class AlgorithmBridge:
                 
             else:
                 raise ValueError(f"Unsupported model type: {model_type.value}")
+            
+            # ANTI-SPAM: Handle None results from any algorithm type
+            if result is None:
+                return None
             
             # Track execution time
             execution_time = (datetime.now() - execution_start).total_seconds()
@@ -407,7 +412,7 @@ class AlgorithmBridge:
         Returns:
             Callback function che può essere usata dal competition system
         """
-        def execute_callback(algorithm_name: str, market_data: Dict[str, Any]) -> Prediction:
+        def execute_callback(algorithm_name: str, market_data: Dict[str, Any]) -> Optional[Prediction]:
             """
             Callback per esecuzione algoritmi dal competition system
             
@@ -416,11 +421,15 @@ class AlgorithmBridge:
                 market_data: Dati di mercato
                 
             Returns:
-                Prediction object per competition system
+                Prediction object per competition system oppure None se no prediction
             """
             try:
                 # Execute algorithm through bridge
                 result = self.execute_algorithm(model_type, algorithm_name, market_data)
+                
+                # ANTI-SPAM: Handle None results (no significant predictions)
+                if result is None:
+                    return None
                 
                 # Convert to Prediction
                 if 'asset' not in market_data:

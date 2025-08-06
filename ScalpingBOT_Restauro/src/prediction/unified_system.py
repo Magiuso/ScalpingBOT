@@ -335,7 +335,7 @@ class UnifiedAnalyzerSystem:
                 try:
                     callback(asset, timestamp, price, volume, result)
                 except Exception as e:
-                    # Log callback error but don't fail the tick processing
+                    # BIBBIA COMPLIANT: FAIL FAST - callback errors can corrupt system state
                     self.event_collector.emit_manual_event(
                         EventType.ERROR_EVENT,
                         {
@@ -343,8 +343,9 @@ class UnifiedAnalyzerSystem:
                             'method': 'tick_callback',
                             'error': str(e)
                         },
-                        EventSeverity.ERROR
+                        EventSeverity.CRITICAL
                     )
+                    raise RuntimeError(f"FAIL FAST: Tick callback failed - system state may be corrupted: {e}")
             
             return result
             

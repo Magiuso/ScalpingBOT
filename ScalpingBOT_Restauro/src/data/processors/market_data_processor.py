@@ -31,8 +31,10 @@ class MarketDataProcessor:
     """Processor per elaborazione dati di mercato con feature engineering"""
     
     def __init__(self, config: Optional[AnalyzerConfig] = None):
-        """Inizializza il processor con configurazione ottimizzata"""
-        self.config = config or AnalyzerConfig()
+        """Inizializza il processor con configurazione ottimizzata - BIBBIA COMPLIANT"""
+        if config is None:
+            raise ValueError("FAIL FAST: MarketDataProcessor requires explicit configuration - no fallback allowed")
+        self.config = config
         self.processing_stats = {
             'total_preparations': 0,
             'last_preparation_time': None,

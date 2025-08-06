@@ -274,7 +274,9 @@ class BiasDetectionAlgorithms:
         try:
             # Multi-timeframe RSI analysis
             from ...data.processors.market_data_processor import MarketDataProcessor
-            processor = MarketDataProcessor()
+            from ...config.base.base_config import AnalyzerConfig
+            # BIBBIA COMPLIANT: Pass explicit config
+            processor = MarketDataProcessor(AnalyzerConfig())
             rsi_14 = processor._calculate_rsi(prices, 14)
             rsi_21 = processor._calculate_rsi(prices, 21)
             rsi_50 = processor._calculate_rsi(prices, 50)
@@ -623,7 +625,9 @@ class BiasDetectionAlgorithms:
         """Prepara technical features per Transformer"""
         # RSI
         from ...data.processors.market_data_processor import MarketDataProcessor
-        processor = MarketDataProcessor()
+        from ...config.base.base_config import AnalyzerConfig
+        # BIBBIA COMPLIANT: Pass explicit config
+        processor = MarketDataProcessor(AnalyzerConfig())
         rsi = processor._calculate_rsi(prices, 14)
         
         # Simple moving averages

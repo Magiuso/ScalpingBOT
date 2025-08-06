@@ -54,6 +54,26 @@ class SupportResistanceAlgorithms:
             'failed_predictions': 0,
             'last_execution': None
         }
+        
+        # NUOVO: Sistema di caching per PivotPoints con event-driven logic
+        self.pivot_cache = {
+            'initialization_time': None,
+            'accumulated_ticks': [],
+            'current_levels': {},
+            'next_recalc_time': None,
+            'performance_stats': {
+                'successful_predictions': 0,
+                'failed_predictions': 0
+            },
+            # Event-driven tracking per nuova logica
+            'last_price': None,  # Prezzo precedente per rilevare attraversamenti
+            'level_events': [],  # Storico eventi significativi
+            'consecutive_breaks': {  # Tracking rotture consecutive per direzione
+                'direction': None,  # 'UP' o 'DOWN'
+                'count': 0,
+                'levels_broken': []  # Lista livelli rotti in questa sequenza
+            }
+        }
     
     def get_model(self, model_name: str, asset: Optional[str] = None) -> Any:
         """Get model with asset-specific support - NO FALLBACKS (BIBBIA)"""
@@ -66,17 +86,17 @@ class SupportResistanceAlgorithms:
         
         return self.ml_models[asset_model_name]
     
-    def run_algorithm(self, algorithm_name: str, market_data: Dict[str, Any]) -> Dict[str, Any]:
+    def run_algorithm(self, algorithm_name: str, market_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Esegue algoritmo Support/Resistance specificato
-        ESTRATTO IDENTICO da src/Analyzer.py:12823-13036
+        ANTI-SPAM: Può ritornare None se non ci sono predizioni significative
         
         Args:
             algorithm_name: Nome algoritmo da eseguire
             market_data: Dati di mercato processati
             
         Returns:
-            Risultati algorithm con support/resistance levels
+            Risultati algoritmo con support/resistance levels oppure None se no prediction
         """
         self.algorithm_stats['executions'] += 1
         self.algorithm_stats['last_execution'] = datetime.now()
@@ -96,136 +116,451 @@ class SupportResistanceAlgorithms:
             
         return algorithms[algorithm_name](market_data)
     
-    def _pivot_points_classic(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _pivot_points_classic(self, market_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Implementazione Pivot Points classici
-        ESTRATTO IDENTICO da src/Analyzer.py:12826-12850
+        Implementazione Pivot Points con validazione dinamica e confidence adattiva
+        NUOVA VERSIONE: Calcolo ogni 6 ore con validazione real-time dei livelli
         """
         if 'price_history' not in market_data:
             raise KeyError("Critical field 'price_history' missing from market_data")
+        if 'timestamps' not in market_data:
+            raise KeyError("Critical field 'timestamps' missing from market_data")
+            
         prices = market_data['price_history']
-        if len(prices) < 20:
-            raise InsufficientDataError(required=20, available=len(prices), operation="PivotPoints_Classic")
+        timestamps = market_data['timestamps']
+        if not prices:
+            raise ValueError("FAIL FAST: Empty prices array - cannot determine current_price")
+        current_price = prices[-1]
+        current_time = datetime.now()
         
-        high = max(prices[-20:])
-        low = min(prices[-20:])
-        close = prices[-1]
+        # Parametri configurabili per USTEC
+        SIX_HOURS_SECONDS = 6 * 3600
+        MINIMUM_TICKS_FOR_CALC = 1000  # Almeno 1000 tick per calcolo affidabile
+        LEVEL_TOLERANCE_PERCENT = 0.0003  # 0.03% per USTEC (più stretto per ridurre spam)
         
-        pivot = (high + low + close) / 3
-        support1 = 2 * pivot - high
-        resistance1 = 2 * pivot - low
-        support2 = pivot - (high - low)
-        resistance2 = pivot + (high - low)
-        support3 = low - 2 * (high - pivot)
-        resistance3 = high + 2 * (pivot - low)
+        # FASE 1: INIZIALIZZAZIONE O ACCUMULO TICK (prime 6 ore)
+        if self.pivot_cache['initialization_time'] is None:
+            self.pivot_cache['initialization_time'] = current_time
+            self.pivot_cache['accumulated_ticks'] = []
+            self.pivot_cache['next_recalc_time'] = current_time
         
-        # BIBBIA COMPLIANT: Test-based predictions - validate S/R levels and generate predictions
-        current_price = close
+        # Accumula tick per il calcolo
+        if 'current_tick' in market_data:
+            tick_data = {
+                'price': current_price,
+                'timestamp': timestamps[-1] if timestamps else None,
+                # FAIL FAST: timestamp deve essere disponibile
+                'timestamp_fallback': current_time if not timestamps else None,
+                'volume': market_data.get('volume_history', [1])[-1] if 'volume_history' in market_data else 1
+            }
+            self.pivot_cache['accumulated_ticks'].append(tick_data)
+            
+            # Mantieni solo tick delle ultime 6 ore
+            cutoff_time = current_time.timestamp() - SIX_HOURS_SECONDS
+            self.pivot_cache['accumulated_ticks'] = [
+                t for t in self.pivot_cache['accumulated_ticks'] 
+                if isinstance(t['timestamp'], str) or t['timestamp'].timestamp() > cutoff_time
+            ]
         
-        # BIBBIA COMPLIANT: Single path linear logic - test which level is about to be tested
-        test_result = self._analyze_level_test(current_price, pivot, support1, support2, support3, resistance1, resistance2, resistance3, market_data)
+        # FASE 2: CALCOLO/RICALCOLO LIVELLI
+        needs_recalc = (
+            not self.pivot_cache['current_levels'] or 
+            current_time >= self.pivot_cache['next_recalc_time'] or
+            self._check_if_recalc_needed(current_price)
+        )
         
-        if not test_result['will_test_level']:
-            # No level being tested - return default test fields to satisfy bridge requirements
+        if needs_recalc and len(self.pivot_cache['accumulated_ticks']) >= MINIMUM_TICKS_FOR_CALC:
+            self._calculate_new_pivot_levels()
+            self.pivot_cache['next_recalc_time'] = current_time
+        
+        # Se non abbiamo ancora livelli calcolati, ritorna stato di accumulation
+        if not self.pivot_cache['current_levels']:
             return {
-                "support_levels": sorted([support3, support2, support1]),
-                "resistance_levels": sorted([resistance1, resistance2, resistance3]),
-                "pivot": pivot,
-                "confidence": 0.75,
-                "method": "Classic_Pivot_Points",
-                "test_prediction": "No level currently being tested",
+                "support_levels": [],
+                "resistance_levels": [],
+                "pivot": 0.0,
+                "confidence": 0.0,
+                "method": "PivotPoints_Dynamic",
+                "test_prediction": f"Accumulating data: {len(self.pivot_cache['accumulated_ticks'])}/{MINIMUM_TICKS_FOR_CALC} ticks",
                 "level_being_tested": 0.0,
                 "level_type": "none",
-                "expected_outcome": "none",
+                "expected_outcome": "waiting",
                 "prediction_generated": False
             }
         
-        # A level is being tested - generate prediction about its validity
+        # FASE 3: MONITORAGGIO EVENTI E PREDIZIONI
+        event_result = self._monitor_level_events(
+            current_price, 
+            current_time,
+            LEVEL_TOLERANCE_PERCENT,
+            market_data
+        )
+        
+        # Estrai livelli ordinati per output
+        levels = self.pivot_cache['current_levels']
+        support_levels = sorted([levels[k]['value'] for k in levels if 'S' in k])
+        resistance_levels = sorted([levels[k]['value'] for k in levels if 'R' in k])
+        if 'pivot' not in levels:
+            raise RuntimeError("FAIL FAST: Missing pivot level in current_levels - system integrity compromised")
+        pivot_value = levels['pivot']['value']
+        
+        # Se non ci sono eventi o predizioni da mostrare
+        if not event_result['has_event'] and not event_result['has_prediction']:
+            # SILENZIO - nessun evento significativo
+            return {
+                "support_levels": support_levels,
+                "resistance_levels": resistance_levels,
+                "pivot": pivot_value,
+                "confidence": 0.5,
+                "method": "PivotPoints_Dynamic",
+                "test_prediction": "",  # Silenzio durante monitoring normale
+                "level_being_tested": 0.0,
+                "level_type": "none", 
+                "expected_outcome": "monitoring",
+                "prediction_generated": False
+            }
+        
+        # Evento significativo o predizione da mostrare
         self.algorithm_stats['successful_predictions'] += 1
         
         return {
-            "support_levels": sorted([support3, support2, support1]),
-            "resistance_levels": sorted([resistance1, resistance2, resistance3]),
-            "pivot": pivot,
-            "confidence": test_result['confidence'],
-            "method": "Classic_Pivot_Points",
-            # NEW: Test-based prediction fields
-            "test_prediction": test_result['prediction_text'],
-            "level_being_tested": test_result['level_value'],
-            "level_type": test_result['level_type'],
-            "expected_outcome": test_result['expected_outcome'],
-            "prediction_generated": True
+            "support_levels": support_levels,
+            "resistance_levels": resistance_levels,
+            "pivot": pivot_value,
+            "confidence": event_result['confidence'],
+            "method": "PivotPoints_EventDriven",
+            "test_prediction": event_result['message'],
+            "level_being_tested": event_result.get('level_value', 0.0),
+            "level_type": event_result.get('level_type', 'none'),
+            "expected_outcome": event_result.get('expected_outcome', 'unknown'),
+            "prediction_generated": event_result['has_prediction'],
+            # Event metadata
+            "event_type": event_result.get('event_type', 'none'),
+            "level_action": event_result.get('level_action', 'none')  # 'broken', 'held', 'tested'
         }
 
-    def _analyze_level_test(self, current_price: float, pivot: float, 
-                           support1: float, support2: float, support3: float,
-                           resistance1: float, resistance2: float, resistance3: float,
-                           market_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _calculate_new_pivot_levels(self):
         """
-        BIBBIA COMPLIANT: Analyze if price is testing a S/R level - STATELESS single execution
-        No state persistence, no multiple paths, linear logic only
+        Calcola nuovi livelli pivot basati sui tick accumulati
         """
+        if not self.pivot_cache['accumulated_ticks']:
+            return
         
-        # BIBBIA COMPLIANT: Define test tolerance (price must be very close to level)
-        test_tolerance = current_price * 0.0005  # 0.05% tolerance for level testing
+        # Estrai prezzi dai tick accumulati
+        prices = [t['price'] for t in self.pivot_cache['accumulated_ticks']]
         
-        # BIBBIA COMPLIANT: Linear checks - find closest level being tested
-        levels_to_check = [
-            (support1, "Support1", "will_hold"),
-            (support2, "Support2", "will_hold"), 
-            (support3, "Support3", "will_hold"),
-            (resistance1, "Resistance1", "will_hold"),
-            (resistance2, "Resistance2", "will_hold"),
-            (resistance3, "Resistance3", "will_hold"),
-            (pivot, "Pivot", "will_act_as_magnet")
-        ]
+        # Calcola H/L/C per il periodo
+        high = max(prices)
+        low = min(prices)
+        close = prices[-1]
         
-        # BIBBIA COMPLIANT: Find the level currently being tested (closest within tolerance)
-        closest_level = None
-        min_distance = float('inf')
+        # Calcola pivot e livelli
+        pivot = (high + low + close) / 3
+        s1 = 2 * pivot - high
+        r1 = 2 * pivot - low
+        s2 = pivot - (high - low)
+        r2 = pivot + (high - low)
+        s3 = low - 2 * (high - pivot)
+        r3 = high + 2 * (pivot - low)
         
-        for level_value, level_name, expected_behavior in levels_to_check:
-            distance = abs(current_price - level_value)
-            if distance <= test_tolerance and distance < min_distance:
-                min_distance = distance
-                closest_level = {
-                    'level_value': level_value,
-                    'level_type': level_name,
-                    'expected_outcome': expected_behavior,
-                    'distance': distance
+        # Preserva statistiche esistenti o inizializza nuove
+        def create_or_update_level(key, value):
+            if key in self.pivot_cache['current_levels']:
+                # Mantieni statistiche ma aggiorna valore
+                level = self.pivot_cache['current_levels'][key]
+                level['value'] = value
+                level['last_calc_time'] = datetime.now()
+            else:
+                # Crea nuovo livello con tracking per eventi
+                self.pivot_cache['current_levels'][key] = {
+                    'value': value,
+                    'confidence': 0.5,  # Inizia neutrale
+                    'bounces': 0,
+                    'tests': 0,
+                    'broken': False,
+                    'break_time': None,
+                    'last_test': None,
+                    'last_calc_time': datetime.now(),
+                    'was_near_last_tick': False  # Nuovo flag per tracking eventi
                 }
         
-        if not closest_level:
-            # No level being tested
+        # Aggiorna tutti i livelli
+        create_or_update_level('pivot', pivot)
+        create_or_update_level('S1', s1)
+        create_or_update_level('S2', s2)
+        create_or_update_level('S3', s3)
+        create_or_update_level('R1', r1)
+        create_or_update_level('R2', r2)
+        create_or_update_level('R3', r3)
+    
+    def _check_if_recalc_needed(self, current_price: float) -> bool:
+        """
+        Verifica se è necessario ricalcolare i livelli
+        Ricalcola se:
+        1. Un livello con alta confidence è stato rotto
+        2. Multiple livelli sono stati rotti recentemente
+        3. Il pivot è stato rotto con momentum forte
+        """
+        if not self.pivot_cache['current_levels']:
+            return True
+        
+        levels = self.pivot_cache['current_levels']
+        recent_breaks = 0
+        high_confidence_break = False
+        
+        for key, level in levels.items():
+            if level.get('broken', False):
+                # Controlla se è un break recente (ultimi 30 minuti)
+                if level.get('break_time'):
+                    time_since_break = (datetime.now() - level['break_time']).seconds
+                    if time_since_break < 1800:  # 30 minuti
+                        recent_breaks += 1
+                        if level['confidence'] > 0.7:
+                            high_confidence_break = True
+        
+        # Decisione ricalcolo
+        return high_confidence_break or recent_breaks >= 2
+    
+    def _monitor_level_events(self, current_price: float, current_time: datetime,
+                             tolerance_percent: float, 
+                             market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Monitora eventi significativi sui livelli pivot
+        
+        LOGICA CORRETTA:
+        ✅ MONITORING LOGS: "Prezzo testa S1@22691 → TIENE" o "S1@22691 → ROTTO"
+        ✅ PREDIZIONI solo dopo rotture: "S1 rotto → prossimo target S2@22682"  
+        ✅ SILENZIO durante range normale
+        """
+        if not self.pivot_cache['current_levels']:
             return {
-                'will_test_level': False,
-                'prediction_text': "No level currently being tested",
-                'confidence': 0.0,
-                'level_value': 0.0,
-                'level_type': 'none',
-                'expected_outcome': 'none'
+                'has_event': False,
+                'has_prediction': False,
+                'message': '',
+                'confidence': 0.0
             }
         
-        # BIBBIA COMPLIANT: Generate test prediction
-        level_val = closest_level['level_value']
-        level_type = closest_level['level_type']
-        expected = closest_level['expected_outcome']
+        test_tolerance = current_price * tolerance_percent
+        last_price = self.pivot_cache['last_price']
         
-        # BIBBIA COMPLIANT: Calculate confidence based on level strength and distance
-        base_confidence = 0.80 if 'Support1' in level_type or 'Resistance1' in level_type else 0.70
-        distance_factor = max(0.1, 1.0 - (closest_level['distance'] / test_tolerance))
-        final_confidence = base_confidence * distance_factor
+        # Prima volta - inizializza tracking
+        if last_price is None:
+            self.pivot_cache['last_price'] = current_price
+            return {
+                'has_event': False, 
+                'has_prediction': False,
+                'message': '',
+                'confidence': 0.0
+            }
         
-        prediction_text = f"Price testing {level_type}@{level_val:.2f} - Expected: {expected}"
+        # Analizza movimenti per eventi significativi
+        for level_key, level_data in self.pivot_cache['current_levels'].items():
+            level_value = level_data['value']
+            
+            # Skip livelli già rotti permanentemente
+            if level_data.get('broken', False):
+                continue
+            
+            # Verifica se c'è stata una rottura effettiva
+            level_crossed = self._detect_level_cross(last_price, current_price, level_value, level_key)
+            
+            if level_crossed:
+                # ROTTURA CONFERMATA - aggiorna stato e traccia consecutive breaks
+                level_data['broken'] = True
+                level_data['break_time'] = current_time
+                
+                # Determina direzione della rottura
+                break_direction = 'DOWN' if current_price < level_value else 'UP'
+                
+                # Aggiorna tracking rotture consecutive
+                consecutive_breaks = self.pivot_cache['consecutive_breaks']
+                
+                if consecutive_breaks['direction'] == break_direction:
+                    # Stessa direzione - incrementa contatore
+                    consecutive_breaks['count'] += 1
+                    consecutive_breaks['levels_broken'].append(level_key)
+                else:
+                    # Nuova direzione - reset contatore
+                    consecutive_breaks['direction'] = break_direction
+                    consecutive_breaks['count'] = 1
+                    consecutive_breaks['levels_broken'] = [level_key]
+                
+                # LOGICA PREDIZIONE: Solo dopo 2+ rotture consecutive
+                should_generate_prediction = consecutive_breaks['count'] >= 2
+                
+                if should_generate_prediction:
+                    # Genera predizione per prossimo target
+                    next_target = self._find_next_target_after_break(level_key, level_value, current_price)
+                    
+                    self.pivot_cache['last_price'] = current_price
+                    return {
+                        'has_event': True,
+                        'has_prediction': True,
+                        'message': f"💥 {level_key}@{level_value:.2f} ROTTO → Target: {next_target['name']}@{next_target['value']:.2f} (Break #{consecutive_breaks['count']})",
+                        'confidence': next_target['confidence'],
+                        'event_type': 'level_break',
+                        'level_value': level_value,
+                        'level_type': level_key,
+                        'expected_outcome': next_target['direction'],
+                        'level_action': 'broken'
+                    }
+                else:
+                    # Solo logga la rottura, senza predizione
+                    self.pivot_cache['last_price'] = current_price
+                    return {
+                        'has_event': True,
+                        'has_prediction': False,
+                        'message': f"💥 {level_key}@{level_value:.2f} ROTTO ({consecutive_breaks['count']}/2 breaks {break_direction})",
+                        'confidence': 0.7,
+                        'event_type': 'level_break',
+                        'level_value': level_value,
+                        'level_type': level_key,
+                        'expected_outcome': break_direction.lower(),
+                        'level_action': 'broken'
+                    }
+            
+            # Verifica se stiamo testando un livello (vicini ma non rotti)
+            current_distance = abs(current_price - level_value)
+            was_near = level_data.get('was_near_last_tick', False)
+            is_near_now = current_distance <= test_tolerance
+            
+            # Se ci stiamo allontanando da un livello che stavamo testando = TIENE
+            if was_near and not is_near_now and not level_crossed:
+                level_data['bounces'] += 1
+                level_data['confidence'] = min(1.0, level_data['confidence'] + 0.1)
+                
+                # RESET CONSECUTIVE BREAKS quando un livello tiene
+                # Un bounce interrompe la sequenza di rotture
+                consecutive_breaks = self.pivot_cache['consecutive_breaks']
+                consecutive_breaks['direction'] = None
+                consecutive_breaks['count'] = 0
+                consecutive_breaks['levels_broken'] = []
+                
+                self.pivot_cache['last_price'] = current_price
+                return {
+                    'has_event': True,
+                    'has_prediction': False,
+                    'message': f"✋ {level_key}@{level_value:.2f} TIENE (bounce #{level_data['bounces']}) - Reset break sequence",
+                    'confidence': level_data['confidence'],
+                    'event_type': 'level_hold',
+                    'level_value': level_value,
+                    'level_type': level_key,
+                    'expected_outcome': 'held',
+                    'level_action': 'held'
+                }
+            
+            # Aggiorna flag di vicinanza per prossimo tick
+            level_data['was_near_last_tick'] = is_near_now
+        
+        # Aggiorna last_price per prossimo confronto
+        self.pivot_cache['last_price'] = current_price
+        
+        # SILENZIO - nessun evento significativo
+        return {
+            'has_event': False,
+            'has_prediction': False, 
+            'message': '',
+            'confidence': 0.0
+        }
+    
+    def _detect_level_cross(self, last_price: float, current_price: float, 
+                           level_value: float, level_key: str) -> bool:
+        """
+        Rileva se il prezzo ha effettivamente attraversato un livello
+        
+        Returns:
+            True se c'è stata una rottura effettiva
+        """
+        # Support/Pivot: rotto se eravamo sopra e ora siamo sotto
+        if 'S' in level_key or level_key == 'pivot':
+            return last_price >= level_value and current_price < level_value
+            
+        # Resistance: rotto se eravamo sotto e ora siamo sopra  
+        elif 'R' in level_key:
+            return last_price <= level_value and current_price > level_value
+            
+        return False
+    
+    def _find_next_target_after_break(self, broken_level_key: str, broken_level_value: float,
+                                     current_price: float) -> Dict[str, Any]:
+        """
+        Trova il prossimo target dopo una rottura
+        
+        Returns:
+            Dict con dettagli del prossimo target
+        """
+        levels = self.pivot_cache['current_levels']
+        
+        # Determina direzione della rottura
+        if current_price < broken_level_value:
+            # Rottura verso il basso - cerca prossimo support
+            direction = 'DOWN'
+            candidates = []
+            for key, level in levels.items():
+                if (('S' in key or key == 'pivot') and 
+                    level['value'] < current_price and 
+                    not level.get('broken', False)):
+                    candidates.append({
+                        'name': key,
+                        'value': level['value'],
+                        'confidence': level['confidence'],
+                        'distance': abs(level['value'] - current_price)
+                    })
+        else:
+            # Rottura verso l'alto - cerca prossima resistance
+            direction = 'UP'
+            candidates = []
+            for key, level in levels.items():
+                if (('R' in key or key == 'pivot') and 
+                    level['value'] > current_price and 
+                    not level.get('broken', False)):
+                    candidates.append({
+                        'name': key,
+                        'value': level['value'], 
+                        'confidence': level['confidence'],
+                        'distance': abs(level['value'] - current_price)
+                    })
+        
+        # Scegli il target più vicino
+        if candidates:
+            next_target = min(candidates, key=lambda x: x['distance'])
+            return {
+                'name': next_target['name'],
+                'value': next_target['value'],
+                'direction': direction,
+                'confidence': min(0.9, next_target['confidence'] + 0.15)
+            }
+        
+        # Nessun livello disponibile - calcola target esteso
+        extension_distance = abs(current_price - broken_level_value) * 1.618  # Golden ratio extension
+        if direction == 'DOWN':
+            target_value = current_price - extension_distance
+            target_name = 'Extended_Support'
+        else:
+            target_value = current_price + extension_distance 
+            target_name = 'Extended_Resistance'
         
         return {
-            'will_test_level': True,
-            'prediction_text': prediction_text,
-            'confidence': final_confidence,
-            'level_value': level_val,
-            'level_type': level_type,
-            'expected_outcome': expected
+            'name': target_name,
+            'value': target_value,
+            'direction': direction,
+            'confidence': 0.65
         }
+    
+    def _calculate_momentum(self, market_data: Dict[str, Any]) -> float:
+        """
+        Calcola momentum del prezzo per predizioni più accurate
+        """
+        if 'price_history' not in market_data:
+            raise KeyError("FAIL FAST: Missing 'price_history' required for momentum calculation")
+        if len(market_data['price_history']) < 50:
+            raise InsufficientDataError(required=50, available=len(market_data['price_history']), operation="Momentum_Calculation")
+        
+        prices = market_data['price_history']
+        # Momentum semplice: variazione % ultimi 50 tick
+        momentum = (prices[-1] - prices[-50]) / prices[-50] * 100
+        return momentum
+    
     
     def _volume_profile_advanced(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -489,7 +824,9 @@ class SupportResistanceAlgorithms:
         log_returns = np.append(log_returns, 0)
         
         # Volume features
-        volume_mean = np.mean(volumes) if len(volumes) > 0 else 1.0
+        if len(volumes) == 0:
+            raise ValueError("FAIL FAST: Empty volumes array - cannot calculate volume_mean")
+        volume_mean = np.mean(volumes)
         volume_ratio = volumes / max(volume_mean, 1e-10)
         
         # Technical indicators (semplificati)
