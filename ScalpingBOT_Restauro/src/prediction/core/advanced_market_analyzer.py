@@ -840,7 +840,7 @@ class AdvancedMarketAnalyzer:
                                         
                                         print(f"        ✅ {algorithm_name} trained successfully")
                                     else:
-                                        print(f"        ❌ {algorithm_name} training failed: {sr_result['message']}")
+                                        raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {sr_result['message']}")
                                         
                                 elif 'Transformer' in algorithm_name:
                                     # Transformer training - requires ML features
@@ -893,7 +893,7 @@ class AdvancedMarketAnalyzer:
                                         
                                         print(f"        ✅ {algorithm_name} trained successfully")
                                     else:
-                                        print(f"        ❌ {algorithm_name} training failed: {transformer_result['message']}")
+                                        raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {transformer_result['message']}")
                                     
                                 else:
                                     # Classical S/R algorithms (VolumeProfile, StatisticalLevels, etc.) - EVALUATE performance
@@ -1012,7 +1012,7 @@ class AdvancedMarketAnalyzer:
                                         
                                         print(f"        ✅ {algorithm_name} trained successfully")
                                     else:
-                                        print(f"        ❌ {algorithm_name} training failed: {pattern_result['message']}")
+                                        raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {pattern_result['message']}")
                                         
                                 elif 'CNN' in algorithm_name:
                                     # CNN training - requires ML features
@@ -1067,7 +1067,7 @@ class AdvancedMarketAnalyzer:
                                         
                                         print(f"        ✅ {algorithm_name} trained successfully")
                                     else:
-                                        print(f"        ❌ {algorithm_name} training failed: {cnn_result['message']}")
+                                        raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {cnn_result['message']}")
                                     
                                 elif 'Transformer' in algorithm_name:
                                     # Transformer training - requires ML features
@@ -1120,7 +1120,7 @@ class AdvancedMarketAnalyzer:
                                         
                                         print(f"        ✅ {algorithm_name} trained successfully")
                                     else:
-                                        print(f"        ❌ {algorithm_name} training failed: {transformer_result['message']}")
+                                        raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {transformer_result['message']}")
                                     
                                 else:
                                     # Classical Pattern algorithms - EVALUATE performance instead of fake training
@@ -1227,7 +1227,7 @@ class AdvancedMarketAnalyzer:
                                         
                                         print(f"        ✅ {algorithm_name} trained successfully")
                                     else:
-                                        print(f"        ❌ {algorithm_name} training failed: {bias_result['message']}")
+                                        raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {bias_result['message']}")
                                         
                                 elif 'Transformer' in algorithm_name:
                                     # Transformer training - requires ML features
@@ -1280,7 +1280,7 @@ class AdvancedMarketAnalyzer:
                                         
                                         print(f"        ✅ {algorithm_name} trained successfully")
                                     else:
-                                        print(f"        ❌ {algorithm_name} training failed: {transformer_result['message']}")
+                                        raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {transformer_result['message']}")
                                     
                                 else:
                                     # Classical Bias Detection algorithms - EVALUATE performance
@@ -1388,7 +1388,7 @@ class AdvancedMarketAnalyzer:
                                         
                                         print(f"        ✅ {algorithm_name} trained successfully")
                                     else:
-                                        print(f"        ❌ {algorithm_name} training failed: {trend_result['message']}")
+                                        raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {trend_result['message']}")
                                         
                                 elif 'Transformer' in algorithm_name:
                                     # Transformer training - requires ML features
@@ -1441,7 +1441,7 @@ class AdvancedMarketAnalyzer:
                                         
                                         print(f"        ✅ {algorithm_name} trained successfully")
                                     else:
-                                        print(f"        ❌ {algorithm_name} training failed: {transformer_result['message']}")
+                                        raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {transformer_result['message']}")
                                 
                                 elif 'RandomForest' in algorithm_name or 'GradientBoosting' in algorithm_name:
                                     # Sklearn ML algorithms - EVALUATE performance instead of fake training
@@ -1573,7 +1573,7 @@ class AdvancedMarketAnalyzer:
                                         
                                         print(f"        ✅ {algorithm_name} trained successfully")
                                     else:
-                                        print(f"        ❌ {algorithm_name} training failed: {volatility_result['message']}")
+                                        raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {volatility_result['message']}")
                                         
                                 elif 'GARCH' in algorithm_name:
                                     # GARCH evaluation using existing GARCHVolatilityPredictor
