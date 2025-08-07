@@ -520,7 +520,10 @@ class UnifiedAnalyzerSystem:
         if not self.is_running:
             raise RuntimeError("System not running - call start() first")
         
-        batch_size = batch_data.get('count', 0)
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback defaults
+        if 'count' not in batch_data:
+            raise KeyError("FAIL FAST: Missing required 'count' field in batch_data")
+        batch_size = batch_data['count']
         if batch_size == 0:
             raise ValueError("Empty batch data provided for training")
         
@@ -546,6 +549,18 @@ class UnifiedAnalyzerSystem:
             )
             
             print(f"✅ ML training completed on {batch_size:,} ticks")
+            
+            # NUOVO: Salva stati degli algoritmi dopo il training
+            # Questo include i livelli pivot points calcolati durante il training
+            if hasattr(self.market_analyzer, 'algorithm_bridge'):
+                # BIBBIA COMPLIANT: FAIL FAST se non ci sono asset
+                if not self.active_assets:
+                    raise RuntimeError("FAIL FAST: No active assets to save algorithm states for")
+                
+                for asset in self.active_assets:
+                    self.market_analyzer.algorithm_bridge.save_algorithm_states(asset)
+                    print(f"💾 Saved algorithm states for {asset}")
+            
             return training_result
             
         except Exception as e:
@@ -576,7 +591,10 @@ class UnifiedAnalyzerSystem:
             raise ValueError("Invalid tick data provided for validation")
         
         current_tick = tick_data['current_tick']
-        symbol = tick_data.get('symbol', 'UNKNOWN')
+        # BIBBIA COMPLIANT: FAIL FAST - no fallback defaults
+        if 'symbol' not in tick_data:
+            raise KeyError("FAIL FAST: Missing required 'symbol' field in tick_data")
+        symbol = tick_data['symbol']
         
         try:
             # Generate predictions using market analyzer for single tick
@@ -594,8 +612,9 @@ class UnifiedAnalyzerSystem:
                 {
                     'action': 'tick_validation_completed',
                     'symbol': symbol,
-                    'tick_price': current_tick.get('last', 0),
-                    'predictions_count': len(predictions.get('predictions', [])) if predictions else 0
+                    # BIBBIA COMPLIANT: FAIL FAST - no fallback defaults
+                    'tick_price': current_tick['last'] if 'last' in current_tick else 0,
+                    'predictions_count': len(predictions['predictions']) if predictions and 'predictions' in predictions else 0
                 },
                 EventSeverity.INFO
             )

@@ -1026,10 +1026,7 @@ class MT5BacktestRunner:
                 
                 processed_count += 1
                 
-                # Progress reporting every 1000 ticks
-                if processed_count % 1000 == 0:
-                    progress_pct = (tick_index + 1) / len(ticks) * 100
-                    print(f"  🔮 Tick-by-tick progress: {processed_count:,}/{len(ticks):,} ({progress_pct:.1f}%)")
+                # Progress reporting removed per user request
                 
             except Exception as e:
                 # FAIL FAST - any tick processing error stops validation

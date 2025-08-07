@@ -749,6 +749,16 @@ class AdvancedMarketAnalyzer:
                     else:
                         print(f"      ⚡ Skipping ML feature generation - only classical algorithms selected")
                     
+                    # OPTIMIZATION: Train ONLY ModelTypes that have selected algorithms
+                    # Determine which ModelTypes are needed based on selected algorithms
+                    selected_model_types = set()
+                    for algorithm_name in selected_algorithm_names:
+                        model_type = self._get_model_type_for_algorithm(algorithm_name)
+                        if model_type:
+                            selected_model_types.add(model_type)
+                    
+                    print(f"      🎯 Training ONLY selected ModelTypes: {[mt.value for mt in selected_model_types]}")
+                    
                     # Train models for each type
                     trained_models = {}
                     training_success_count = 0
@@ -772,7 +782,7 @@ class AdvancedMarketAnalyzer:
                                 
                                 # BIBBIA COMPLIANT: Algorithm-specific directory
                                 algorithm_safe_name = algorithm_name.lower().replace('_', '_')
-                                sr_save_dir = f"{self.data_path}/{asset}/models/support_resistance/{algorithm_safe_name}"
+                                sr_save_dir = f"{analyzer.data_path}/models/support_resistance/{algorithm_safe_name}"
                                 os.makedirs(sr_save_dir, exist_ok=True)
                                 
                                 # Train algorithm based on type
@@ -943,7 +953,7 @@ class AdvancedMarketAnalyzer:
                                 
                                 # BIBBIA COMPLIANT: Algorithm-specific directory
                                 algorithm_safe_name = algorithm_name.lower().replace('_', '_')
-                                pattern_save_dir = f"{self.data_path}/{asset}/models/pattern_recognition/{algorithm_safe_name}"
+                                pattern_save_dir = f"{analyzer.data_path}/models/pattern_recognition/{algorithm_safe_name}"
                                 os.makedirs(pattern_save_dir, exist_ok=True)
                                 
                                 # Train algorithm based on type
@@ -1157,7 +1167,7 @@ class AdvancedMarketAnalyzer:
                                 
                                 # BIBBIA COMPLIANT: Algorithm-specific directory
                                 algorithm_safe_name = algorithm_name.lower().replace('_', '_')
-                                bias_save_dir = f"{self.data_path}/{asset}/models/bias_detection/{algorithm_safe_name}"
+                                bias_save_dir = f"{analyzer.data_path}/models/bias_detection/{algorithm_safe_name}"
                                 os.makedirs(bias_save_dir, exist_ok=True)
                                 
                                 # Train algorithm based on type
@@ -1316,7 +1326,7 @@ class AdvancedMarketAnalyzer:
                                 
                                 # BIBBIA COMPLIANT: Algorithm-specific directory
                                 algorithm_safe_name = algorithm_name.lower().replace('_', '_')
-                                trend_save_dir = f"{self.data_path}/{asset}/models/trend_analysis/{algorithm_safe_name}"
+                                trend_save_dir = f"{analyzer.data_path}/models/trend_analysis/{algorithm_safe_name}"
                                 os.makedirs(trend_save_dir, exist_ok=True)
                                 
                                 # Train algorithm based on type
@@ -1501,7 +1511,7 @@ class AdvancedMarketAnalyzer:
                                 
                                 # BIBBIA COMPLIANT: Algorithm-specific directory
                                 algorithm_safe_name = algorithm_name.lower().replace('_', '_')
-                                volatility_save_dir = f"{self.data_path}/{asset}/models/volatility_prediction/{algorithm_safe_name}"
+                                volatility_save_dir = f"{analyzer.data_path}/models/volatility_prediction/{algorithm_safe_name}"
                                 os.makedirs(volatility_save_dir, exist_ok=True)
                                 
                                 # Train algorithm based on type
@@ -2049,6 +2059,46 @@ class AdvancedMarketAnalyzer:
         except Exception as e:
             print(f"    ❌ Failed to create model instance for {algorithm_name}: {e}")
             return None
+    
+    def _get_model_type_for_algorithm(self, algorithm_name: str) -> Optional[ModelType]:
+        """Get ModelType enum for algorithm name - BIBBIA COMPLIANT"""
+        # Direct mapping for known algorithms
+        algorithm_to_model_type = {
+            # Support/Resistance
+            "PivotPoints_Classic": ModelType.SUPPORT_RESISTANCE,
+            "VolumeProfile_Advanced": ModelType.SUPPORT_RESISTANCE, 
+            "LSTM_SupportResistance": ModelType.SUPPORT_RESISTANCE,
+            "StatisticalLevels_ML": ModelType.SUPPORT_RESISTANCE,
+            "Transformer_Levels": ModelType.SUPPORT_RESISTANCE,
+            
+            # Pattern Recognition  
+            "CNN_PatternRecognizer": ModelType.PATTERN_RECOGNITION,
+            "Classical_Patterns": ModelType.PATTERN_RECOGNITION,
+            "LSTM_Sequences": ModelType.PATTERN_RECOGNITION, 
+            "Transformer_Patterns": ModelType.PATTERN_RECOGNITION,
+            "Ensemble_Patterns": ModelType.PATTERN_RECOGNITION,
+            
+            # Bias Detection
+            "Sentiment_LSTM": ModelType.BIAS_DETECTION,
+            "VolumePrice_Analysis": ModelType.BIAS_DETECTION,
+            "Momentum_ML": ModelType.BIAS_DETECTION,
+            "Transformer_Bias": ModelType.BIAS_DETECTION, 
+            "MultiModal_Bias": ModelType.BIAS_DETECTION,
+            
+            # Trend Analysis
+            "RandomForest_Trend": ModelType.TREND_ANALYSIS,
+            "LSTM_TrendPrediction": ModelType.TREND_ANALYSIS,
+            "GradientBoosting_Trend": ModelType.TREND_ANALYSIS,
+            "Transformer_Trend": ModelType.TREND_ANALYSIS,
+            "Ensemble_Trend": ModelType.TREND_ANALYSIS,
+            
+            # Volatility Prediction
+            "GARCH_Volatility": ModelType.VOLATILITY_PREDICTION,
+            "LSTM_Volatility": ModelType.VOLATILITY_PREDICTION, 
+            "Realized_Volatility": ModelType.VOLATILITY_PREDICTION
+        }
+        
+        return algorithm_to_model_type.get(algorithm_name)
     
     def _evaluate_classical_algorithm(self, algorithm_name: str, asset: str, asset_ticks: List[Dict], 
                                      algorithm_type: str) -> Dict[str, Any]:

@@ -77,8 +77,13 @@ class AlgorithmBridge:
             ml_models: Dictionary dei modelli ML (LSTM, CNN, Transformer, etc.)
             logger: Logger per eventi
         """
-        self.ml_models = ml_models or {}
-        self.logger = logger or logging.getLogger(__name__)
+        if ml_models is None:
+            ml_models = {}
+        self.ml_models = ml_models
+        
+        if logger is None:
+            logger = logging.getLogger(__name__)
+        self.logger = logger
         
         # Initialize algorithm engines
         self.sr_algorithms = create_support_resistance_algorithms(ml_models)
@@ -148,10 +153,9 @@ class AlgorithmBridge:
         return self.algorithm_registry[model_type]
     
     def execute_algorithm(self, model_type: ModelType, algorithm_name: str, 
-                         market_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                         market_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Esegue algoritmo specificato per il ModelType
-        ANTI-SPAM: Può ritornare None se nessuna predizione significativa
         
         Args:
             model_type: Tipo di modello (SUPPORT_RESISTANCE, PATTERN_RECOGNITION, etc.)
@@ -159,7 +163,7 @@ class AlgorithmBridge:
             market_data: Dati di mercato processati
             
         Returns:
-            Risultati algoritmo in formato standardizzato oppure None se no prediction
+            Risultati algoritmo in formato standardizzato
             
         Raises:
             ValueError: Se model_type o algorithm_name non supportati
@@ -170,38 +174,28 @@ class AlgorithmBridge:
         self.execution_stats['last_execution'] = execution_start
         
         try:
-            # Route algorithm execution to appropriate engine
-            if model_type == ModelType.SUPPORT_RESISTANCE:
-                if algorithm_name not in self.algorithm_registry[ModelType.SUPPORT_RESISTANCE]:
-                    raise ValueError(f"Algorithm {algorithm_name} not available for {model_type.value}")
-                result = self.sr_algorithms.run_algorithm(algorithm_name, market_data)
-                
-            elif model_type == ModelType.PATTERN_RECOGNITION:
-                if algorithm_name not in self.algorithm_registry[ModelType.PATTERN_RECOGNITION]:
-                    raise ValueError(f"Algorithm {algorithm_name} not available for {model_type.value}")
-                result = self.pattern_algorithms.run_algorithm(algorithm_name, market_data)
-                
-            elif model_type == ModelType.BIAS_DETECTION:
-                if algorithm_name not in self.algorithm_registry[ModelType.BIAS_DETECTION]:
-                    raise ValueError(f"Algorithm {algorithm_name} not available for {model_type.value}")
-                result = self.bias_algorithms.run_algorithm(algorithm_name, market_data)
-                
-            elif model_type == ModelType.TREND_ANALYSIS:
-                if algorithm_name not in self.algorithm_registry[ModelType.TREND_ANALYSIS]:
-                    raise ValueError(f"Algorithm {algorithm_name} not available for {model_type.value}")
-                result = self.trend_algorithms.run_algorithm(algorithm_name, market_data)
-                
-            elif model_type == ModelType.VOLATILITY_PREDICTION:
-                if algorithm_name not in self.algorithm_registry[ModelType.VOLATILITY_PREDICTION]:
-                    raise ValueError(f"Algorithm {algorithm_name} not available for {model_type.value}")
-                result = self.volatility_algorithms.run_algorithm(algorithm_name, market_data)
-                
-            else:
-                raise ValueError(f"Unsupported model type: {model_type.value}")
+            # BIBBIA COMPLIANT: Single path dictionary lookup - NO elif chains
+            algorithm_engines = {
+                ModelType.SUPPORT_RESISTANCE: self.sr_algorithms,
+                ModelType.PATTERN_RECOGNITION: self.pattern_algorithms,
+                ModelType.BIAS_DETECTION: self.bias_algorithms,
+                ModelType.TREND_ANALYSIS: self.trend_algorithms,
+                ModelType.VOLATILITY_PREDICTION: self.volatility_algorithms
+            }
             
-            # ANTI-SPAM: Handle None results from any algorithm type
-            if result is None:
-                return None
+            # FAIL FAST if unsupported model type
+            if model_type not in algorithm_engines:
+                raise ValueError(f"FAIL FAST: Unsupported model type: {model_type.value}")
+            
+            # FAIL FAST if algorithm not available for model type
+            if algorithm_name not in self.algorithm_registry[model_type]:
+                raise ValueError(f"FAIL FAST: Algorithm {algorithm_name} not available for {model_type.value}")
+            
+            # Execute through appropriate engine
+            engine = algorithm_engines[model_type]
+            result = engine.run_algorithm(algorithm_name, market_data)
+            
+            # Process all results - logic itself is anti-spam
             
             # Track execution time
             execution_time = (datetime.now() - execution_start).total_seconds()
@@ -246,108 +240,111 @@ class AlgorithmBridge:
             raise KeyError("Missing required field 'algorithm_name' from execution metadata")
         algorithm_name = metadata['algorithm_name']
         
-        # Extract prediction components based on model type
-        if model_type == ModelType.SUPPORT_RESISTANCE:
-            if 'support_levels' not in algorithm_result:
-                raise KeyError("Missing required field 'support_levels' from S/R algorithm result")
-            if 'resistance_levels' not in algorithm_result:
-                raise KeyError("Missing required field 'resistance_levels' from S/R algorithm result") 
-            if 'method' not in algorithm_result:
-                raise KeyError("Missing required field 'method' from S/R algorithm result")
-            if 'confidence' not in algorithm_result:
-                raise KeyError("Missing required field 'confidence' from S/R algorithm result")
+        # BIBBIA COMPLIANT: Dictionary-based prediction conversion - NO elif chains
+        def extract_support_resistance_prediction(result):
+            # Validate required fields
+            required_fields = ['support_levels', 'resistance_levels', 'method', 'confidence', 
+                             'test_prediction', 'level_being_tested', 'expected_outcome']
+            for field in required_fields:
+                if field not in result:
+                    raise KeyError(f"FAIL FAST: Missing required field '{field}' from S/R algorithm result")
             
-            # BIBBIA COMPLIANT: Use new test-based prediction format - eliminate old format
-            if 'test_prediction' not in algorithm_result:
-                raise KeyError("Missing required field 'test_prediction' from S/R algorithm result")
-            if 'level_being_tested' not in algorithm_result:
-                raise KeyError("Missing required field 'level_being_tested' from S/R algorithm result")
-            if 'expected_outcome' not in algorithm_result:
-                raise KeyError("Missing required field 'expected_outcome' from S/R algorithm result")
-            
-            prediction_value = {
-                'support_levels': algorithm_result['support_levels'],
-                'resistance_levels': algorithm_result['resistance_levels'],
-                'pivot': algorithm_result['pivot'] if 'pivot' in algorithm_result else None,
-                'method': algorithm_result['method'],
-                'test_prediction': algorithm_result['test_prediction'],
-                'level_being_tested': algorithm_result['level_being_tested'],
-                'level_type': algorithm_result['level_type'],
-                'expected_outcome': algorithm_result['expected_outcome'],
-                'prediction_generated': algorithm_result['prediction_generated']
+            return {
+                'prediction_value': {
+                    'support_levels': result['support_levels'],
+                    'resistance_levels': result['resistance_levels'],
+                    'pivot': result.get('pivot'),
+                    'method': result['method'],
+                    'test_prediction': result['test_prediction'],
+                    'level_being_tested': result['level_being_tested'],
+                    'level_type': result['level_type'],
+                    'expected_outcome': result['expected_outcome'],
+                    'prediction_generated': result['prediction_generated']
+                },
+                'confidence': result['confidence']
             }
-            confidence = algorithm_result['confidence']
+        
+        def extract_pattern_recognition_prediction(result):
+            required_fields = ['detected_patterns', 'pattern_strength', 'method', 'confidence']
+            for field in required_fields:
+                if field not in result:
+                    raise KeyError(f"FAIL FAST: Missing required field '{field}' from Pattern Recognition algorithm result")
             
-        elif model_type == ModelType.PATTERN_RECOGNITION:
-            if 'detected_patterns' not in algorithm_result:
-                raise KeyError("Missing required field 'detected_patterns' from Pattern Recognition algorithm result")
-            if 'pattern_strength' not in algorithm_result:
-                raise KeyError("Missing required field 'pattern_strength' from Pattern Recognition algorithm result")
-            if 'method' not in algorithm_result:
-                raise KeyError("Missing required field 'method' from Pattern Recognition algorithm result")
-            if 'confidence' not in algorithm_result:
-                raise KeyError("Missing required field 'confidence' from Pattern Recognition algorithm result")
-            
-            prediction_value = {
-                'patterns': algorithm_result['detected_patterns'],
-                'pattern_strength': algorithm_result['pattern_strength'],
-                'method': algorithm_result['method']
+            return {
+                'prediction_value': {
+                    'patterns': result['detected_patterns'],
+                    'pattern_strength': result['pattern_strength'],
+                    'method': result['method']
+                },
+                'confidence': result['confidence']
             }
-            confidence = algorithm_result['confidence']
+        
+        def extract_bias_detection_prediction(result):
+            required_fields = ['directional_bias', 'method', 'overall_confidence']
+            for field in required_fields:
+                if field not in result:
+                    raise KeyError(f"FAIL FAST: Missing required field '{field}' from Bias Detection algorithm result")
             
-        elif model_type == ModelType.BIAS_DETECTION:
-            if 'directional_bias' not in algorithm_result:
-                raise KeyError("Missing required field 'directional_bias' from Bias Detection algorithm result")
-            if 'method' not in algorithm_result:
-                raise KeyError("Missing required field 'method' from Bias Detection algorithm result")
-            if 'overall_confidence' not in algorithm_result:
-                raise KeyError("Missing required field 'overall_confidence' from Bias Detection algorithm result")
-            
-            directional_bias = algorithm_result['directional_bias']
+            directional_bias = result['directional_bias']
             if 'direction' not in directional_bias:
-                raise KeyError("Missing required field 'direction' from directional_bias")
+                raise KeyError("FAIL FAST: Missing required field 'direction' from directional_bias")
             
-            prediction_value = {
-                'direction': directional_bias['direction'],
-                'bias_analysis': directional_bias,
-                'method': algorithm_result['method']
+            return {
+                'prediction_value': {
+                    'direction': directional_bias['direction'],
+                    'bias_analysis': directional_bias,
+                    'method': result['method']
+                },
+                'confidence': result['overall_confidence']
             }
-            confidence = algorithm_result['overall_confidence']
+        
+        def extract_trend_analysis_prediction(result):
+            required_fields = ['trend_direction', 'trend_strength', 'method', 'trend_confidence']
+            for field in required_fields:
+                if field not in result:
+                    raise KeyError(f"FAIL FAST: Missing required field '{field}' from Trend Analysis algorithm result")
             
-        elif model_type == ModelType.TREND_ANALYSIS:
-            if 'trend_direction' not in algorithm_result:
-                raise KeyError("Missing required field 'trend_direction' from Trend Analysis algorithm result")
-            if 'trend_strength' not in algorithm_result:
-                raise KeyError("Missing required field 'trend_strength' from Trend Analysis algorithm result")
-            if 'method' not in algorithm_result:
-                raise KeyError("Missing required field 'method' from Trend Analysis algorithm result")
-            if 'trend_confidence' not in algorithm_result:
-                raise KeyError("Missing required field 'trend_confidence' from Trend Analysis algorithm result")
-            
-            prediction_value = {
-                'trend_direction': algorithm_result['trend_direction'],
-                'trend_strength': algorithm_result['trend_strength'],
-                'method': algorithm_result['method']
+            return {
+                'prediction_value': {
+                    'trend_direction': result['trend_direction'],
+                    'trend_strength': result['trend_strength'],
+                    'method': result['method']
+                },
+                'confidence': result['trend_confidence']
             }
-            confidence = algorithm_result['trend_confidence']
+        
+        def extract_volatility_prediction(result):
+            required_fields = ['volatility_forecast', 'method', 'confidence']
+            for field in required_fields:
+                if field not in result:
+                    raise KeyError(f"FAIL FAST: Missing required field '{field}' from Volatility Prediction algorithm result")
             
-        elif model_type == ModelType.VOLATILITY_PREDICTION:
-            if 'volatility_forecast' not in algorithm_result:
-                raise KeyError("Missing required field 'volatility_forecast' from Volatility Prediction algorithm result")
-            if 'method' not in algorithm_result:
-                raise KeyError("Missing required field 'method' from Volatility Prediction algorithm result")
-            if 'confidence' not in algorithm_result:
-                raise KeyError("Missing required field 'confidence' from Volatility Prediction algorithm result")
-            
-            prediction_value = {
-                'volatility_forecast': algorithm_result['volatility_forecast'],
-                'method': algorithm_result['method']
+            return {
+                'prediction_value': {
+                    'volatility_forecast': result['volatility_forecast'],
+                    'method': result['method']
+                },
+                'confidence': result['confidence']
             }
-            confidence = algorithm_result['confidence']
-            
-        else:
-            # Unknown model type - fail fast
-            raise ValueError(f"Unknown model type for prediction conversion: {model_type.value}")
+        
+        # BIBBIA COMPLIANT: Single path dictionary lookup
+        prediction_extractors = {
+            ModelType.SUPPORT_RESISTANCE: extract_support_resistance_prediction,
+            ModelType.PATTERN_RECOGNITION: extract_pattern_recognition_prediction,
+            ModelType.BIAS_DETECTION: extract_bias_detection_prediction,
+            ModelType.TREND_ANALYSIS: extract_trend_analysis_prediction,
+            ModelType.VOLATILITY_PREDICTION: extract_volatility_prediction
+        }
+        
+        # FAIL FAST if unknown model type
+        if model_type not in prediction_extractors:
+            raise ValueError(f"FAIL FAST: Unknown model type for prediction conversion: {model_type.value}")
+        
+        # Extract prediction using appropriate extractor
+        extractor = prediction_extractors[model_type]
+        extracted = extractor(algorithm_result)
+        prediction_value = extracted['prediction_value']
+        confidence = extracted['confidence']
             
         # Final confidence validation
         if not isinstance(confidence, (int, float)) or confidence < 0 or confidence > 1:
@@ -412,7 +409,7 @@ class AlgorithmBridge:
         Returns:
             Callback function che può essere usata dal competition system
         """
-        def execute_callback(algorithm_name: str, market_data: Dict[str, Any]) -> Optional[Prediction]:
+        def execute_callback(algorithm_name: str, market_data: Dict[str, Any]) -> Prediction:
             """
             Callback per esecuzione algoritmi dal competition system
             
@@ -421,15 +418,11 @@ class AlgorithmBridge:
                 market_data: Dati di mercato
                 
             Returns:
-                Prediction object per competition system oppure None se no prediction
+                Prediction object per competition system
             """
             try:
                 # Execute algorithm through bridge
                 result = self.execute_algorithm(model_type, algorithm_name, market_data)
-                
-                # ANTI-SPAM: Handle None results (no significant predictions)
-                if result is None:
-                    return None
                 
                 # Convert to Prediction
                 if 'asset' not in market_data:
@@ -464,6 +457,19 @@ class AlgorithmBridge:
         
         return execute_callback
     
+    def save_algorithm_states(self, asset: str) -> None:
+        """
+        Salva lo stato degli algoritmi dopo il training
+        
+        Args:
+            asset: Nome asset per cui salvare gli stati
+        """
+        # Salva livelli pivot points se disponibili
+        if hasattr(self.sr_algorithms, 'save_pivot_levels'):
+            self.sr_algorithms.save_pivot_levels(asset)
+        
+        # Qui possiamo aggiungere salvataggio per altri algoritmi in futuro
+        
     def get_bridge_stats(self) -> Dict[str, Any]:
         """Restituisce statistiche bridge"""
         stats = self.execution_stats.copy()
