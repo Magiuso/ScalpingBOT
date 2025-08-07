@@ -730,8 +730,14 @@ class AdvancedMarketAnalyzer:
         with self.assets_lock:
             for asset, analyzer in self.asset_analyzers.items():
                 try:
-                    # Filter ticks for this asset
-                    asset_ticks = [tick for tick in ticks if tick.get('symbol') == asset]
+                    # BIBBIA COMPLIANT: Fail fast if tick missing symbol field
+                    asset_ticks = []
+                    for tick in ticks:
+                        if 'symbol' not in tick:
+                            raise KeyError(f"Critical field 'symbol' missing from tick data: {tick.keys()}")
+                        if tick['symbol'] == asset:
+                            asset_ticks.append(tick)
+                    
                     if not asset_ticks:
                         continue
                         
@@ -927,7 +933,8 @@ class AdvancedMarketAnalyzer:
                                     print(f"        ✅ {algorithm_name} evaluated successfully (confidence: {evaluation_metrics['confidence']:.2%})")
                                     
                             except Exception as e:
-                                print(f"        ❌ {algorithm_name} training failed: {e}")
+                                # BIBBIA COMPLIANT: Fail fast on training errors - no silent failures
+                                raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {e}") from e
                         
                         print(f"      ✅ Support/Resistance training completed: {training_success_count} algorithms")
                         
@@ -1141,7 +1148,8 @@ class AdvancedMarketAnalyzer:
                                     print(f"        ✅ {algorithm_name} configured successfully (classical pattern algorithm, confidence: {default_confidence:.2%})")
                                     
                             except Exception as e:
-                                print(f"        ❌ {algorithm_name} training failed: {e}")
+                                # BIBBIA COMPLIANT: Fail fast on training errors - no silent failures
+                                raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {e}") from e
                         
                         print(f"      ✅ Pattern Recognition training completed: {training_success_count} algorithms")
                         
@@ -1300,7 +1308,8 @@ class AdvancedMarketAnalyzer:
                                     print(f"        ✅ {algorithm_name} configured successfully (classical bias algorithm, confidence: {default_confidence:.2%})")
                                     
                             except Exception as e:
-                                print(f"        ❌ {algorithm_name} training failed: {e}")
+                                # BIBBIA COMPLIANT: Fail fast on training errors - no silent failures
+                                raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {e}") from e
                         
                         print(f"      ✅ Bias Detection training completed: {training_success_count} algorithms")
                         
@@ -1485,7 +1494,8 @@ class AdvancedMarketAnalyzer:
                                     print(f"        ✅ {algorithm_name} configured successfully (classical trend algorithm, confidence: {default_confidence:.2%})")
                                     
                             except Exception as e:
-                                print(f"        ❌ {algorithm_name} training failed: {e}")
+                                # BIBBIA COMPLIANT: Fail fast on training errors - no silent failures
+                                raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {e}") from e
                         
                         print(f"      ✅ Trend Analysis training completed: {training_success_count} algorithms")
                         
@@ -1554,9 +1564,9 @@ class AdvancedMarketAnalyzer:
                                             'algorithm': algorithm_name,
                                             'asset': asset,
                                             'training_completed': True,
-                                            'best_val_loss': volatility_result.get('best_val_loss', 'unknown'),
-                                            'total_epochs': volatility_result.get('epochs_completed', 'unknown'),
-                                            'training_timestamp': volatility_result.get('training_end_time', 'unknown')
+                                            'best_val_loss': volatility_result['best_val_loss'] if 'best_val_loss' in volatility_result else None,
+                                            'total_epochs': volatility_result['epochs_completed'] if 'epochs_completed' in volatility_result else None,
+                                            'training_timestamp': volatility_result['training_end_time'] if 'training_end_time' in volatility_result else None
                                         }
                                         with open(f"{volatility_save_dir}/model_metadata.json", 'w') as f:
                                             json.dump(metadata, f, indent=2)
@@ -1634,7 +1644,8 @@ class AdvancedMarketAnalyzer:
                                     print(f"        ✅ {algorithm_name} evaluated successfully (confidence: {evaluation_metrics['confidence']:.2%})")
                                     
                             except Exception as e:
-                                print(f"        ❌ {algorithm_name} training failed: {e}")
+                                # BIBBIA COMPLIANT: Fail fast on training errors - no silent failures
+                                raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {e}") from e
                         
                         print(f"      ✅ Volatility Prediction training completed: {training_success_count} algorithms")
                         
@@ -1752,7 +1763,7 @@ class AdvancedMarketAnalyzer:
                                     continue
                                 
                                 # Load neural network model
-                                algorithm_name = metadata.get('algorithm', algorithm_dir)
+                                algorithm_name = metadata['algorithm'] if 'algorithm' in metadata else algorithm_dir
                                 model_key = f"{asset_name}_{algorithm_name}"
                                 
                                 loaded_model = self._load_model_from_checkpoint(
@@ -1782,14 +1793,17 @@ class AdvancedMarketAnalyzer:
                                     continue
                                 
                                 # Check if it's a classical algorithm
-                                algorithm_type = metadata.get('algorithm_type', 'unknown')
+                                algorithm_type = metadata['algorithm_type'] if 'algorithm_type' in metadata else None
                                 if algorithm_type in ['classical', 'garch']:  # Classical algorithms
-                                    algorithm_name = metadata.get('algorithm', algorithm_dir)
+                                    algorithm_name = metadata['algorithm'] if 'algorithm' in metadata else algorithm_dir
                                     model_key = f"{asset_name}_{algorithm_name}"
                                     
                                     # For classical algorithms, store metadata as the "model"
                                     # This allows them to participate in competitions
-                                    confidence = metadata.get('confidence', 0.5)
+                                    # BIBBIA COMPLIANT: Fail fast if confidence missing - critical for trading decisions
+                                    if 'confidence' not in metadata:
+                                        raise KeyError(f"CRITICAL: Missing 'confidence' field in metadata for {algorithm_name} - required for trading decisions")
+                                    confidence = metadata['confidence']
                                     # BIBBIA COMPLIANT: Add 'success' field for mathematical algorithms
                                     loaded_models[model_key] = {
                                         'type': 'classical',
@@ -1872,8 +1886,11 @@ class AdvancedMarketAnalyzer:
                 # Determine model type from metadata
                 if isinstance(model_data, dict) and 'metadata' in model_data:
                     metadata = model_data['metadata']
-                    model_type_str = metadata.get('model_type', 'unknown')
-                    confidence = model_data.get('confidence', 0.5)
+                    # BIBBIA COMPLIANT: Fail fast if model_type missing from metadata
+                    if 'model_type' not in metadata:
+                        raise KeyError(f"CRITICAL: Missing 'model_type' in metadata for {algorithm_name}")
+                    model_type_str = metadata['model_type']
+                    confidence = model_data['confidence'] if 'confidence' in model_data else 0.0
                 else:
                     # ML model - need to infer type from algorithm name
                     model_type_str = self._infer_model_type_from_algorithm(algorithm_name)
@@ -2225,8 +2242,19 @@ class AdvancedMarketAnalyzer:
                 # BIBBIA: Fail fast if no valid price field
                 raise KeyError(f"Tick missing both 'last' and 'close' fields: {tick.keys()}")
         
-        volumes = [float(tick.get('volume', 1.0)) for tick in ticks]
-        timestamps = [tick.get('timestamp', tick.get('time', datetime.now())) for tick in ticks]
+        # BIBBIA COMPLIANT: Use same fail-fast logic as MarketDataProcessor
+        volumes = []
+        timestamps = []
+        for i, tick in enumerate(ticks):
+            # Volume validation with fail-fast (matching MarketDataProcessor logic)
+            if 'volume' not in tick:
+                raise KeyError(f"Critical field 'volume' missing from tick data at index {i}")
+            volumes.append(float(tick['volume']))
+            
+            # Timestamp validation with fail-fast
+            if 'timestamp' not in tick:
+                raise KeyError(f"Critical field 'timestamp' missing from tick data at index {i}")
+            timestamps.append(tick['timestamp'])
         
         return {
             'price_history': prices,
@@ -2479,7 +2507,10 @@ class AdvancedMarketAnalyzer:
             raise ValueError("Invalid tick data - missing current_tick")
         
         current_tick = tick_data['current_tick']
-        symbol = tick_data.get('symbol', 'UNKNOWN')
+        # BIBBIA COMPLIANT: Fail fast if symbol missing
+        if 'symbol' not in tick_data:
+            raise KeyError("Critical field 'symbol' missing from tick_data")
+        symbol = tick_data['symbol']
         
         # Validate MT5 format - BIBBIA COMPLIANT: FAIL FAST, no fallbacks
         if 'last' not in current_tick:
@@ -3139,29 +3170,27 @@ class AdvancedMarketAnalyzer:
         if nearest_support is not None:
             dist_support = (current_price - nearest_support) / current_price
         else:
-            # Dynamic fallback based on recent volatility
-            recent_prices = prices[-50:] if len(prices) > 50 else prices
-            price_volatility = np.std(recent_prices) / np.mean(recent_prices) if len(recent_prices) > 1 else 0.02
-            dist_support = max(0.02, min(0.15, price_volatility * 2))
+            # BIBBIA COMPLIANT: Fail fast if no support levels - no synthetic data for trading
+            raise ValueError("CRITICAL: No support levels available for S/R calculation - cannot generate synthetic support for real trading")
         
         # 2. Distance to nearest resistance
         if nearest_resistance is not None:
             dist_resistance = (nearest_resistance - current_price) / current_price
         else:
-            # Dynamic fallback based on recent volatility
-            recent_prices = prices[-50:] if len(prices) > 50 else prices
-            price_volatility = np.std(recent_prices) / np.mean(recent_prices) if len(recent_prices) > 1 else 0.02
-            dist_resistance = max(0.02, min(0.15, price_volatility * 2))
+            # BIBBIA COMPLIANT: Fail fast if no resistance levels - no synthetic data for trading
+            raise ValueError("CRITICAL: No resistance levels available for S/R calculation - cannot generate synthetic resistance for real trading")
         
-        # 3. Support strength - already calculated by incremental calculator
+        # BIBBIA COMPLIANT: Fail fast if no support strength - no random data
         if support_strength == 0:  # No support found
-            support_strength = 0.3 + np.random.normal(0, 0.05)
-            support_strength = max(0.1, min(0.9, support_strength))
+            raise ValueError("CRITICAL: Support strength is 0 - no valid support data available for trading")
         
-        # 4. Resistance strength - already calculated by incremental calculator  
+        support_strength = max(0.1, min(0.9, support_strength))
+        
+        # BIBBIA COMPLIANT: Fail fast if no resistance strength - no random data  
         if resistance_strength == 0:  # No resistance found
-            resistance_strength = 0.3 + np.random.normal(0, 0.05)
-            resistance_strength = max(0.1, min(0.9, resistance_strength))
+            raise ValueError("CRITICAL: Resistance strength is 0 - no valid resistance data available for trading")
+        
+        resistance_strength = max(0.1, min(0.9, resistance_strength))
         
         return [dist_support, dist_resistance, support_strength, resistance_strength]
     
