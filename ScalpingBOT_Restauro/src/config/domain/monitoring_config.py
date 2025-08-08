@@ -61,7 +61,7 @@ class DisplaySettings:
 class StorageSettings:
     """Configurazione storage e persistenza"""
     enable_file_output: bool = True
-    output_directory: str = "./test_analyzer_data"
+    output_directory: str = "./analyzer_data"
     
     # File naming
     session_prefix: str = "ml_training"

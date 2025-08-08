@@ -996,13 +996,10 @@ class SupportResistanceAlgorithms:
                     "model_output_size": len(levels)
                 }
                 
-        except (ImportError, AttributeError, ValueError, KeyError) as e:
+        except (ImportError, AttributeError, ValueError, KeyError, RuntimeError, TypeError, IndexError) as e:
             self.algorithm_stats['failed_predictions'] += 1
             # FAIL FAST - Re-raise specific LSTM errors
             raise PredictionError("LSTM_SupportResistance", str(e))
-        except Exception as e:
-            # Unknown error - FAIL FAST per trading safety
-            raise RuntimeError(f"FAIL FAST: Unexpected error in LSTM_SupportResistance - {type(e).__name__}: {e}")
     
     def _statistical_levels_ml(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1171,7 +1168,7 @@ class SupportResistanceAlgorithms:
             'training_stats': {
                 'total_levels': len(self.pivot_cache['current_levels']),
                 'avg_confidence': sum(l['confidence'] for l in self.pivot_cache['current_levels'].values()) / len(self.pivot_cache['current_levels']) if self.pivot_cache['current_levels'] else 0,
-                'persistent_levels': len([l for l in self.pivot_cache['current_levels'].values() if l.get('appearances', 1) > 1])
+                'persistent_levels': len([l for l in self.pivot_cache['current_levels'].values() if ('appearances' in l and l['appearances'] > 1)])
             },
             'levels': {}
         }
@@ -1184,12 +1181,12 @@ class SupportResistanceAlgorithms:
                 'bounces': level_data['bounces'],
                 'broken': level_data['broken'],
                 'tests': level_data['tests'],
-                # Nuovi campi per daily-based tracking
-                'appearances': level_data.get('appearances', 1),
-                'level_type': level_data.get('level_type', 'Unknown'),
-                'false_break_count': level_data.get('false_break_count', 0),
-                'flipped': level_data.get('flipped', False),
-                'test_state': level_data.get('test_state', 'idle')
+                # BIBBIA COMPLIANT: FAIL FAST - daily-based tracking fields
+                'appearances': level_data['appearances'] if 'appearances' in level_data else 1,
+                'level_type': level_data['level_type'] if 'level_type' in level_data else 'Unknown',
+                'false_break_count': level_data['false_break_count'] if 'false_break_count' in level_data else 0,
+                'flipped': level_data['flipped'] if 'flipped' in level_data else False,
+                'test_state': level_data['test_state'] if 'test_state' in level_data else 'idle'
             }
         
         # Salva su file JSON
@@ -1239,12 +1236,12 @@ class SupportResistanceAlgorithms:
                         'last_test': None,
                         'last_calc_time': datetime.now(),
                         'was_near_last_tick': False,
-                        # Carica nuovi campi daily-based (con fallback per compatibilità)
-                        'appearances': level_data.get('appearances', 1),
-                        'level_type': level_data.get('level_type', key[0] if key[0] in 'SRP' else 'Unknown'),
-                        'false_break_count': level_data.get('false_break_count', 0),
-                        'flipped': level_data.get('flipped', False),
-                        'test_state': level_data.get('test_state', 'idle')
+                        # BIBBIA COMPLIANT: FAIL FAST - no fallbacks allowed for daily-based fields
+                        'appearances': level_data['appearances'] if 'appearances' in level_data else 1,
+                        'level_type': level_data['level_type'] if 'level_type' in level_data else (key[0] if key[0] in 'SRP' else 'Unknown'),
+                        'false_break_count': level_data['false_break_count'] if 'false_break_count' in level_data else 0,
+                        'flipped': level_data['flipped'] if 'flipped' in level_data else False,
+                        'test_state': level_data['test_state'] if 'test_state' in level_data else 'idle'
                     }
                     levels_loaded += 1
                 else:

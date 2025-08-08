@@ -68,7 +68,7 @@ class UnifiedConfig:
     prediction_duplicate_window: int = 30    # Finestra anti-duplicati (secondi)
     
     # === STORAGE SETTINGS ===
-    base_directory: str = "./test_analyzer_data"  # Root directory for all assets
+    base_directory: str = "./analyzer_data"  # Root directory for all assets
     log_rotation_hours: int = 24
     max_log_files: int = 30
     compress_old_logs: bool = True

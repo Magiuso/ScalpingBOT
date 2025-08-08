@@ -43,13 +43,13 @@ class AssetAnalyzer:
     - INTERFACES: MT5 integration
     """
     
-    def __init__(self, asset: str, data_path: str = "./test_analyzer_data", config_manager=None):
+    def __init__(self, asset: str, data_path: str = "./analyzer_data", config_manager=None):
         """
         Inizializza Asset Analyzer usando componenti migrati
         
         Args:
             asset: Nome dell'asset da analizzare
-            data_path: Path per i dati (default ./test_analyzer_data)
+            data_path: Path per i dati (default ./analyzer_data)
             config_manager: Configuration manager (opzionale)
         """
         if not isinstance(asset, str) or not asset.strip():
@@ -490,7 +490,7 @@ class AssetAnalyzer:
 
 
 # Factory function
-def create_asset_analyzer(asset: str, data_path: str = "./test_analyzer_data", 
+def create_asset_analyzer(asset: str, data_path: str = "./analyzer_data", 
                          config_manager=None) -> AssetAnalyzer:
     """Factory function per creare AssetAnalyzer"""
     return AssetAnalyzer(asset, data_path, config_manager)

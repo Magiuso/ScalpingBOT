@@ -144,7 +144,7 @@ class AnalyzerConfig:
     ml_logger_terminal_mode: str = "scroll"  # dashboard, scroll, minimal - scroll mostra i log in console
     ml_logger_file_output: bool = True  # Abilita output su file
     ml_logger_formats: List[str] = field(default_factory=lambda: ["json", "csv"])  # Formati output
-    ml_logger_base_directory: str = "./test_analyzer_data"  # Directory base log
+    ml_logger_base_directory: str = "./analyzer_data"  # Directory base log
     ml_logger_rate_limit_ticks: int = 100  # Rate limit per tick processing
     ml_logger_flush_interval: float = 5.0  # Intervallo flush su disco (secondi)
     

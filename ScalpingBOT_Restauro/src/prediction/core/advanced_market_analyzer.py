@@ -243,12 +243,12 @@ class AdvancedMarketAnalyzer:
     usando tutti i moduli migrati FASE 1-5.
     """
     
-    def __init__(self, data_path: str = "./test_analyzer_data", config_manager=None):
+    def __init__(self, data_path: str = "./analyzer_data", config_manager=None):
         """
         Inizializza Advanced Market Analyzer
         
         Args:
-            data_path: Path base per i dati (default ./test_analyzer_data)
+            data_path: Path base per i dati (default: ./analyzer_data)
             config_manager: Configuration manager (opzionale)
         """
         if not isinstance(data_path, str) or not data_path.strip():
@@ -474,7 +474,7 @@ class AdvancedMarketAnalyzer:
             # Update global stats
             with self.stats_lock:
                 self.global_stats['total_ticks_processed'] += 1
-                if result.get('predictions'):
+                if 'predictions' in result and result['predictions']:
                     self.global_stats['total_predictions'] += len(result['predictions'])
                 self.global_stats['last_activity_time'] = datetime.now()
             
@@ -487,8 +487,10 @@ class AdvancedMarketAnalyzer:
                 'result': result
             })
             
-            # Store predictions in buffer
-            if result.get('predictions'):
+            # Store predictions in buffer - BIBBIA COMPLIANT: FAIL FAST on missing predictions
+            if 'predictions' not in result:
+                raise KeyError("FAIL FAST: result missing required 'predictions' field")
+            if result['predictions']:
                 self.events_buffer['prediction_generated'].append({
                     'asset': asset,
                     'timestamp': timestamp,
@@ -497,7 +499,7 @@ class AdvancedMarketAnalyzer:
             
             return result
             
-        except Exception as e:
+        except (ValueError, KeyError, AttributeError, TypeError, RuntimeError) as e:
             # Update error stats
             with self.stats_lock:
                 self.global_stats['total_errors'] += 1
@@ -516,7 +518,7 @@ class AdvancedMarketAnalyzer:
             AssetAnalyzer o None se non trovato
         """
         with self.assets_lock:
-            return self.asset_analyzers.get(asset)
+            return self.asset_analyzers[asset] if asset in self.asset_analyzers else None
     
     def get_all_assets(self) -> List[str]:
         """Restituisce lista di tutti gli asset attivi"""
@@ -565,7 +567,7 @@ class AdvancedMarketAnalyzer:
         # Emit stop event
         if self.event_collector:
             runtime = None
-            if self.global_stats.get('system_start_time'):
+            if 'system_start_time' in self.global_stats and self.global_stats['system_start_time']:
                 runtime = (datetime.now() - self.global_stats['system_start_time']).total_seconds()
             
             self.event_collector.emit_manual_event(
@@ -932,13 +934,13 @@ class AdvancedMarketAnalyzer:
                                     training_success_count += 1
                                     print(f"        ✅ {algorithm_name} evaluated successfully (confidence: {evaluation_metrics['confidence']:.2%})")
                                     
-                            except Exception as e:
+                            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
                                 # BIBBIA COMPLIANT: Fail fast on training errors - no silent failures
                                 raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {e}") from e
                         
                         print(f"      ✅ Support/Resistance training completed: {training_success_count} algorithms")
                         
-                    except Exception as e:
+                    except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
                         print(f"      ❌ Support/Resistance training failed: {e}")
                     
                     # Train ALL Pattern Recognition algorithms - BIBBIA COMPLIANT  
@@ -1147,13 +1149,13 @@ class AdvancedMarketAnalyzer:
                                     training_success_count += 1
                                     print(f"        ✅ {algorithm_name} configured successfully (classical pattern algorithm, confidence: {default_confidence:.2%})")
                                     
-                            except Exception as e:
+                            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
                                 # BIBBIA COMPLIANT: Fail fast on training errors - no silent failures
                                 raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {e}") from e
                         
                         print(f"      ✅ Pattern Recognition training completed: {training_success_count} algorithms")
                         
-                    except Exception as e:
+                    except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
                         print(f"      ❌ Pattern Recognition training failed: {e}")
                     
                     # Train ALL Bias Detection algorithms - BIBBIA COMPLIANT
@@ -1307,13 +1309,13 @@ class AdvancedMarketAnalyzer:
                                     training_success_count += 1
                                     print(f"        ✅ {algorithm_name} configured successfully (classical bias algorithm, confidence: {default_confidence:.2%})")
                                     
-                            except Exception as e:
+                            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
                                 # BIBBIA COMPLIANT: Fail fast on training errors - no silent failures
                                 raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {e}") from e
                         
                         print(f"      ✅ Bias Detection training completed: {training_success_count} algorithms")
                         
-                    except Exception as e:
+                    except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
                         print(f"      ❌ Bias Detection training failed: {e}")
                     
                     # Train ALL Trend Analysis algorithms - BIBBIA COMPLIANT
@@ -1493,13 +1495,13 @@ class AdvancedMarketAnalyzer:
                                     training_success_count += 1
                                     print(f"        ✅ {algorithm_name} configured successfully (classical trend algorithm, confidence: {default_confidence:.2%})")
                                     
-                            except Exception as e:
+                            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
                                 # BIBBIA COMPLIANT: Fail fast on training errors - no silent failures
                                 raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {e}") from e
                         
                         print(f"      ✅ Trend Analysis training completed: {training_success_count} algorithms")
                         
-                    except Exception as e:
+                    except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
                         print(f"      ❌ Trend Analysis training failed: {e}")
                     
                     # Train ALL Volatility Prediction algorithms - BIBBIA COMPLIANT
@@ -1643,13 +1645,13 @@ class AdvancedMarketAnalyzer:
                                     training_success_count += 1
                                     print(f"        ✅ {algorithm_name} evaluated successfully (confidence: {evaluation_metrics['confidence']:.2%})")
                                     
-                            except Exception as e:
+                            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
                                 # BIBBIA COMPLIANT: Fail fast on training errors - no silent failures
                                 raise RuntimeError(f"CRITICAL: {algorithm_name} training failed - {e}") from e
                         
                         print(f"      ✅ Volatility Prediction training completed: {training_success_count} algorithms")
                         
-                    except Exception as e:
+                    except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
                         print(f"      ❌ Volatility Prediction training failed: {e}")
                     
                     # FAIL FAST: At least some models must be trained
@@ -1689,7 +1691,7 @@ class AdvancedMarketAnalyzer:
                     
                     print(f"  ✅ {asset} ML training completed in {training_time:.2f}s ({len(trained_models)} models trained)")
                     
-                except Exception as e:
+                except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
                     print(f"  ❌ ML Training failed for {asset}: {e}")
                     # FAIL FAST - propagate error instead of continuing
                     raise RuntimeError(f"Real ML training failed for {asset}: {e}")
@@ -1777,7 +1779,7 @@ class AdvancedMarketAnalyzer:
                                 else:
                                     print(f"    ❌ Failed to load ML {algorithm_name} for {asset_name}")
                                     
-                            except Exception as e:
+                            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
                                 print(f"    ❌ Error loading ML {asset_name}/{algorithm_dir}: {e}")
                                 continue
                         
@@ -1817,7 +1819,7 @@ class AdvancedMarketAnalyzer:
                                 else:
                                     print(f"    ⚠️ Metadata-only model {algorithm_name} not recognized as classical - skipping")
                                     
-                            except Exception as e:
+                            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
                                 print(f"    ❌ Error loading Classical {asset_name}/{algorithm_dir}: {e}")
                                 continue
             
@@ -1848,7 +1850,7 @@ class AdvancedMarketAnalyzer:
             else:
                 print("📝 No saved models found - starting fresh")
                 
-        except Exception as e:
+        except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
             print(f"⚠️ Error during model loading: {e}")
             # Don't fail fast here - it's okay to start without saved models
     
@@ -1867,7 +1869,7 @@ class AdvancedMarketAnalyzer:
                 
             print(f"    ✅ AssetAnalyzer created for {asset_name}")
             
-        except Exception as e:
+        except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
             raise RuntimeError(f"FAIL FAST: Failed to create AssetAnalyzer for {asset_name}: {e}")
     
     def _initialize_champions_from_loaded_models(self, asset_name: str, loaded_models: Dict[str, Any]) -> None:
@@ -1926,9 +1928,11 @@ class AdvancedMarketAnalyzer:
                 try:
                     # BIBBIA COMPLIANT: For classical algorithms, pass the metadata with success field
                     training_data = best_algorithm['model_data']
-                    if isinstance(training_data, dict) and training_data.get('type') == 'classical':
+                    if isinstance(training_data, dict) and 'type' in training_data and training_data['type'] == 'classical':
                         # Pass the metadata which contains the actual evaluation data
-                        training_data = training_data.get('metadata', training_data)
+                        if 'metadata' not in training_data:
+                            raise KeyError("FAIL FAST: metadata missing from classical training_data")
+                        training_data = training_data['metadata']
                         # Ensure success field exists for mathematical algorithms
                         training_data['success'] = True
                     
@@ -1938,11 +1942,11 @@ class AdvancedMarketAnalyzer:
                         algorithm_type='auto'  # Auto-detect type
                     )
                     print(f"    ✅ Training performance set for {best_algorithm['algorithm']}")
-                except Exception as perf_error:
+                except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as perf_error:
                     print(f"    ⚠️ Failed to set training performance for {best_algorithm['algorithm']}: {perf_error}")
                     # Non bloccare l'inizializzazione per questo errore
                 
-        except Exception as e:
+        except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
             raise RuntimeError(f"FAIL FAST: Failed to initialize champions for {asset_name}: {e}")
     
     def _string_to_model_type(self, model_type_str: str):
@@ -1954,7 +1958,7 @@ class AdvancedMarketAnalyzer:
             'trend_analysis': ModelType.TREND_ANALYSIS,
             'volatility_prediction': ModelType.VOLATILITY_PREDICTION
         }
-        return type_mapping.get(model_type_str)
+        return type_mapping[model_type_str] if model_type_str in type_mapping else None
     
     def _infer_model_type_from_algorithm(self, algorithm_name: str) -> str:
         """Infer model type from algorithm name - BIBBIA COMPLIANT"""
@@ -1981,7 +1985,7 @@ class AdvancedMarketAnalyzer:
                 return False
         
         # Must be marked as training completed
-        if not metadata.get('training_completed', False):
+        if 'training_completed' not in metadata or not metadata['training_completed']:
             return False
             
         return True
@@ -2016,7 +2020,7 @@ class AdvancedMarketAnalyzer:
             
             return model
             
-        except Exception as e:
+        except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
             print(f"    ❌ Failed to load checkpoint {checkpoint_path}: {e}")
             return None
     
@@ -2053,7 +2057,7 @@ class AdvancedMarketAnalyzer:
                     input_size=50,  # Standard feature size
                     hidden_size=256,
                     num_layers=1,
-                    output_size=4 if 'support_resistance' in metadata.get('model_type', '') else 1,
+                    output_size=4 if ('model_type' in metadata and 'support_resistance' in metadata['model_type']) else 1,
                     dropout=0.5
                 )
             elif model_class.__name__ == 'CNNPatternRecognizer':
@@ -2068,12 +2072,12 @@ class AdvancedMarketAnalyzer:
                     d_model=256,
                     nhead=8,
                     num_layers=4,
-                    output_dim=4 if 'support_resistance' in metadata.get('model_type', '') else 1
+                    output_dim=4 if ('model_type' in metadata and 'support_resistance' in metadata['model_type']) else 1
                 )
             else:
                 return None
                 
-        except Exception as e:
+        except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
             print(f"    ❌ Failed to create model instance for {algorithm_name}: {e}")
             return None
     
@@ -2115,7 +2119,7 @@ class AdvancedMarketAnalyzer:
             "Realized_Volatility": ModelType.VOLATILITY_PREDICTION
         }
         
-        return algorithm_to_model_type.get(algorithm_name)
+        return algorithm_to_model_type[algorithm_name] if algorithm_name in algorithm_to_model_type else None
     
     def _evaluate_classical_algorithm(self, algorithm_name: str, asset: str, asset_ticks: List[Dict], 
                                      algorithm_type: str) -> Dict[str, Any]:
@@ -2198,7 +2202,7 @@ class AdvancedMarketAnalyzer:
                         successful_predictions += 1
                     prediction_count += 1
                     
-            except Exception as e:
+            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
                 # BIBBIA: Fail fast on errors
                 print(f"          ⚠️ Evaluation error at position {i}: {e}")
                 continue
@@ -2233,7 +2237,7 @@ class AdvancedMarketAnalyzer:
                 os.makedirs(save_dir, exist_ok=True)
                 self.algorithm_bridge.sr_algorithms.save_pivot_levels(asset, save_dir)
                 print(f"        💾 Pivot levels saved for {asset} after evaluation")
-            except Exception as save_error:
+            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as save_error:
                 print(f"        ⚠️ Failed to save pivot levels after evaluation: {save_error}")
         
         return evaluation_metrics
@@ -2438,7 +2442,7 @@ class AdvancedMarketAnalyzer:
             for asset, analyzer in self.asset_analyzers.items():
                 try:
                     # Filter ticks for this asset
-                    asset_ticks = [tick for tick in ticks if tick.get('symbol') == asset]
+                    asset_ticks = [tick for tick in ticks if 'symbol' in tick and tick['symbol'] == asset]
                     if asset_ticks:
                         print(f"  🔮 Generating predictions for {asset} with {len(asset_ticks):,} ticks")
                         
@@ -2486,14 +2490,14 @@ class AdvancedMarketAnalyzer:
                                 
                                 print(f"      ✅ 1 prediction generated by {champion_algorithm}")
                                 
-                            except Exception as model_error:
+                            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as model_error:
                                 print(f"      ❌ Prediction failed for {model_type.value}: {model_error}")
                                 # Continue with other model types
                         
                         prediction_time = time.time() - prediction_start
                         print(f"  ✅ {asset} predictions completed in {prediction_time:.2f}s")
                         
-                except Exception as e:
+                except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
                     print(f"  ❌ Prediction failed for {asset}: {e}")
                     # FAIL FAST - propagate error instead of mock result
                     raise RuntimeError(f"Real prediction generation failed for {asset}: {e}")
@@ -2593,11 +2597,11 @@ class AdvancedMarketAnalyzer:
                         
                         self.validation_tracker['total_predictions'] += 1
                         
-                    except Exception as model_error:
+                    except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as model_error:
                         # Log only REAL errors, not missing champions
                         print(f"❌ Tick prediction failed for {model_type.value}: {model_error}")
                 
-            except Exception as e:
+            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as e:
                 # FAIL FAST - propagate error for single tick processing
                 raise RuntimeError(f"Tick prediction generation failed for {symbol}: {e}")
         
@@ -2616,8 +2620,10 @@ class AdvancedMarketAnalyzer:
         if predictions:
             pred = predictions[0]  # Show only first prediction to avoid spam
             
-            # Check if this is a real prediction or just monitoring
-            prediction_generated = pred['prediction_data'].get('prediction_generated', True)
+            # Check if this is a real prediction or just monitoring - BIBBIA COMPLIANT
+            if 'prediction_generated' not in pred['prediction_data']:
+                raise KeyError("FAIL FAST: prediction_generated field missing from prediction_data")
+            prediction_generated = pred['prediction_data']['prediction_generated']
             
             if prediction_generated:
                 prediction_summary = self._format_prediction_summary(pred['prediction_data'])
@@ -2644,7 +2650,7 @@ class AdvancedMarketAnalyzer:
             'validation_stats': validation_stats,
             'detailed_output': {
                 'processing_time': datetime.now().isoformat(),
-                'context_length': len(context_data.get('price_history', [])),
+                'context_length': len(context_data['price_history']) if 'price_history' in context_data else 0,
                 'algorithms_status': [
                     {
                         'algorithm': pred['algorithm'],
@@ -2777,8 +2783,10 @@ class AdvancedMarketAnalyzer:
         
         elif 'price_target' in prediction_data:
             target_price = prediction_data['price_target']
-            # BIBBIA COMPLIANT: Use fixed tolerance - no fallback defaults
-            tolerance = prediction_data.get('tolerance') or 0.001  # Use provided or standard 0.1%
+            # BIBBIA COMPLIANT: FAIL FAST - tolerance must be provided explicitly
+            if 'tolerance' not in prediction_data:
+                raise KeyError("FAIL FAST: tolerance is required for price accuracy validation - no fallback allowed")
+            tolerance = prediction_data['tolerance']
             price_diff = abs(actual_price - target_price) / target_price
             return price_diff <= tolerance
         
@@ -2833,12 +2841,12 @@ class AdvancedMarketAnalyzer:
         
         if 'direction' in actual_prediction:
             direction = actual_prediction['direction']
-            strength = actual_prediction.get('strength', 'unknown')
+            strength = actual_prediction['strength'] if 'strength' in actual_prediction else 'unknown'
             return f"Direction: {direction.upper()}, Strength: {strength}"
         
         elif 'price_target' in actual_prediction:
             target = actual_prediction['price_target']
-            confidence_range = actual_prediction.get('confidence_range', 'N/A')
+            confidence_range = actual_prediction['confidence_range'] if 'confidence_range' in actual_prediction else 'N/A'
             return f"Target: {target:.5f}, Range: {confidence_range}"
         
         elif 'signal' in actual_prediction:
@@ -2909,10 +2917,15 @@ class AdvancedMarketAnalyzer:
         volumes = np.array([float(tick['volume']) for tick in asset_ticks]) 
         timestamps = [tick['timestamp'] for tick in asset_ticks]
         
-        # Pre-calculate returns (no leakage here)
+        # Pre-calculate returns (no leakage here) - BIBBIA COMPLIANT: FAIL FAST on invalid prices
         price_diffs = np.diff(prices)  # Length: n-1
         price_bases = np.array(prices[:-1])  # Length: n-1, previous prices for return calculation
-        returns = price_diffs / np.maximum(price_bases, 1e-10)  # Both arrays now have same length: n-1
+        
+        # BIBBIA COMPLIANT: FAIL FAST if any price base is zero or negative
+        if np.any(price_bases <= 0):
+            raise ValueError("FAIL FAST: Invalid price bases detected (zero or negative) - cannot calculate returns")
+        
+        returns = price_diffs / price_bases  # Both arrays now have same length: n-1
         
         # Prepend 0 for first element to make it same length as prices
         returns = np.append([0.0], returns)  # Length: n (same as prices)
@@ -3248,7 +3261,7 @@ class AdvancedMarketAnalyzer:
 
 
 # Factory function
-def create_advanced_market_analyzer(data_path: str = "./test_analyzer_data", 
+def create_advanced_market_analyzer(data_path: str = "./analyzer_data", 
                                   config_manager=None) -> AdvancedMarketAnalyzer:
     """Factory function per creare AdvancedMarketAnalyzer"""
     return AdvancedMarketAnalyzer(data_path, config_manager)

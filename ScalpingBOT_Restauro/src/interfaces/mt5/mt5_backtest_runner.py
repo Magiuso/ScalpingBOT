@@ -640,7 +640,7 @@ class MT5BacktestRunner:
         
         # Generate export filename
         export_file = f"backtest_{self.config.symbol}_{self.config.start_date.strftime('%Y%m%d')}_{self.config.end_date.strftime('%Y%m%d')}.jsonl"
-        export_path = os.path.join("./test_analyzer_data", export_file)
+        export_path = os.path.join("./analyzer_data", export_file)
         
         # Export data first
         export_success = self.data_exporter.export_historical_data(
@@ -658,7 +658,7 @@ class MT5BacktestRunner:
     
     def _run_csv_backtest(self, analyzer_system, selected_models: Optional[List[str]] = None) -> bool:
         """Run backtest with CSV file"""
-        csv_file = f"./test_analyzer_data/backtest_{self.config.symbol}.csv"
+        csv_file = f"./analyzer_data/backtest_{self.config.symbol}.csv"
         
         if not os.path.exists(csv_file):
             raise FileNotFoundError(f"CSV file not found: {csv_file}")
@@ -695,7 +695,7 @@ class MT5BacktestRunner:
     
     def _run_jsonl_backtest(self, analyzer_system, selected_models: Optional[List[str]] = None) -> bool:
         """Run backtest with JSONL file"""
-        jsonl_file = f"./test_analyzer_data/backtest_{self.config.symbol}.jsonl"
+        jsonl_file = f"./analyzer_data/backtest_{self.config.symbol}.jsonl"
         
         if not os.path.exists(jsonl_file):
             raise FileNotFoundError(f"JSONL file not found: {jsonl_file}")
@@ -1226,7 +1226,7 @@ class MT5BacktestRunner:
             Path to existing file with sufficient coverage, or None
         """
         try:
-            data_dir = "./test_analyzer_data"
+            data_dir = "./analyzer_data"
             if not os.path.exists(data_dir):
                 return None
             
