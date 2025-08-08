@@ -2226,6 +2226,16 @@ class AdvancedMarketAnalyzer:
         
         print(f"        📊 {algorithm_name} Performance: Hit Rate={avg_hit_rate:.2%}, Confidence={confidence:.2%}")
         
+        # Save pivot levels immediately after evaluation while cache is populated
+        if algorithm_name == "PivotPoints_Classic":
+            try:
+                save_dir = f"{self.data_path}/{asset}/models/support_resistance/pivot_points_classic"
+                os.makedirs(save_dir, exist_ok=True)
+                self.algorithm_bridge.sr_algorithms.save_pivot_levels(asset, save_dir)
+                print(f"        💾 Pivot levels saved for {asset} after evaluation")
+            except Exception as save_error:
+                print(f"        ⚠️ Failed to save pivot levels after evaluation: {save_error}")
+        
         return evaluation_metrics
     
     def _prepare_market_data_for_algorithm(self, ticks: List[Dict], asset: str) -> Dict[str, Any]:

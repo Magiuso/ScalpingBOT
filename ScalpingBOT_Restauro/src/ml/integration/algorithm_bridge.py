@@ -464,9 +464,9 @@ class AlgorithmBridge:
         Args:
             asset: Nome asset per cui salvare gli stati
         """
-        # Salva livelli pivot points se disponibili
-        if hasattr(self.sr_algorithms, 'save_pivot_levels'):
-            self.sr_algorithms.save_pivot_levels(asset)
+        # RIMOSSO: Chiamata ridondante a save_pivot_levels 
+        # I livelli pivot vengono già salvati direttamente dopo l'evaluation in advanced_market_analyzer.py
+        # Questa chiamata causava warning "No pivot levels to save" perché la cache era già vuota
         
         # Qui possiamo aggiungere salvataggio per altri algoritmi in futuro
         

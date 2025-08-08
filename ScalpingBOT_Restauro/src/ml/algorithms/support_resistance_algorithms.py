@@ -205,7 +205,10 @@ class SupportResistanceAlgorithms:
             if levels_loaded:
                 print(f"✅ Loaded pre-calculated pivot levels from training for {asset}")
             else:
-                print(f"📊 No saved pivot levels found for {asset} - will calculate from data")
+                # Log only in validation mode, silent during training/evaluation
+                is_validation_mode = market_data.get('validation_mode', False)
+                if is_validation_mode:
+                    print(f"📊 No saved pivot levels found for {asset} - will calculate from data")
         
         # Parametri configurabili per USTEC
         SIX_HOURS_SECONDS = 6 * 3600
@@ -245,24 +248,40 @@ class SupportResistanceAlgorithms:
             self._check_if_recalc_needed(current_price)
         )
         
-        if needs_recalc and len(self.pivot_cache['accumulated_ticks']) >= MINIMUM_TICKS_FOR_CALC:
-            self._calculate_new_pivot_levels()
-            self.pivot_cache['next_recalc_time'] = current_time
-        
-        # Se non abbiamo ancora livelli calcolati, ritorna stato di accumulation
+        # BIBBIA COMPLIANT: NO ACCUMULO - Processi 100K ticks in batch!
         if not self.pivot_cache['current_levels']:
-            return {
-                "support_levels": [],
-                "resistance_levels": [],
-                "pivot": 0.0,
-                "confidence": 0.0,
-                "method": "PivotPoints_Dynamic",
-                "test_prediction": f"Accumulating data: {len(self.pivot_cache['accumulated_ticks'])}/{MINIMUM_TICKS_FOR_CALC} ticks",
-                "level_being_tested": 0.0,
-                "level_type": "none",
-                "expected_outcome": "waiting",
-                "prediction_generated": False
-            }
+            # Se non abbiamo pivot levels, CALCOLA IMMEDIATAMENTE dai dati disponibili
+            # Training fornisce 100K ticks, non serve accumulo!
+            if 'price_history' in market_data and len(market_data['price_history']) > 0:
+                # Calcola pivot levels dai dati forniti
+                prices = market_data['price_history']
+                high = float(np.max(prices))
+                low = float(np.min(prices))
+                close = float(prices[-1])
+                
+                # Calcolo Pivot Points Classic
+                pivot = (high + low + close) / 3
+                r1 = (2 * pivot) - low
+                r2 = pivot + (high - low)
+                s1 = (2 * pivot) - high
+                s2 = pivot - (high - low)
+                
+                # Salva livelli calcolati
+                self.pivot_cache['current_levels'] = {
+                    'pivot': pivot,
+                    'r1': r1,
+                    'r2': r2,
+                    's1': s1,
+                    's2': s2,
+                    'high': high,
+                    'low': low,
+                    'close': close,
+                    'last_calc_time': current_time,
+                    'was_near_last_tick': False
+                }
+            else:
+                # FAIL FAST - No data available
+                raise RuntimeError("FAIL FAST: No price data available to calculate pivot levels - cannot proceed")
         
         # FASE 3: MONITORAGGIO EVENTI E PREDIZIONI
         event_result = self._monitor_level_events(
@@ -1006,8 +1025,8 @@ class SupportResistanceAlgorithms:
             
             # Inizializza altri campi del cache
             self.pivot_cache['initialization_time'] = datetime.now()
-            self.pivot_cache['accumulated_ticks'] = []  # Non serve in validation
-            self.pivot_cache['next_recalc_time'] = datetime.now()  # Non ricalcola in validation
+            self.pivot_cache['accumulated_ticks'] = []  # Reset - se non abbiamo dati veri, FAIL FAST
+            self.pivot_cache['next_recalc_time'] = datetime.now()
             
             print(f"✅ Loaded pivot levels for {asset} from {file_path}")
             print(f"   Levels loaded: {list(self.pivot_cache['current_levels'].keys())}")
