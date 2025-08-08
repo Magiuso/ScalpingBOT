@@ -2150,11 +2150,11 @@ class AdvancedMarketAnalyzer:
                 # Get algorithm predictions
                 if algorithm_type == 'support_resistance':
                     from ...ml.algorithms.support_resistance_algorithms import SupportResistanceAlgorithms
-                    algo_instance = SupportResistanceAlgorithms()
+                    algo_instance = SupportResistanceAlgorithms(self.algorithm_bridge.ml_models)
                     result = algo_instance.run_algorithm(algorithm_name, market_data)
                 elif algorithm_type == 'volatility_prediction':
                     from ...ml.algorithms.volatility_prediction_algorithms import VolatilityPredictionAlgorithms
-                    algo_instance = VolatilityPredictionAlgorithms()
+                    algo_instance = VolatilityPredictionAlgorithms(self.algorithm_bridge.ml_models)
                     result = algo_instance.run_algorithm(algorithm_name, market_data)
                 else:
                     # Add other algorithm types as needed

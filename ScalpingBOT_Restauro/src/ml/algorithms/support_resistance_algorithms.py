@@ -17,6 +17,7 @@ Mantenuta IDENTICA la logica originale, solo import aggiustati.
 import numpy as np
 import torch
 import json
+from json import JSONDecodeError
 import os
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
@@ -48,10 +49,12 @@ class SupportResistanceAlgorithms:
     5. Transformer_Levels
     """
     
-    def __init__(self, ml_models: Optional[Dict[str, Any]] = None):
-        """Inizializza algoritmi S/R con modelli ML opzionali"""
+    def __init__(self, ml_models: Dict[str, Any]):
+        """Inizializza algoritmi S/R con modelli ML - FAIL FAST se mancanti"""
         if ml_models is None:
-            ml_models = {}
+            raise ValueError("FAIL FAST: ml_models è obbligatorio - no fallback consentiti in sistema finanziario")
+        if not isinstance(ml_models, dict):
+            raise TypeError(f"FAIL FAST: ml_models deve essere dict, ricevuto {type(ml_models)}")
         self.ml_models = ml_models
         self.algorithm_stats = {
             'executions': 0,
@@ -139,46 +142,125 @@ class SupportResistanceAlgorithms:
         current_price = prices[-1]
         current_time = datetime.now()
         
-        # TRAINING MODE: Calcola livelli sull'intero dataset e salvali
+        # TRAINING MODE: Calcola livelli GIORNALIERI sui 30 giorni di dati
         # BIBBIA COMPLIANT: FAIL FAST - no fallback defaults
         if 'training_mode' in market_data and market_data['training_mode']:
-            print(f"📊 TRAINING MODE: Calculating pivot levels on {len(prices):,} ticks")
+            print(f"📊 TRAINING MODE: Calculating DAILY pivot levels from {len(prices):,} ticks")
             
-            # Calcola H/L/C sull'INTERO dataset
-            high = max(prices)
-            low = min(prices) 
-            close = prices[-1]  # Ultimo prezzo come close
+            # LOGICA DAILY-BASED: Raggruppa i tick per giorno
+            daily_data = {}
+            for i, ts in enumerate(timestamps):
+                # Estrai data dal timestamp
+                if isinstance(ts, str):
+                    tick_date = datetime.fromisoformat(ts).date()
+                elif isinstance(ts, datetime):
+                    tick_date = ts.date()
+                else:
+                    raise TypeError(f"FAIL FAST: Unexpected timestamp type: {type(ts)}")
+                
+                # Accumula prezzi per giorno
+                if tick_date not in daily_data:
+                    daily_data[tick_date] = []
+                daily_data[tick_date].append(prices[i])
             
-            # Calcola pivot e livelli
-            pivot = (high + low + close) / 3
-            s1 = 2 * pivot - high
-            r1 = 2 * pivot - low
-            s2 = pivot - (high - low)
-            r2 = pivot + (high - low)
-            s3 = low - 2 * (high - pivot)
-            r3 = high + 2 * (pivot - low)
+            print(f"   📅 Found {len(daily_data)} trading days in data")
             
-            # Salva i livelli nel cache per essere salvati su disco
-            self.pivot_cache['current_levels'] = {
-                'pivot': {'value': pivot, 'confidence': 0.8, 'bounces': 0, 'broken': False, 'tests': 0},
-                'S1': {'value': s1, 'confidence': 0.8, 'bounces': 0, 'broken': False, 'tests': 0},
-                'S2': {'value': s2, 'confidence': 0.8, 'bounces': 0, 'broken': False, 'tests': 0},
-                'S3': {'value': s3, 'confidence': 0.8, 'bounces': 0, 'broken': False, 'tests': 0},
-                'R1': {'value': r1, 'confidence': 0.8, 'bounces': 0, 'broken': False, 'tests': 0},
-                'R2': {'value': r2, 'confidence': 0.8, 'bounces': 0, 'broken': False, 'tests': 0},
-                'R3': {'value': r3, 'confidence': 0.8, 'bounces': 0, 'broken': False, 'tests': 0}
-            }
+            # Calcola pivot per ogni giorno e accumula livelli unici
+            all_levels = {}  # key -> {value, appearances, total_confidence}
             
-            print(f"✅ Calculated pivot levels: P={pivot:.2f}, S1={s1:.2f}, S2={s2:.2f}, S3={s3:.2f}, R1={r1:.2f}, R2={r2:.2f}, R3={r3:.2f}")
+            for date, day_prices in sorted(daily_data.items()):
+                if len(day_prices) < 10:  # Skip giorni con pochi dati
+                    continue
+                    
+                # Calcola H/L/C del giorno
+                high = max(day_prices)
+                low = min(day_prices)
+                close = day_prices[-1]
+                
+                # Calcola pivot e livelli del giorno
+                pivot = (high + low + close) / 3
+                s1 = 2 * pivot - high
+                r1 = 2 * pivot - low
+                s2 = pivot - (high - low)
+                r2 = pivot + (high - low)
+                s3 = low - 2 * (high - pivot)
+                r3 = high + 2 * (pivot - low)
+                
+                # Accumula livelli (considera livelli simili come stesso livello)
+                tolerance = 5.0  # 5 punti di tolleranza per USTEC
+                
+                day_levels = {
+                    'pivot': pivot,
+                    'S1': s1, 'S2': s2, 'S3': s3,
+                    'R1': r1, 'R2': r2, 'R3': r3
+                }
+                
+                for level_name, level_value in day_levels.items():
+                    # Cerca se esiste già un livello simile
+                    found_similar = False
+                    for existing_key, existing_data in all_levels.items():
+                        if abs(existing_data['value'] - level_value) <= tolerance:
+                            # Livello persistente! Aumenta importanza
+                            existing_data['appearances'] += 1
+                            existing_data['total_confidence'] += 0.05
+                            found_similar = True
+                            break
+                    
+                    if not found_similar:
+                        # Nuovo livello
+                        unique_key = f"{level_name}_{date}"
+                        all_levels[unique_key] = {
+                            'value': level_value,
+                            'appearances': 1,
+                            'total_confidence': 0.5,
+                            'level_type': level_name[0] if level_name != 'pivot' else 'P'
+                        }
+            
+            # Filtra e prepara livelli finali (solo quelli con confidence >= 0.5)
+            self.pivot_cache['current_levels'] = {}
+            
+            for key, data in all_levels.items():
+                # Calcola confidence finale basata su persistenza
+                final_confidence = data['total_confidence'] + (data['appearances'] - 1) * 0.1
+                if final_confidence > 1.0:
+                    final_confidence = 1.0
+                
+                if final_confidence >= 0.5:
+                    self.pivot_cache['current_levels'][key] = {
+                        'value': data['value'],
+                        'confidence': final_confidence,
+                        'bounces': 0,
+                        'broken': False,
+                        'tests': 0,
+                        'appearances': data['appearances'],  # Track persistenza
+                        'level_type': data['level_type']
+                    }
+            
+            print(f"✅ Calculated {len(self.pivot_cache['current_levels'])} significant levels from {len(daily_data)} days")
+            print(f"   Top levels by persistence: {sorted([(k, v['appearances']) for k, v in self.pivot_cache['current_levels'].items()], key=lambda x: x[1], reverse=True)[:5]}")
+            
+            # Estrai support e resistance levels ordinati - FAIL FAST se mancanti
+            support_levels = sorted([v['value'] for k, v in self.pivot_cache['current_levels'].items() if v['level_type'] == 'S'], reverse=True)[:3]
+            resistance_levels = sorted([v['value'] for k, v in self.pivot_cache['current_levels'].items() if v['level_type'] == 'R'])[:3]
+            pivot_levels = [v['value'] for k, v in self.pivot_cache['current_levels'].items() if v['level_type'] == 'P']
+            
+            if not pivot_levels:
+                raise RuntimeError("FAIL FAST: Nessun pivot point calcolato dal training - dati insufficienti o corrotti")
+            if not support_levels:
+                raise RuntimeError("FAIL FAST: Nessun support level calcolato dal training - dati insufficienti")
+            if not resistance_levels:
+                raise RuntimeError("FAIL FAST: Nessun resistance level calcolato dal training - dati insufficienti")
+                
+            pivot_value = pivot_levels[0]
             
             # Restituisci i livelli calcolati per il training
             return {
-                "support_levels": [s3, s2, s1],
-                "resistance_levels": [r1, r2, r3],
-                "pivot": pivot,
+                "support_levels": support_levels,
+                "resistance_levels": resistance_levels,
+                "pivot": pivot_value,
                 "confidence": 0.8,
-                "method": "PivotPoints_Training",
-                "test_prediction": f"Training completed: calculated levels on {len(prices):,} ticks",
+                "method": "PivotPoints_DailyBased",
+                "test_prediction": f"Training completed: {len(self.pivot_cache['current_levels'])} levels from {len(daily_data)} days",
                 "level_being_tested": 0.0,
                 "level_type": "training",
                 "expected_outcome": "training_completed",
@@ -206,7 +288,9 @@ class SupportResistanceAlgorithms:
                 print(f"✅ Loaded pre-calculated pivot levels from training for {asset}")
             else:
                 # Log only in validation mode, silent during training/evaluation
-                is_validation_mode = market_data.get('validation_mode', False)
+                if 'validation_mode' not in market_data:
+                    raise KeyError("FAIL FAST: Campo 'validation_mode' obbligatorio in market_data")
+                is_validation_mode = market_data['validation_mode']
                 if is_validation_mode:
                     print(f"📊 No saved pivot levels found for {asset} - will calculate from data")
         
@@ -302,11 +386,25 @@ class SupportResistanceAlgorithms:
         # Se non ci sono eventi o predizioni da mostrare
         if not event_result['has_event'] and not event_result['has_prediction']:
             # SILENZIO - nessun evento significativo
+            # Calcola confidence media dai livelli attivi - FAIL FAST se campi mancanti
+            active_confidences = []
+            for l in self.pivot_cache['current_levels'].values():
+                if 'broken' not in l:
+                    raise KeyError("FAIL FAST: Campo 'broken' mancante in level data - struttura dati corrotta")
+                if 'confidence' not in l:
+                    raise KeyError("FAIL FAST: Campo 'confidence' mancante in level data - struttura dati corrotta")
+                if not l['broken']:
+                    active_confidences.append(l['confidence'])
+            
+            if not active_confidences:
+                raise RuntimeError("FAIL FAST: Nessun livello attivo trovato - tutti rotti o dati corrotti")
+            avg_confidence = sum(active_confidences) / len(active_confidences)
+            
             return {
                 "support_levels": support_levels,
                 "resistance_levels": resistance_levels,
                 "pivot": pivot_value,
-                "confidence": 0.5,
+                "confidence": avg_confidence,
                 "method": "PivotPoints_Dynamic",
                 "test_prediction": "",  # Silenzio durante monitoring normale
                 "level_being_tested": 0.0,
@@ -318,6 +416,12 @@ class SupportResistanceAlgorithms:
         # Evento significativo o predizione da mostrare
         self.algorithm_stats['successful_predictions'] += 1
         
+        # FAIL FAST - Verifica campi obbligatori in event_result
+        required_fields = ['confidence', 'message', 'level_value', 'level_type', 'expected_outcome', 'has_prediction', 'event_type', 'level_action']
+        for field in required_fields:
+            if field not in event_result:
+                raise KeyError(f"FAIL FAST: Campo obbligatorio '{field}' mancante in event_result - sistema corrotto")
+        
         return {
             "support_levels": support_levels,
             "resistance_levels": resistance_levels,
@@ -325,15 +429,12 @@ class SupportResistanceAlgorithms:
             "confidence": event_result['confidence'],
             "method": "PivotPoints_EventDriven",
             "test_prediction": event_result['message'],
-            # BIBBIA COMPLIANT: FAIL FAST - no fallback defaults
-            "level_being_tested": event_result['level_value'] if 'level_value' in event_result else 0.0,
-            "level_type": event_result['level_type'] if 'level_type' in event_result else 'none',
-            "expected_outcome": event_result['expected_outcome'] if 'expected_outcome' in event_result else 'unknown',
+            "level_being_tested": event_result['level_value'],
+            "level_type": event_result['level_type'],
+            "expected_outcome": event_result['expected_outcome'],
             "prediction_generated": event_result['has_prediction'],
-            # Event metadata
-            # BIBBIA COMPLIANT: FAIL FAST - no fallback defaults  
-            "event_type": event_result['event_type'] if 'event_type' in event_result else 'none',
-            "level_action": event_result['level_action'] if 'level_action' in event_result else 'none'  # 'broken', 'held', 'tested'
+            "event_type": event_result['event_type'],
+            "level_action": event_result['level_action']
         }
 
     def _calculate_new_pivot_levels(self):
@@ -439,12 +540,21 @@ class SupportResistanceAlgorithms:
                 'confidence': 0.0
             }
         
-        test_tolerance = current_price * tolerance_percent
+        # ZONA TEST: 20 punti per USTEC (circa 0.09% a 22700)
+        test_zone = 20.0  # Punti assoluti, non percentuale
+        test_tolerance = current_price * tolerance_percent  # Per break detection
         last_price = self.pivot_cache['last_price']
         
         # Prima volta - inizializza tracking
         if last_price is None:
             self.pivot_cache['last_price'] = current_price
+            # Inizializza tracking stati test per ogni livello
+            for level_key in self.pivot_cache['current_levels']:
+                self.pivot_cache['current_levels'][level_key]['test_state'] = 'idle'
+                self.pivot_cache['current_levels'][level_key]['test_entry_price'] = None
+                self.pivot_cache['current_levels'][level_key]['test_entry_time'] = None
+                self.pivot_cache['current_levels'][level_key]['false_break_count'] = 0
+                self.pivot_cache['current_levels'][level_key]['flipped'] = False  # Track S→R o R→S flip
             return {
                 'has_event': False, 
                 'has_prediction': False,
@@ -468,6 +578,10 @@ class SupportResistanceAlgorithms:
                 # ROTTURA CONFERMATA - aggiorna stato e traccia consecutive breaks
                 level_data['broken'] = True
                 level_data['break_time'] = current_time
+                level_data['test_state'] = 'broken'
+                level_data['confidence'] = level_data['confidence'] - 0.1
+                if level_data['confidence'] < 0.1:
+                    level_data['confidence'] = 0.1  # Reduce confidence on break
                 
                 # Determina direzione della rottura
                 break_direction = 'DOWN' if current_price < level_value else 'UP'
@@ -519,39 +633,115 @@ class SupportResistanceAlgorithms:
                         'level_action': 'broken'
                     }
             
-            # Verifica se stiamo testando un livello (vicini ma non rotti)
+            # TRACKING STATO TEST CON ZONA 20 PUNTI
             current_distance = abs(current_price - level_value)
-            # BIBBIA COMPLIANT: FAIL FAST - no fallback defaults
-            was_near = 'was_near_last_tick' in level_data and level_data['was_near_last_tick']
-            is_near_now = current_distance <= test_tolerance
+            is_in_test_zone = current_distance <= test_zone
             
-            # Se ci stiamo allontanando da un livello che stavamo testando = TIENE
-            if was_near and not is_near_now and not level_crossed:
-                level_data['bounces'] += 1
-                level_data['confidence'] = min(1.0, level_data['confidence'] + 0.1)
-                
-                # RESET CONSECUTIVE BREAKS quando un livello tiene
-                # Un bounce interrompe la sequenza di rotture
-                consecutive_breaks = self.pivot_cache['consecutive_breaks']
-                consecutive_breaks['direction'] = None
-                consecutive_breaks['count'] = 0
-                consecutive_breaks['levels_broken'] = []
-                
-                self.pivot_cache['last_price'] = current_price
-                return {
-                    'has_event': True,
-                    'has_prediction': False,
-                    'message': f"✋ {level_key}@{level_value:.2f} TIENE (bounce #{level_data['bounces']}) - Reset break sequence",
-                    'confidence': level_data['confidence'],
-                    'event_type': 'level_hold',
-                    'level_value': level_value,
-                    'level_type': level_key,
-                    'expected_outcome': 'held',
-                    'level_action': 'held'
-                }
+            # Inizializza test_state se non esiste
+            if 'test_state' not in level_data:
+                level_data['test_state'] = 'idle'
+                level_data['test_entry_price'] = None
+                level_data['test_entry_time'] = None
+                level_data['false_break_count'] = 0
+                level_data['flipped'] = False
             
-            # Aggiorna flag di vicinanza per prossimo tick
-            level_data['was_near_last_tick'] = is_near_now
+            current_state = level_data['test_state']
+            
+            # STATE MACHINE PER TRACKING TEST
+            if current_state == 'idle' and is_in_test_zone:
+                # ENTERING TEST ZONE
+                level_data['test_state'] = 'testing'
+                level_data['test_entry_price'] = current_price
+                level_data['test_entry_time'] = current_time
+                level_data['tests'] += 1
+                
+            elif current_state == 'testing':
+                if not is_in_test_zone and not level_crossed:
+                    # EXITING ZONE - BOUNCE/HOLD
+                    level_data['test_state'] = 'idle'
+                    level_data['bounces'] += 1
+                    old_confidence = level_data['confidence']
+                    level_data['confidence'] = level_data['confidence'] + 0.05
+                    if level_data['confidence'] > 1.0:
+                        level_data['confidence'] = 1.0
+                    
+                    # Reset consecutive breaks
+                    consecutive_breaks = self.pivot_cache['consecutive_breaks']
+                    consecutive_breaks['direction'] = None
+                    consecutive_breaks['count'] = 0
+                    consecutive_breaks['levels_broken'] = []
+                    
+                    # Verifica se è un FLIP (supporto diventa resistenza o viceversa)
+                    is_support = level_key.startswith('S')
+                    price_above = current_price > level_value
+                    
+                    if (is_support and price_above) or (not is_support and not price_above):
+                        # Possibile flip in corso
+                        if 'flipped' not in level_data:
+                            raise KeyError("FAIL FAST: Campo 'flipped' mancante in level_data")
+                        if level_data['flipped']:
+                            flip_msg = f" [FLIP CONFERMATO: {'S→R' if is_support else 'R→S'}]"
+                        else:
+                            flip_msg = ""
+                    else:
+                        flip_msg = ""
+                    
+                    self.pivot_cache['last_price'] = current_price
+                    return {
+                        'has_event': True,
+                        'has_prediction': False,
+                        'message': f"✅ {level_key}@{level_value:.2f} TIENE - Confidence: {old_confidence:.2f}→{level_data['confidence']:.2f}{flip_msg}",
+                        'confidence': level_data['confidence'],
+                        'event_type': 'level_hold',
+                        'level_value': level_value,
+                        'level_type': level_key,
+                        'expected_outcome': 'held',
+                        'level_action': 'held'
+                    }
+                    
+            elif current_state == 'broken' and is_in_test_zone:
+                # RETEST DOPO ROTTURA
+                time_since_break = (current_time - level_data['break_time']).seconds if level_data.get('break_time') else 0
+                
+                if time_since_break < 300:  # Entro 5 minuti
+                    # FALSE BREAK - il prezzo è tornato
+                    level_data['test_state'] = 'testing'
+                    level_data['false_break_count'] += 1
+                    level_data['broken'] = False  # Ripristina livello
+                    level_data['confidence'] = level_data['confidence'] + 0.1
+                    if level_data['confidence'] > 1.0:
+                        level_data['confidence'] = 1.0  # Livello forte!
+                    
+                    self.pivot_cache['last_price'] = current_price
+                    return {
+                        'has_event': True,
+                        'has_prediction': False,
+                        'message': f"⚡ FALSE BREAK su {level_key}@{level_value:.2f} - Livello ripristinato! Confidence: {level_data['confidence']:.2f}",
+                        'confidence': level_data['confidence'],
+                        'event_type': 'false_break',
+                        'level_value': level_value,
+                        'level_type': level_key,
+                        'expected_outcome': 'restored',
+                        'level_action': 'restored'
+                    }
+                else:
+                    # RETEST del livello rotto - possibile flip S→R o R→S
+                    level_data['test_state'] = 'retest'
+                    level_data['flipped'] = True
+                    
+                    is_support = level_key.startswith('S')
+                    self.pivot_cache['last_price'] = current_price
+                    return {
+                        'has_event': True,
+                        'has_prediction': False,
+                        'message': f"🔄 RETEST {level_key}@{level_value:.2f} - {'Supporto→Resistenza' if is_support else 'Resistenza→Supporto'}",
+                        'confidence': level_data['confidence'],
+                        'event_type': 'level_flip',
+                        'level_value': level_value,
+                        'level_type': level_key,
+                        'expected_outcome': 'flipped',
+                        'level_action': 'flipped'
+                    }
         
         # Aggiorna last_price per prossimo confronto
         self.pivot_cache['last_price'] = current_price
@@ -600,7 +790,7 @@ class SupportResistanceAlgorithms:
             for key, level in levels.items():
                 if (('S' in key or key == 'pivot') and 
                     level['value'] < current_price and 
-                    not level.get('broken', False)):
+                    not level['broken']):
                     candidates.append({
                         'name': key,
                         'value': level['value'],
@@ -614,7 +804,7 @@ class SupportResistanceAlgorithms:
             for key, level in levels.items():
                 if (('R' in key or key == 'pivot') and 
                     level['value'] > current_price and 
-                    not level.get('broken', False)):
+                    not level['broken']):
                     candidates.append({
                         'name': key,
                         'value': level['value'], 
@@ -629,7 +819,7 @@ class SupportResistanceAlgorithms:
                 'name': next_target['name'],
                 'value': next_target['value'],
                 'direction': direction,
-                'confidence': min(0.9, next_target['confidence'] + 0.15)
+                'confidence': next_target['confidence'] + 0.15 if next_target['confidence'] + 0.15 <= 0.9 else 0.9
             }
         
         # Nessun livello disponibile - calcola target esteso
@@ -806,10 +996,13 @@ class SupportResistanceAlgorithms:
                     "model_output_size": len(levels)
                 }
                 
-        except Exception as e:
+        except (ImportError, AttributeError, ValueError, KeyError) as e:
             self.algorithm_stats['failed_predictions'] += 1
-            # FAIL FAST - Re-raise LSTM error instead of logging
+            # FAIL FAST - Re-raise specific LSTM errors
             raise PredictionError("LSTM_SupportResistance", str(e))
+        except Exception as e:
+            # Unknown error - FAIL FAST per trading safety
+            raise RuntimeError(f"FAIL FAST: Unexpected error in LSTM_SupportResistance - {type(e).__name__}: {e}")
     
     def _statistical_levels_ml(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -919,16 +1112,26 @@ class SupportResistanceAlgorithms:
         Prepara features per LSTM
         Utilizza MarketDataProcessor per consistency
         """
-        # Basic features
-        returns = np.diff(prices, prepend=prices[0]) / np.maximum(prices[:-1], 1e-10)
-        log_returns = np.log(np.maximum(prices[1:] / np.maximum(prices[:-1], 1e-10), 1e-10))
+        # Basic features - FAIL FAST se prezzi invalidi
+        if np.any(prices <= 0):
+            raise ValueError("FAIL FAST: Prezzi <= 0 trovati nei dati - cannot calculate returns safely")
+        if np.any(np.isnan(prices)) or np.any(np.isinf(prices)):
+            raise ValueError("FAIL FAST: Prezzi NaN o infiniti nei dati - cannot calculate returns safely")
+            
+        returns = np.diff(prices, prepend=prices[0]) / prices[:-1]
+        price_ratios = prices[1:] / prices[:-1]
+        log_returns = np.log(price_ratios)
         log_returns = np.append(log_returns, 0)
         
-        # Volume features
+        # Volume features - FAIL FAST se volumi invalidi
         if len(volumes) == 0:
             raise ValueError("FAIL FAST: Empty volumes array - cannot calculate volume_mean")
+        if np.any(volumes < 0):
+            raise ValueError("FAIL FAST: Negative volumes found in data - invalid volume data")
         volume_mean = np.mean(volumes)
-        volume_ratio = volumes / max(volume_mean, 1e-10)
+        if volume_mean == 0:
+            raise ValueError("FAIL FAST: Volume mean is zero - cannot calculate volume ratio safely")
+        volume_ratio = volumes / volume_mean
         
         # Technical indicators (semplificati)
         sma_5 = np.convolve(prices, np.ones(5)/5, mode='same')
@@ -965,17 +1168,28 @@ class SupportResistanceAlgorithms:
         save_data = {
             'asset': asset,
             'save_timestamp': datetime.now().isoformat(),
+            'training_stats': {
+                'total_levels': len(self.pivot_cache['current_levels']),
+                'avg_confidence': sum(l['confidence'] for l in self.pivot_cache['current_levels'].values()) / len(self.pivot_cache['current_levels']) if self.pivot_cache['current_levels'] else 0,
+                'persistent_levels': len([l for l in self.pivot_cache['current_levels'].values() if l.get('appearances', 1) > 1])
+            },
             'levels': {}
         }
         
-        # Converti livelli per serializzazione JSON
+        # Converti livelli per serializzazione JSON con informazioni estese
         for key, level_data in self.pivot_cache['current_levels'].items():
             save_data['levels'][key] = {
                 'value': level_data['value'],
                 'confidence': level_data['confidence'],
                 'bounces': level_data['bounces'],
                 'broken': level_data['broken'],
-                'tests': level_data['tests']
+                'tests': level_data['tests'],
+                # Nuovi campi per daily-based tracking
+                'appearances': level_data.get('appearances', 1),
+                'level_type': level_data.get('level_type', 'Unknown'),
+                'false_break_count': level_data.get('false_break_count', 0),
+                'flipped': level_data.get('flipped', False),
+                'test_state': level_data.get('test_state', 'idle')
             }
         
         # Salva su file JSON
@@ -1007,21 +1221,34 @@ class SupportResistanceAlgorithms:
             with open(file_path, 'r') as f:
                 save_data = json.load(f)
             
-            # Ripristina livelli nel cache
+            # Ripristina livelli nel cache - SOLO se confidence >= 0.5
             self.pivot_cache['current_levels'] = {}
+            levels_loaded = 0
+            levels_skipped = 0
             
             for key, level_data in save_data['levels'].items():
-                self.pivot_cache['current_levels'][key] = {
-                    'value': level_data['value'],
-                    'confidence': level_data['confidence'],
-                    'bounces': level_data['bounces'],
-                    'broken': level_data['broken'],
-                    'tests': level_data['tests'],
-                    'break_time': None,
-                    'last_test': None,
-                    'last_calc_time': datetime.now(),
-                    'was_near_last_tick': False
-                }
+                # FILTRO: Carica solo livelli con confidence >= 0.5
+                if level_data['confidence'] >= 0.5:
+                    self.pivot_cache['current_levels'][key] = {
+                        'value': level_data['value'],
+                        'confidence': level_data['confidence'],  # PRESERVA confidence dal file
+                        'bounces': level_data['bounces'],
+                        'broken': level_data['broken'],
+                        'tests': level_data['tests'],
+                        'break_time': None,
+                        'last_test': None,
+                        'last_calc_time': datetime.now(),
+                        'was_near_last_tick': False,
+                        # Carica nuovi campi daily-based (con fallback per compatibilità)
+                        'appearances': level_data.get('appearances', 1),
+                        'level_type': level_data.get('level_type', key[0] if key[0] in 'SRP' else 'Unknown'),
+                        'false_break_count': level_data.get('false_break_count', 0),
+                        'flipped': level_data.get('flipped', False),
+                        'test_state': level_data.get('test_state', 'idle')
+                    }
+                    levels_loaded += 1
+                else:
+                    levels_skipped += 1
             
             # Inizializza altri campi del cache
             self.pivot_cache['initialization_time'] = datetime.now()
@@ -1029,17 +1256,25 @@ class SupportResistanceAlgorithms:
             self.pivot_cache['next_recalc_time'] = datetime.now()
             
             print(f"✅ Loaded pivot levels for {asset} from {file_path}")
-            print(f"   Levels loaded: {list(self.pivot_cache['current_levels'].keys())}")
+            print(f"   Levels loaded: {levels_loaded} (confidence >= 0.5)")
+            if levels_skipped > 0:
+                print(f"   Levels skipped: {levels_skipped} (confidence < 0.5)")
+            print(f"   Active levels: {list(self.pivot_cache['current_levels'].keys())}")
             return True
             
-        except Exception as e:
+        except (FileNotFoundError, JSONDecodeError, KeyError, ValueError) as e:
             print(f"❌ Error loading pivot levels for {asset}: {e}")
             return False
+        except Exception as e:
+            # Unknown error - FAIL FAST per system integrity
+            raise RuntimeError(f"FAIL FAST: Unexpected error loading pivot levels for {asset} - {type(e).__name__}: {e}")
 
 
 # Factory function per compatibilità
-def create_support_resistance_algorithms(ml_models: Optional[Dict[str, Any]] = None) -> SupportResistanceAlgorithms:
-    """Factory function per creare SupportResistanceAlgorithms"""
+def create_support_resistance_algorithms(ml_models: Dict[str, Any]) -> SupportResistanceAlgorithms:
+    """Factory function per creare SupportResistanceAlgorithms - FAIL FAST se ml_models mancanti"""
+    if ml_models is None:
+        raise ValueError("FAIL FAST: ml_models è obbligatorio - no fallback consentiti")
     return SupportResistanceAlgorithms(ml_models)
 
 
