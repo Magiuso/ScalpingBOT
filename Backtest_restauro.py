@@ -93,7 +93,7 @@ except ImportError:
     def original_safe_print(text: str) -> None: 
         print(text)
     class DummyLogger:
-        def info(self, text: str) -> None: pass
+        def info(self, text: str) -> None: pass        
         def error(self, text: str) -> None: pass
         def critical(self, text: str) -> None: pass
     logger = DummyLogger()
@@ -112,12 +112,16 @@ class BacktestRestauro:
     ZERO FALLBACK - Uses only migrated modular components
     """
     
-    def __init__(self, test_data_path: str = "./test_analyzer_data", asset_symbol: str = "USTEC", selected_models: Optional[List[str]] = None):
+    def __init__(self, test_data_path: str = "./analyzer_data", asset_symbol: Optional[str] = None, selected_models: Optional[List[str]] = None):
+        # FAIL FAST validations - BIBBIA compliant
+        if not asset_symbol or not isinstance(asset_symbol, str):
+            raise ValueError("FAIL FAST: asset_symbol is mandatory - no default allowed (BIBBIA compliance)")
+        if not selected_models:
+            raise ValueError("FAIL FAST: No models selected for training - model selection is mandatory")
+            
         self.test_data_path = test_data_path
         self.test_start_time = datetime.now()
-        self.asset_symbol = asset_symbol  # TRULY MULTIASSET - accepts any symbol
-        if not selected_models:
-            raise ValueError("No models selected for training - model selection is mandatory")
+        self.asset_symbol = asset_symbol  # TRULY MULTIASSET - accepts any symbol from user
         self.selected_models = selected_models
         
         # Migrated components
@@ -702,17 +706,20 @@ class BacktestRestauro:
             safe_print(f"⚠️ Cleanup error: {e}")
 
 
-async def run_backtest_restauro(asset_symbol: str = "USTEC", selected_models: Optional[List[str]] = None) -> bool:
+async def run_backtest_restauro(asset_symbol: str, selected_models: Optional[List[str]] = None) -> bool:
     """
     Esegue test completo del sistema ScalpingBOT_Restauro
     """
+    # FAIL FAST validations - BIBBIA compliant
+    if not asset_symbol or not isinstance(asset_symbol, str):
+        raise ValueError("FAIL FAST: asset_symbol is mandatory - no hardcoded defaults (BIBBIA compliance)")
+    if not selected_models:
+        raise ValueError("FAIL FAST: No models specified for backtest execution - model selection is mandatory")
     
     safe_print("\n" + "="*70)
     safe_print("🚀 BACKTEST RESTAURO - MIGRATED SYSTEM TEST")
     safe_print("="*70)
     safe_print(f"📊 Asset: {asset_symbol}")
-    if not selected_models:
-        raise ValueError("No models specified for backtest execution - model selection is mandatory")
     safe_print(f"🎯 Models: {len(selected_models)}")
     safe_print("📋 CRITERIA: Health >70%, Confidence >70%, Champions active")
     safe_print("🛡️ ERROR TESTING: Mandatory")

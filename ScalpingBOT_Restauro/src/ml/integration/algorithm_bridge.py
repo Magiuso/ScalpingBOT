@@ -44,6 +44,9 @@ from ..algorithms.volatility_prediction_algorithms import (
     create_volatility_prediction_algorithms
 )
 
+# Import 3-phase handler for special algorithms
+from ...prediction.core.components.three_phase_handler import ThreePhaseHandler, create_three_phase_handler
+
 # Import competition system
 from ..models.competition import AlgorithmCompetition
 from ..models.base_models import Prediction, AlgorithmPerformance
@@ -91,6 +94,9 @@ class AlgorithmBridge:
         self.bias_algorithms = create_bias_detection_algorithms(ml_models)
         self.trend_algorithms = create_trend_analysis_algorithms(ml_models)
         self.volatility_algorithms = create_volatility_prediction_algorithms(ml_models)
+        
+        # Initialize 3-phase handler for special algorithms
+        self.three_phase_handler = create_three_phase_handler()
         
         # Algorithm registry: ModelType -> List[algorithm_names]
         self.algorithm_registry = {
@@ -174,26 +180,48 @@ class AlgorithmBridge:
         self.execution_stats['last_execution'] = execution_start
         
         try:
-            # BIBBIA COMPLIANT: Single path dictionary lookup - NO elif chains
-            algorithm_engines = {
-                ModelType.SUPPORT_RESISTANCE: self.sr_algorithms,
-                ModelType.PATTERN_RECOGNITION: self.pattern_algorithms,
-                ModelType.BIAS_DETECTION: self.bias_algorithms,
-                ModelType.TREND_ANALYSIS: self.trend_algorithms,
-                ModelType.VOLATILITY_PREDICTION: self.volatility_algorithms
-            }
-            
-            # FAIL FAST if unsupported model type
-            if model_type not in algorithm_engines:
-                raise ValueError(f"FAIL FAST: Unsupported model type: {model_type.value}")
-            
-            # FAIL FAST if algorithm not available for model type
-            if algorithm_name not in self.algorithm_registry[model_type]:
-                raise ValueError(f"FAIL FAST: Algorithm {algorithm_name} not available for {model_type.value}")
-            
-            # Execute through appropriate engine
-            engine = algorithm_engines[model_type]
-            result = engine.run_algorithm(algorithm_name, market_data)
+            # Check if this is a 3-phase algorithm
+            if self.three_phase_handler.is_three_phase_algorithm(algorithm_name):
+                # Route to 3-phase handler
+                if 'asset' not in market_data:
+                    raise KeyError("FAIL FAST: Missing required field 'asset' for 3-phase algorithm")
+                asset = market_data['asset']
+                
+                # Determine which phase to run based on market_data
+                if 'training_mode' in market_data and market_data['training_mode']:
+                    result = self.three_phase_handler.run_training_phase(algorithm_name, asset, market_data)
+                elif 'evaluation_mode' in market_data and market_data['evaluation_mode']:
+                    if 'future_ticks' not in market_data:
+                        raise KeyError("FAIL FAST: Missing required field 'future_ticks' for evaluation phase")
+                    result = self.three_phase_handler.run_evaluation_phase(algorithm_name, asset, market_data['future_ticks'])
+                elif 'validation_init' in market_data and market_data['validation_init']:
+                    result = self.three_phase_handler.run_validation_init(algorithm_name, asset)
+                elif 'current_tick' in market_data:
+                    result = self.three_phase_handler.run_validation_tick_test(algorithm_name, asset, market_data['current_tick'])
+                else:
+                    raise ValueError("FAIL FAST: Cannot determine phase for 3-phase algorithm - missing mode indicators")
+            else:
+                # Regular algorithm execution
+                # BIBBIA COMPLIANT: Single path dictionary lookup - NO elif chains
+                algorithm_engines = {
+                    ModelType.SUPPORT_RESISTANCE: self.sr_algorithms,
+                    ModelType.PATTERN_RECOGNITION: self.pattern_algorithms,
+                    ModelType.BIAS_DETECTION: self.bias_algorithms,
+                    ModelType.TREND_ANALYSIS: self.trend_algorithms,
+                    ModelType.VOLATILITY_PREDICTION: self.volatility_algorithms
+                }
+                
+                # FAIL FAST if unsupported model type
+                if model_type not in algorithm_engines:
+                    raise ValueError(f"FAIL FAST: Unsupported model type: {model_type.value}")
+                
+                # FAIL FAST if algorithm not available for model type
+                if algorithm_name not in self.algorithm_registry[model_type]:
+                    raise ValueError(f"FAIL FAST: Algorithm {algorithm_name} not available for {model_type.value}")
+                
+                # Execute through appropriate engine
+                engine = algorithm_engines[model_type]
+                result = engine.run_algorithm(algorithm_name, market_data)
             
             # Process all results - logic itself is anti-spam
             

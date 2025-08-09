@@ -28,211 +28,13 @@ from ScalpingBOT_Restauro.src.config.base.config_loader import get_configuration
 from ScalpingBOT_Restauro.src.config.base.base_config import get_analyzer_config
 from ScalpingBOT_Restauro.src.monitoring.events.event_collector import EventCollector, EventType, EventSeverity
 from ScalpingBOT_Restauro.src.prediction.core.asset_analyzer import AssetAnalyzer, create_asset_analyzer
+from .components.incremental_sr_calculator import IncrementalSRCalculator
+from .components.three_phase_handler import ThreePhaseHandler, create_three_phase_handler
 from ScalpingBOT_Restauro.src.ml.integration.algorithm_bridge import AlgorithmBridge, create_algorithm_bridge
 
 
-class IncrementalSRCalculator:
-    """
-    Incremental Support/Resistance Calculator for O(n) complexity
-    Production-ready for real-money trading
-    """
-    
-    def __init__(self, window_size: int = 20, level_tolerance: float = 0.002, 
-                 max_levels: int = 100, decay_period: int = 1000):
-        """
-        Args:
-            window_size: Window for local min/max detection
-            level_tolerance: Price tolerance for level clustering (0.2%)
-            max_levels: Maximum S/R levels to maintain
-            decay_period: Ticks before level strength starts decaying
-        """
-        self.window_size = window_size
-        self.level_tolerance = level_tolerance
-        self.max_levels = max_levels
-        self.decay_period = decay_period
-        
-        # Rolling price buffer for local min/max detection
-        self.price_buffer = deque(maxlen=window_size * 2 + 1)
-        
-        # S/R levels with metadata: {price: {'strength': float, 'touches': int, 'last_seen': int}}
-        self.support_levels = {}
-        self.resistance_levels = {}
-        
-        # Tick counter
-        self.tick_count = 0
-        
-    def add_tick(self, price: float) -> None:
-        """Add new tick and update S/R levels incrementally - O(1) amortized"""
-        self.tick_count += 1
-        self.price_buffer.append(price)
-        
-        # Need full window to detect local min/max
-        if len(self.price_buffer) < self.window_size * 2 + 1:
-            return
-            
-        # Check if middle price is local min/max
-        middle_idx = self.window_size
-        middle_price = self.price_buffer[middle_idx]
-        
-        # Local minimum = potential support
-        if all(middle_price <= self.price_buffer[i] for i in range(len(self.price_buffer)) if i != middle_idx):
-            self._add_support_level(middle_price)
-            
-        # Local maximum = potential resistance  
-        if all(middle_price >= self.price_buffer[i] for i in range(len(self.price_buffer)) if i != middle_idx):
-            self._add_resistance_level(middle_price)
-            
-        # Update touches for existing levels
-        self._update_level_touches(price)
-        
-        # Decay old levels periodically
-        if self.tick_count % 100 == 0:
-            self._decay_old_levels()
-    
-    def _add_support_level(self, price: float) -> None:
-        """Add or strengthen support level"""
-        # Round price for clustering
-        rounded_price = round(price, 2)
-        
-        # Check if level already exists (within tolerance)
-        for existing_price in list(self.support_levels.keys()):
-            if abs(existing_price - rounded_price) / existing_price < self.level_tolerance:
-                # Strengthen existing level
-                self.support_levels[existing_price]['strength'] = min(
-                    self.support_levels[existing_price]['strength'] + 0.1, 1.0
-                )
-                self.support_levels[existing_price]['touches'] += 1
-                self.support_levels[existing_price]['last_seen'] = self.tick_count
-                return
-                
-        # Add new level
-        self.support_levels[rounded_price] = {
-            'strength': 0.3,
-            'touches': 1,
-            'last_seen': self.tick_count
-        }
-        
-        # Maintain max levels
-        if len(self.support_levels) > self.max_levels:
-            # Remove weakest level
-            weakest = min(self.support_levels.items(), 
-                         key=lambda x: x[1]['strength'])
-            del self.support_levels[weakest[0]]
-    
-    def _add_resistance_level(self, price: float) -> None:
-        """Add or strengthen resistance level"""
-        # Round price for clustering
-        rounded_price = round(price, 2)
-        
-        # Check if level already exists (within tolerance)
-        for existing_price in list(self.resistance_levels.keys()):
-            if abs(existing_price - rounded_price) / existing_price < self.level_tolerance:
-                # Strengthen existing level
-                self.resistance_levels[existing_price]['strength'] = min(
-                    self.resistance_levels[existing_price]['strength'] + 0.1, 1.0
-                )
-                self.resistance_levels[existing_price]['touches'] += 1
-                self.resistance_levels[existing_price]['last_seen'] = self.tick_count
-                return
-                
-        # Add new level
-        self.resistance_levels[rounded_price] = {
-            'strength': 0.3,
-            'touches': 1,
-            'last_seen': self.tick_count
-        }
-        
-        # Maintain max levels
-        if len(self.resistance_levels) > self.max_levels:
-            # Remove weakest level
-            weakest = min(self.resistance_levels.items(), 
-                         key=lambda x: x[1]['strength'])
-            del self.resistance_levels[weakest[0]]
-    
-    def _update_level_touches(self, current_price: float) -> None:
-        """Update touch count when price approaches levels"""
-        # Check support touches
-        for level_price, metadata in self.support_levels.items():
-            if abs(current_price - level_price) / level_price < self.level_tolerance:
-                metadata['touches'] += 1
-                metadata['last_seen'] = self.tick_count
-                metadata['strength'] = min(metadata['strength'] + 0.05, 1.0)
-                
-        # Check resistance touches
-        for level_price, metadata in self.resistance_levels.items():
-            if abs(current_price - level_price) / level_price < self.level_tolerance:
-                metadata['touches'] += 1
-                metadata['last_seen'] = self.tick_count
-                metadata['strength'] = min(metadata['strength'] + 0.05, 1.0)
-    
-    def _decay_old_levels(self) -> None:
-        """Decay strength of old levels"""
-        current_tick = self.tick_count
-        
-        # Decay supports
-        for level_price in list(self.support_levels.keys()):
-            metadata = self.support_levels[level_price]
-            age = current_tick - metadata['last_seen']
-            if age > self.decay_period:
-                decay_factor = 0.95 ** (age / self.decay_period)
-                metadata['strength'] *= decay_factor
-                
-                # Remove if too weak
-                if metadata['strength'] < 0.1:
-                    del self.support_levels[level_price]
-                    
-        # Decay resistances
-        for level_price in list(self.resistance_levels.keys()):
-            metadata = self.resistance_levels[level_price]
-            age = current_tick - metadata['last_seen']
-            if age > self.decay_period:
-                decay_factor = 0.95 ** (age / self.decay_period)
-                metadata['strength'] *= decay_factor
-                
-                # Remove if too weak
-                if metadata['strength'] < 0.1:
-                    del self.resistance_levels[level_price]
-    
-    def get_current_levels(self) -> Dict[str, List[float]]:
-        """Get current S/R levels sorted by price - O(n log n) where n = number of levels"""
-        return {
-            'support': sorted(self.support_levels.keys()),
-            'resistance': sorted(self.resistance_levels.keys())
-        }
-    
-    def get_levels_with_strength(self) -> Dict[str, Dict[float, float]]:
-        """Get S/R levels with their strength values"""
-        return {
-            'support': {price: meta['strength'] for price, meta in self.support_levels.items()},
-            'resistance': {price: meta['strength'] for price, meta in self.resistance_levels.items()}
-        }
-    
-    def get_nearest_levels(self, current_price: float) -> Dict[str, Any]:
-        """Get nearest support and resistance with metadata - O(n)"""
-        nearest_support = None
-        nearest_support_strength = 0
-        
-        nearest_resistance = None
-        nearest_resistance_strength = 0
-        
-        # Find nearest support (below current price)
-        for price, metadata in self.support_levels.items():
-            if price <= current_price and (nearest_support is None or price > nearest_support):
-                nearest_support = price
-                nearest_support_strength = metadata['strength']
-                
-        # Find nearest resistance (above current price)
-        for price, metadata in self.resistance_levels.items():
-            if price >= current_price and (nearest_resistance is None or price < nearest_resistance):
-                nearest_resistance = price
-                nearest_resistance_strength = metadata['strength']
-                
-        return {
-            'support': nearest_support,
-            'support_strength': nearest_support_strength,
-            'resistance': nearest_resistance,
-            'resistance_strength': nearest_resistance_strength
-        }
+# ✅ IncrementalSRCalculator ESTRATTO in components/incremental_sr_calculator.py 
+# Vecchia implementazione RIMOSSA per evitare duplicazione
 
 
 class AdvancedMarketAnalyzer:
@@ -277,6 +79,9 @@ class AdvancedMarketAnalyzer:
         
         # FASE 5 - ML: Initialize algorithm bridge for ML training
         self.algorithm_bridge = create_algorithm_bridge()
+        
+        # NEW - THREE PHASE: Initialize handler for 3-phase algorithms (PivotPoints_Classic)
+        self.three_phase_handler = create_three_phase_handler(data_path)
         
         # Asset management - MUST BE INITIALIZED BEFORE loading models
         self.asset_analyzers: Dict[str, AssetAnalyzer] = {}
@@ -2083,6 +1888,12 @@ class AdvancedMarketAnalyzer:
     
     def _get_model_type_for_algorithm(self, algorithm_name: str) -> Optional[ModelType]:
         """Get ModelType enum for algorithm name - BIBBIA COMPLIANT"""
+        
+        # Algoritmi con architettura 3-fasi (training → evaluation → validation)
+        three_phase_algorithms = {
+            "PivotPoints_Classic"
+        }
+        
         # Direct mapping for known algorithms
         algorithm_to_model_type = {
             # Support/Resistance
@@ -2148,18 +1959,34 @@ class AdvancedMarketAnalyzer:
                 window_ticks = asset_ticks[i-window_size:i]
                 future_ticks = asset_ticks[i:i+lookahead_size]
                 
-                # Convert to market data format expected by algorithms
-                market_data = self._prepare_market_data_for_algorithm(window_ticks, asset)
-                
-                # Get algorithm predictions
+                # Get algorithm predictions through algorithm bridge (handles 3-phase routing)
                 if algorithm_type == 'support_resistance':
-                    from ...ml.algorithms.support_resistance_algorithms import SupportResistanceAlgorithms
-                    algo_instance = SupportResistanceAlgorithms(self.algorithm_bridge.ml_models)
-                    result = algo_instance.run_algorithm(algorithm_name, market_data)
+                    # BIBBIA COMPLIANT: FAIL FAST check for 3-phase handler
+                    if not hasattr(self.algorithm_bridge, 'three_phase_handler'):
+                        raise RuntimeError("FAIL FAST: Algorithm bridge missing three_phase_handler - system integrity compromised")
+                    
+                    # BIBBIA COMPLIANT: Single path with dictionary-based data selection
+                    is_three_phase = self.algorithm_bridge.three_phase_handler.is_three_phase_algorithm(algorithm_name)
+                    data_selection = {
+                        True: asset_ticks,    # 3-phase algorithms use ALL ticks
+                        False: window_ticks   # Regular algorithms use window
+                    }
+                    
+                    # Single path execution - prepare data once with selected ticks
+                    selected_ticks = data_selection[is_three_phase]
+                    market_data = self._prepare_market_data_for_algorithm(selected_ticks, asset)
+                    market_data['training_mode'] = True
+                    result = self.algorithm_bridge.execute_algorithm(ModelType.SUPPORT_RESISTANCE, algorithm_name, market_data)
+                    
+                    # Handle 3-phase completion tracking
+                    if is_three_phase and result:
+                        prediction_count += 1
+                        successful_predictions += 1
+                        break  # 3-phase processes all data at once
                 elif algorithm_type == 'volatility_prediction':
-                    from ...ml.algorithms.volatility_prediction_algorithms import VolatilityPredictionAlgorithms
-                    algo_instance = VolatilityPredictionAlgorithms(self.algorithm_bridge.ml_models)
-                    result = algo_instance.run_algorithm(algorithm_name, market_data)
+                    # Prepare market data for regular algorithms
+                    market_data = self._prepare_market_data_for_algorithm(window_ticks, asset)
+                    result = self.algorithm_bridge.execute_algorithm(ModelType.VOLATILITY_PREDICTION, algorithm_name, market_data)
                 else:
                     # Add other algorithm types as needed
                     raise ValueError(f"Unsupported algorithm type for evaluation: {algorithm_type}")
@@ -2230,15 +2057,7 @@ class AdvancedMarketAnalyzer:
         
         print(f"        📊 {algorithm_name} Performance: Hit Rate={avg_hit_rate:.2%}, Confidence={confidence:.2%}")
         
-        # Save pivot levels immediately after evaluation while cache is populated
-        if algorithm_name == "PivotPoints_Classic":
-            try:
-                save_dir = f"{self.data_path}/{asset}/models/support_resistance/pivot_points_classic"
-                os.makedirs(save_dir, exist_ok=True)
-                self.algorithm_bridge.sr_algorithms.save_pivot_levels(asset, save_dir)
-                print(f"        💾 Pivot levels saved for {asset} after evaluation")
-            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as save_error:
-                print(f"        ⚠️ Failed to save pivot levels after evaluation: {save_error}")
+        # ⚠️ Pivot levels save logic RIMOSSO - PivotPoints_Classic ora in file modulare separato
         
         return evaluation_metrics
     
@@ -2273,7 +2092,7 @@ class AdvancedMarketAnalyzer:
         return {
             'price_history': prices,
             'volume_history': volumes,
-            'timestamps': timestamps,  # Array completo per PivotPoints_Classic
+            'timestamps': timestamps,  # Array completo per algoritmi temporali
             'current_price': prices[-1] if prices else 0.0,
             'asset': asset,
             'timestamp': timestamps[-1] if timestamps else datetime.now()  # Singolo per compatibilità
@@ -2693,7 +2512,7 @@ class AdvancedMarketAnalyzer:
             'current_price': prices[-1],
             'current_volume': volumes[-1],
             'current_timestamp': timestamps[-1],
-            'current_tick': current_tick,  # Add current_tick for PivotPoints_Classic accumulation
+            'current_tick': current_tick,  # Current tick per algoritmi real-time
             'asset': symbol,
             'prediction_mode': 'single_tick',
             'context_length': len(prices)

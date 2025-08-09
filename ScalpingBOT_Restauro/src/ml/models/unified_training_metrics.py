@@ -42,7 +42,7 @@ class UnifiedTrainingMetrics:
     NEURAL_NETWORK_MIN_EPOCHS = 10
     CLASSICAL_ML_MIN_ACCURACY = 0.5
     MATHEMATICAL_MIN_CONFIDENCE = 0.5
-    PIVOT_MIN_EVALUATION_WINDOWS = 1000
+    # ⚠️ PIVOT_MIN_EVALUATION_WINDOWS RIMOSSO - PivotPoints_Classic ora modulare
     
     @staticmethod
     def normalize_neural_network_metrics(training_result: Dict[str, Any]) -> Dict[str, Any]:
@@ -232,81 +232,8 @@ class UnifiedTrainingMetrics:
             'evaluation_timestamp': datetime.now().isoformat()
         }
     
-    @staticmethod
-    def normalize_pivot_points_metrics(evaluation_report: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Normalizza metriche specifiche per PivotPoints_Classic
-        
-        Args:
-            evaluation_report: Report da evaluation_report.json del PIVOT
-            
-        Returns:
-            Dict con metriche normalizzate
-            
-        Raises:
-            ValueError: Se metriche insufficienti o dati invalidi
-        """
-        if not isinstance(evaluation_report, dict):
-            raise TypeError("evaluation_report must be dict")
-        
-        # FAIL FAST: Campi critici devono esistere
-        required_fields = ['confidence', 'avg_hit_rate', 'consistency', 'evaluation_windows']
-        for field in required_fields:
-            if field not in evaluation_report:
-                raise KeyError(f"Missing required field '{field}' in PivotPoints evaluation report")
-        
-        confidence = evaluation_report['confidence']
-        avg_hit_rate = evaluation_report['avg_hit_rate']
-        consistency = evaluation_report['consistency']  # Più basso = meglio
-        evaluation_windows = evaluation_report['evaluation_windows']
-        success_rate = evaluation_report.get('success_rate', 1.0)
-        
-        # FAIL FAST: Validazione valori
-        if not isinstance(confidence, (int, float)) or not (0.0 <= confidence <= 1.0):
-            raise ValueError(f"Invalid confidence: {confidence} (must be 0.0-1.0)")
-        
-        if not isinstance(avg_hit_rate, (int, float)) or not (0.0 <= avg_hit_rate <= 1.0):
-            raise ValueError(f"Invalid avg_hit_rate: {avg_hit_rate} (must be 0.0-1.0)")
-        
-        if not isinstance(consistency, (int, float)) or consistency < 0:
-            raise ValueError(f"Invalid consistency: {consistency} (must be >= 0)")
-        
-        if not isinstance(evaluation_windows, int) or evaluation_windows < 1:
-            raise ValueError(f"Invalid evaluation_windows: {evaluation_windows} (must be >= 1)")
-        
-        if evaluation_windows < UnifiedTrainingMetrics.PIVOT_MIN_EVALUATION_WINDOWS:
-            raise ValueError(f"Insufficient evaluation windows: {evaluation_windows} < {UnifiedTrainingMetrics.PIVOT_MIN_EVALUATION_WINDOWS}")
-        
-        # Score combinato per PivotPoints con pesi ottimizzati
-        performance_score = (
-            confidence * 0.35 +           # Confidence è importante
-            avg_hit_rate * 0.35 +         # Hit rate è importante  
-            (1.0 - min(consistency, 1.0)) * 0.15 +  # Meno variabilità = meglio
-            success_rate * 0.10 +         # Success rate
-            min(1.0, evaluation_windows / 10000) * 0.05  # Bonus per molti test
-        ) * 100.0
-        
-        # Reliability basata su numero di test
-        if evaluation_windows >= 10000:
-            reliability = 1.0
-        elif evaluation_windows >= 5000:
-            reliability = 0.9
-        elif evaluation_windows >= 2000:
-            reliability = 0.7
-        else:
-            reliability = min(1.0, evaluation_windows / 2000.0)
-        
-        return {
-            'performance_score': float(performance_score),
-            'confidence': float(confidence),
-            'reliability': float(reliability),
-            'algorithm_type': 'pivot_points',
-            'avg_hit_rate': float(avg_hit_rate),
-            'consistency': float(consistency),
-            'evaluation_windows': int(evaluation_windows),
-            'success_rate': float(success_rate),
-            'evaluation_timestamp': datetime.now().isoformat()
-        }
+    # ⚠️ METODO RIMOSSO: normalize_pivot_points_metrics 
+    # PivotPoints_Classic ora in file modulare separato - metriche gestite indipendentemente
     
     @staticmethod
     def auto_normalize_metrics(training_data: Dict[str, Any], 
@@ -332,9 +259,7 @@ class UnifiedTrainingMetrics:
             # Neural Network pattern
             return UnifiedTrainingMetrics.normalize_neural_network_metrics(training_data)
         
-        elif 'avg_hit_rate' in training_data and 'evaluation_windows' in training_data:
-            # PivotPoints pattern specifico
-            return UnifiedTrainingMetrics.normalize_pivot_points_metrics(training_data)
+        # ⚠️ PivotPoints pattern RIMOSSO - ora gestito in file modulare separato
         
         elif 'metadata' in training_data and 'accuracy_score' in training_data['metadata']:
             # Classical ML pattern

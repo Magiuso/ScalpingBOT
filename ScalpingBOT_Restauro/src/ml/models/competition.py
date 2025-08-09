@@ -1025,7 +1025,7 @@ class AlgorithmCompetition:
         Args:
             name: Nome algoritmo
             training_data: Dati di training/evaluation
-            algorithm_type: Tipo algoritmo ('neural_network', 'classical_ml', 'mathematical', 'pivot_points', 'auto')
+            algorithm_type: Tipo algoritmo ('neural_network', 'classical_ml', 'mathematical', 'auto')
             
         Raises:
             ValueError: Se algoritmo non registrato o training invalido
@@ -1048,8 +1048,7 @@ class AlgorithmCompetition:
                     normalized_metrics = UnifiedTrainingMetrics.normalize_classical_ml_metrics(training_data)
                 elif algorithm_type == 'mathematical':
                     normalized_metrics = UnifiedTrainingMetrics.normalize_mathematical_metrics(training_data)
-                elif algorithm_type == 'pivot_points':
-                    normalized_metrics = UnifiedTrainingMetrics.normalize_pivot_points_metrics(training_data)
+                # ⚠️ pivot_points case RIMOSSO - PivotPoints_Classic ora modulare
                 else:
                     raise ValueError(f"Unknown algorithm_type: {algorithm_type}")
             

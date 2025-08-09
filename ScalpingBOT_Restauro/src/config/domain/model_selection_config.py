@@ -61,7 +61,7 @@ class ModelSelectionManager:
             "pivot_points": ModelTrainingConfig(
                 model_type=ModelType.SUPPORT_RESISTANCE,
                 algorithm_name="PivotPoints_Classic",
-                display_name="Pivot Points Classic",
+                display_name="Pivot Points Classic (Modulare)",
                 estimated_time_hours=0.5,
                 complexity_level="low",
                 dependencies=[]
