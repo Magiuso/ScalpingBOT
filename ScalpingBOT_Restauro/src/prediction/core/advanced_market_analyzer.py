@@ -83,6 +83,11 @@ class AdvancedMarketAnalyzer:
         # NEW - THREE PHASE: Initialize handler for 3-phase algorithms (PivotPoints_Classic)
         self.three_phase_handler = create_three_phase_handler(data_path)
         
+        # SEQUENTIAL BATCH TRACKING: Track state across multiple batch calls
+        self.batch_sequence_state = {
+            # Format: {asset: {algorithm: {day_count: int, previous_batch_data: List, training_history: List}}}
+        }
+        
         # Asset management - MUST BE INITIALIZED BEFORE loading models
         self.asset_analyzers: Dict[str, AssetAnalyzer] = {}
         self.active_assets: Set[str] = set()
@@ -405,6 +410,130 @@ class AdvancedMarketAnalyzer:
         stats['asset_stats'] = asset_stats
         
         return stats
+    
+    def _execute_three_phase_sequential(self, algorithm_name: str, asset_ticks: List[Dict], 
+                                       asset: str, window_ticks: List[Dict], future_ticks: List[Dict]) -> Dict[str, Any]:
+        """
+        BIBBIA COMPLIANT: Sequential day-by-day 3-phase execution with batch state tracking
+        
+        Mantiene lo stato tra chiamate batch successive:
+        - Batch #1: Training Day 1
+        - Batch #2: Training Day 2 + Evaluation (Day 1 levels su Day 2 ticks)
+        - Batch #N: Training Day N + Evaluation (Day N-1 levels su Day N ticks)
+        - Batch #30: Training + Evaluation + Validation init
+        
+        Returns:
+            Combined result with overall hit_rate for compatibility
+        """
+        # FAIL FAST validations
+        if not isinstance(asset_ticks, list) or len(asset_ticks) < 100:
+            raise ValueError(f"FAIL FAST: Need at least 100 ticks, got {len(asset_ticks) if isinstance(asset_ticks, list) else 'invalid'}")
+        
+        # Initialize batch state for this asset/algorithm if not exists
+        if asset not in self.batch_sequence_state:
+            self.batch_sequence_state[asset] = {}
+        if algorithm_name not in self.batch_sequence_state[asset]:
+            self.batch_sequence_state[asset][algorithm_name] = {
+                'day_count': 0,
+                'previous_batch_data': None,
+                'evaluation_history': [],
+                'total_hit_rate': 0,
+                'total_evaluations': 0
+            }
+        
+        # Get current state
+        state = self.batch_sequence_state[asset][algorithm_name]
+        state['day_count'] += 1
+        current_day = state['day_count']
+        
+        print(f"📅 Processing Day {current_day} batch for {algorithm_name}")
+        print(f"   Current batch: {len(asset_ticks):,} ticks")
+        
+        # TRAINING: Always do training for current day
+        training_data = self._prepare_market_data_for_algorithm(asset_ticks, asset)
+        training_data['training_mode'] = True
+        training_result = self.algorithm_bridge.execute_algorithm(ModelType.SUPPORT_RESISTANCE, algorithm_name, training_data)
+        
+        print(f"     ✅ Day {current_day} Training completed - {training_result.get('total_levels', 0)} levels calculated")
+        
+        # EVALUATION: Test previous day's levels on current day's ticks (if not first day)
+        if current_day > 1 and state['previous_batch_data'] is not None:
+            print(f"     📊 Running Evaluation: Testing Day {current_day-1} levels on Day {current_day} ticks")
+            
+            # Use previous day's data for evaluation context
+            evaluation_data = self._prepare_market_data_for_algorithm(state['previous_batch_data'], asset)
+            evaluation_data['evaluation_mode'] = True
+            evaluation_data['future_ticks'] = asset_ticks  # Current day ticks as future ticks
+            
+            try:
+                evaluation_result = self.algorithm_bridge.execute_algorithm(ModelType.SUPPORT_RESISTANCE, algorithm_name, evaluation_data)
+                
+                if evaluation_result and 'confidence' in evaluation_result:
+                    day_hit_rate = evaluation_result['confidence']
+                    state['total_hit_rate'] += day_hit_rate
+                    state['total_evaluations'] += 1
+                    state['evaluation_history'].append({
+                        'day': current_day,
+                        'hit_rate': day_hit_rate,
+                        'levels_tested': evaluation_result.get('total_levels_tested', 0)
+                    })
+                    print(f"       ✅ Evaluation completed - Hit Rate: {day_hit_rate:.2%}")
+                else:
+                    print(f"       ⚠️ Evaluation completed but no confidence returned")
+            except Exception as e:
+                print(f"       ❌ Evaluation failed: {e}")
+        elif current_day == 1:
+            print(f"     ⏭️ Day 1 - No evaluation possible (no previous day)")
+        
+        # VALIDATION INIT: Only after 30 days of training/evaluation
+        if current_day == 30:
+            print(f"     🎯 Day 30 reached - Initializing Validation phase")
+            validation_data = {
+                'validation_init': True,
+                'asset': asset
+            }
+            validation_result = self.algorithm_bridge.execute_algorithm(ModelType.SUPPORT_RESISTANCE, algorithm_name, validation_data)
+            print(f"     ✅ Validation initialized after 30 days - Ready for real-time trading")
+        
+        # Store current batch data for next evaluation
+        state['previous_batch_data'] = asset_ticks.copy()
+        
+        # Calculate overall performance so far
+        if state['total_evaluations'] == 0:
+            # Only training completed so far
+            overall_hit_rate = 0.5  # Default confidence for training-only
+            print(f"     📊 Progress: Day {current_day}/30 - Only training completed so far")
+        else:
+            overall_hit_rate = state['total_hit_rate'] / state['total_evaluations']
+            print(f"     📊 Progress: Day {current_day}/30 - {state['total_evaluations']} evaluations - Avg Hit Rate: {overall_hit_rate:.2%}")
+        
+        return {
+            'algorithm': algorithm_name,
+            'hit_rate': overall_hit_rate,
+            'current_day': current_day,
+            'total_evaluations': state['total_evaluations'],
+            'evaluation_history': state['evaluation_history'][-5:],  # Last 5 evaluations
+            'method': '3-phase_sequential_batch_aware'
+        }
+    
+    def _execute_regular_algorithm(self, algorithm_name: str, asset_ticks: List[Dict], 
+                                 asset: str, window_ticks: List[Dict], future_ticks: List[Dict]) -> Dict[str, Any]:
+        """BIBBIA COMPLIANT: Standard windowed algorithm execution"""
+        market_data = self._prepare_market_data_for_algorithm(window_ticks, asset)
+        market_data['training_mode'] = True
+        result = self.algorithm_bridge.execute_algorithm(ModelType.SUPPORT_RESISTANCE, algorithm_name, market_data)
+        
+        if result and 'support_levels' in result and 'resistance_levels' in result:
+            # Calculate hit rate using existing method
+            hit_rate = self._calculate_sr_hit_rate(
+                result['support_levels'], 
+                result['resistance_levels'],
+                future_ticks,
+                market_data['current_price']
+            )
+            result['hit_rate'] = hit_rate
+        
+        return result
     
     def get_system_health(self) -> Dict[str, Any]:
         """Restituisce stato di salute complessivo del sistema"""
@@ -1965,24 +2094,28 @@ class AdvancedMarketAnalyzer:
                     if not hasattr(self.algorithm_bridge, 'three_phase_handler'):
                         raise RuntimeError("FAIL FAST: Algorithm bridge missing three_phase_handler - system integrity compromised")
                     
-                    # BIBBIA COMPLIANT: Single path with dictionary-based data selection
+                    # BIBBIA COMPLIANT: Single path with dictionary-based execution
                     is_three_phase = self.algorithm_bridge.three_phase_handler.is_three_phase_algorithm(algorithm_name)
-                    data_selection = {
-                        True: asset_ticks,    # 3-phase algorithms use ALL ticks
-                        False: window_ticks   # Regular algorithms use window
+                    
+                    execution_strategies = {
+                        True: self._execute_three_phase_sequential,   # Sequential day-by-day processing
+                        False: self._execute_regular_algorithm        # Standard windowed approach
                     }
                     
-                    # Single path execution - prepare data once with selected ticks
-                    selected_ticks = data_selection[is_three_phase]
-                    market_data = self._prepare_market_data_for_algorithm(selected_ticks, asset)
-                    market_data['training_mode'] = True
-                    result = self.algorithm_bridge.execute_algorithm(ModelType.SUPPORT_RESISTANCE, algorithm_name, market_data)
+                    # Single path execution
+                    strategy = execution_strategies[is_three_phase]
+                    result = strategy(algorithm_name, asset_ticks, asset, window_ticks, future_ticks)
                     
-                    # Handle 3-phase completion tracking
-                    if is_three_phase and result:
+                    # Handle completion tracking
+                    if result and 'hit_rate' in result:
+                        hit_rates.append(result['hit_rate'])
+                        if result['hit_rate'] > 0.6:
+                            successful_predictions += 1
                         prediction_count += 1
-                        successful_predictions += 1
-                        break  # 3-phase processes all data at once
+                    
+                    # 3-phase processes all data sequentially, so break after execution
+                    if is_three_phase:
+                        break
                 elif algorithm_type == 'volatility_prediction':
                     # Prepare market data for regular algorithms
                     market_data = self._prepare_market_data_for_algorithm(window_ticks, asset)

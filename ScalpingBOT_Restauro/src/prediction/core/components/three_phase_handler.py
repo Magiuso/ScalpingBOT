@@ -115,6 +115,7 @@ class ThreePhaseHandler:
         
         # Create algorithm instance based on name
         if algorithm_name == "PivotPoints_Classic":
+            # BIBBIA COMPLIANT: Pass base data_path, PivotPoints will add asset internally
             instance = create_pivot_points_classic(data_path=self.data_path)
         else:
             # Future algorithms will be added here

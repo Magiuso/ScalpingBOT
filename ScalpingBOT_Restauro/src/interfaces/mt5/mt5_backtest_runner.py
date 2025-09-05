@@ -175,6 +175,13 @@ class MT5DataExporter:
             initial_memory = self._get_memory_usage()
             total_days = (end_date - start_date).days
             
+            # Print to console for immediate feedback
+            print(f"🚀 Starting MT5 data export")
+            print(f"   Symbol: {symbol}")
+            print(f"   Period: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+            print(f"   Total days: {total_days}")
+            print(f"   Initial memory: {initial_memory:.1f}%")
+            
             self.logger.info(f"Starting export: {symbol} from {start_date} to {end_date}")
             self.logger.info(f"Total period: {total_days} days")
             self.logger.info(f"Initial memory: {initial_memory:.1f}%")
@@ -204,6 +211,12 @@ class MT5DataExporter:
                     days_remaining = (end_date - current_date).days
                     progress_percentage = (days_processed / total_days * 100) if total_days > 0 else 0
                     
+                    # Use print for immediate console output
+                    print(f"\n📊 EXPORT PROGRESS: {progress_percentage:.1f}% complete")
+                    print(f"📅 Days: {days_processed}/{total_days} processed, {days_remaining} remaining")
+                    print(f"🔄 Processing chunk {chunk_number}: {current_date.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}")
+                    
+                    # Also log for file logging
                     self.logger.info(f"\n📊 EXPORT PROGRESS: {progress_percentage:.1f}% complete")
                     self.logger.info(f"📅 Days: {days_processed}/{total_days} processed, {days_remaining} remaining")
                     self.logger.info(f"🔄 Processing chunk {chunk_number}: {current_date.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}")
@@ -318,10 +331,13 @@ class MT5DataExporter:
         ticks = self.mt5_adapter.get_ticks_range(symbol, start_date, end_date)
         
         if not ticks:
+            print(f"⚠️ WARNING: No ticks in chunk {chunk_number} ({start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')})")
+            print(f"   MT5 may not have data for this period")
             self.logger.warning(f"No ticks in chunk {chunk_number}")
             return 0
         
         chunk_tick_count = len(ticks)
+        print(f"   ✅ Chunk {chunk_number}: {chunk_tick_count:,} ticks retrieved from MT5")
         self.logger.info(f"Chunk {chunk_number}: {chunk_tick_count:,} ticks retrieved")
         
         # Write header only for first chunk
@@ -626,17 +642,30 @@ class MT5BacktestRunner:
             self.is_running = False
     
     def _run_mt5_export_backtest(self, analyzer_system, selected_models: Optional[List[str]] = None) -> bool:
-        """Run backtest with MT5 data export - with 80% coverage detection"""
+        """Run backtest with MT5 data export - BIBBIA COMPLIANT with user choice"""
         
-        # 1. Check for existing files with sufficient coverage
-        existing_file = self._find_existing_file_with_coverage()
+        # 1. Check for ANY existing files (regardless of date coverage)  
+        any_existing_file = self._find_any_existing_file()
         
-        if existing_file:
-            print(f"📁 Using existing file with sufficient coverage: {os.path.basename(existing_file)}")
-            return self._process_jsonl_file(existing_file, analyzer_system, selected_models)
-        
-        # 2. No suitable existing file found - export new data
-        print("📊 No existing file with sufficient coverage - exporting new data")
+        if any_existing_file:
+            # BIBBIA COMPLIANT: Ask user ONCE, FAIL FAST if invalid
+            user_wants_existing = self._ask_user_use_existing_file(any_existing_file)
+            
+            if user_wants_existing:
+                print(f"📁 User confirmed: Using existing file {os.path.basename(any_existing_file)}")
+                return self._process_jsonl_file(any_existing_file, analyzer_system, selected_models)
+            else:
+                print("📊 User declined: Will check coverage or export new data")
+                # Continue with original coverage logic
+                existing_file = self._find_existing_file_with_coverage()
+                
+                if existing_file:
+                    print(f"📁 Using existing file with sufficient coverage: {os.path.basename(existing_file)}")
+                    return self._process_jsonl_file(existing_file, analyzer_system, selected_models)
+                else:
+                    print("📊 No existing file with sufficient coverage - exporting new data")
+        else:
+            print("📊 No existing files found - exporting new data")
         
         # Generate export filename
         export_file = f"backtest_{self.config.symbol}_{self.config.start_date.strftime('%Y%m%d')}_{self.config.end_date.strftime('%Y%m%d')}.jsonl"
@@ -1217,6 +1246,70 @@ class MT5BacktestRunner:
                 raise ValueError(f"Error parsing row {idx}: {e}")
         
         return tick_data_list
+    
+    def _find_any_existing_file(self) -> Optional[str]:
+        """
+        Find ANY existing file for this symbol (regardless of date coverage)
+        
+        Returns:
+            Path to any existing file, or None
+        """
+        try:
+            data_dir = "./analyzer_data"
+            if not os.path.exists(data_dir):
+                return None
+            
+            # Scan all .jsonl files in data directory for this symbol
+            for filename in os.listdir(data_dir):
+                if filename.endswith('.jsonl') and filename.startswith(f'backtest_{self.config.symbol}'):
+                    file_path = os.path.join(data_dir, filename)
+                    print(f"📄 Found existing file: {filename}")
+                    return file_path
+            
+            return None
+            
+        except Exception as e:
+            self.logger.warning(f"Error searching for existing files: {e}")
+            return None
+    
+    def _ask_user_use_existing_file(self, existing_file: str) -> bool:
+        """
+        BIBBIA COMPLIANT: Ask user simple yes/no - use existing file or not
+        FAIL FAST on invalid input, ONE ROAD only
+        
+        Returns:
+            True = use existing file, False = continue with original logic
+        """
+        filename = os.path.basename(existing_file)
+        file_size = os.path.getsize(existing_file) / (1024*1024*1024)  # GB
+        
+        print("\n" + "="*60)
+        print("🔍 EXISTING DATA FILE FOUND")
+        print("="*60)
+        print(f"📄 File: {filename}")
+        print(f"💾 Size: {file_size:.2f} GB")
+        print(f"📅 Requested period: {self.config.start_date.date()} to {self.config.end_date.date()}")
+        print("\n❓ Use this existing file (ignore date matching)?")
+        print("   [Y] Yes - Use existing file immediately")
+        print("   [N] No - Check date coverage or export new data")
+        
+        try:
+            choice = input("\n👤 Your choice (Y/N): ").strip().upper()
+            
+            if choice == "Y" or choice == "YES":
+                return True
+            elif choice == "N" or choice == "NO":
+                return False
+            else:
+                # FAIL FAST - no retries, no fallbacks
+                raise ValueError(f"FAIL FAST: Invalid choice '{choice}' - must be Y or N")
+                
+        except KeyboardInterrupt:
+            print("\n\n🚫 Operation cancelled by user")
+            raise RuntimeError("User cancelled operation")
+        except EOFError:
+            # FAIL FAST - no fallbacks in automated environments
+            raise RuntimeError("FAIL FAST: No interactive input available - cannot ask user")
     
     def _find_existing_file_with_coverage(self) -> Optional[str]:
         """

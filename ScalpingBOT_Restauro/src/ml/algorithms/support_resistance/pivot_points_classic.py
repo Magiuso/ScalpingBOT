@@ -50,11 +50,10 @@ class PivotPointsClassic:
     
     # Constants - CLEAN CODE compliant
     MIN_TICKS_PER_DAY = 50
-    MIN_EVALUATION_TICKS = 50000
+    MIN_EVALUATION_TICKS = 100000  # 100K ticks per evaluation
     CONFIDENCE_THRESHOLD = 0.5
-    PRICE_TOLERANCE = 0.0001  # 1 pip
-    BOUNCE_THRESHOLD_PERCENT = 0.0005  # 0.05%
-    LOOKAHEAD_TICKS = 10
+    PRICE_TOLERANCE = 2.0  # 2 points tolerance for level testing
+    BOUNCE_THRESHOLD_POINTS = 20.0  # 20 points for bounce confirmation
     
     def __init__(self, data_path: str = "./analyzer_data"):
         """
@@ -143,8 +142,8 @@ class PivotPointsClassic:
             # Calculate pivot levels
             pivot_levels = self._calculate_pivot_levels(daily_ohlc)
             
-            # Save daily levels to file
-            day_filename = f"day_{day_index + 1:02d}_pivot.json"
+            # Save daily levels to file - use date-based filename
+            day_filename = f"{date.isoformat()}_pivot.json"  # e.g. "2025-06-11_pivot.json"
             self._save_daily_levels(asset, date, pivot_levels, day_filename)
             
             # Store in memory for summary
@@ -168,6 +167,22 @@ class PivotPointsClassic:
         print(f"✅ TRAINING completed - {len(training_results)} days processed")
         print(f"   Total levels calculated: {self.stats['levels_calculated']}")
         
+        # Extract support and resistance levels for compatibility with evaluation system
+        all_support_levels = []
+        all_resistance_levels = []
+        
+        for date, daily_info in self.daily_levels.items():
+            levels = daily_info['levels']
+            for level_name, level_data in levels.items():
+                if level_data['type'] == 'support':
+                    all_support_levels.append(level_data['value'])
+                elif level_data['type'] == 'resistance':
+                    all_resistance_levels.append(level_data['value'])
+        
+        # Sort levels for consistency
+        all_support_levels.sort(reverse=True)  # Highest support first
+        all_resistance_levels.sort()  # Lowest resistance first
+        
         return {
             'phase': 'training',
             'status': 'completed',
@@ -176,7 +191,9 @@ class PivotPointsClassic:
             'total_levels': self.stats['levels_calculated'],
             'daily_results': training_results[-5:],  # Last 5 days summary
             'algorithm': self.algorithm_name,
-            'confidence': 0.5  # Confidence iniziale neutro - sarà aggiornato in evaluation phase
+            'confidence': 0.5,  # Confidence iniziale neutro - sarà aggiornato in evaluation phase
+            'support_levels': all_support_levels,  # Per compatibilità con sistema evaluation
+            'resistance_levels': all_resistance_levels  # Per compatibilità con sistema evaluation
         }
     
     def _group_ticks_by_day(self, prices: List[float], timestamps: List[Any]) -> Dict[date, List[float]]:
@@ -248,7 +265,7 @@ class PivotPointsClassic:
             'P': {
                 'value': round(pivot, 5),
                 'type': 'pivot',
-                'confidence': 0.8,  # Initial confidence
+                'confidence': 0.5,  # Initial confidence neutrale per tutti
                 'hits': 0,
                 'tests': 0,
                 'last_test_time': None,
@@ -257,7 +274,7 @@ class PivotPointsClassic:
             'S1': {
                 'value': round(s1, 5),
                 'type': 'support', 
-                'confidence': 0.7,
+                'confidence': 0.5,  # Initial confidence neutrale per tutti
                 'hits': 0,
                 'tests': 0,
                 'last_test_time': None,
@@ -266,7 +283,7 @@ class PivotPointsClassic:
             'R1': {
                 'value': round(r1, 5),
                 'type': 'resistance',
-                'confidence': 0.7,
+                'confidence': 0.5,  # Initial confidence neutrale per tutti
                 'hits': 0,
                 'tests': 0,
                 'last_test_time': None,
@@ -275,7 +292,7 @@ class PivotPointsClassic:
             'S2': {
                 'value': round(s2, 5),
                 'type': 'support',
-                'confidence': 0.6,
+                'confidence': 0.5,  # Initial confidence neutrale per tutti
                 'hits': 0,
                 'tests': 0,
                 'last_test_time': None,
@@ -284,7 +301,7 @@ class PivotPointsClassic:
             'R2': {
                 'value': round(r2, 5),
                 'type': 'resistance',
-                'confidence': 0.6,
+                'confidence': 0.5,  # Initial confidence neutrale per tutti
                 'hits': 0,
                 'tests': 0,
                 'last_test_time': None,
@@ -293,7 +310,7 @@ class PivotPointsClassic:
             'S3': {
                 'value': round(s3, 5),
                 'type': 'support',
-                'confidence': self.CONFIDENCE_THRESHOLD,
+                'confidence': 0.5,  # Initial confidence neutrale per tutti
                 'hits': 0,
                 'tests': 0,
                 'last_test_time': None,
@@ -302,7 +319,7 @@ class PivotPointsClassic:
             'R3': {
                 'value': round(r3, 5),
                 'type': 'resistance',
-                'confidence': self.CONFIDENCE_THRESHOLD,
+                'confidence': 0.5,  # Initial confidence neutrale per tutti
                 'hits': 0,
                 'tests': 0,
                 'last_test_time': None,
@@ -314,10 +331,20 @@ class PivotPointsClassic:
     
     def _save_daily_levels(self, asset: str, date: date, levels: Dict[str, Dict[str, Any]], filename: str):
         """Salva livelli giornalieri su file"""
-        # Create asset directory
-        asset_dir = self.data_path / asset / "pivot_levels"
+        # Create asset directory following models structure
+        asset_dir = self.data_path / asset / "models" / "support_resistance" / "pivotpoints_classic" / "pivot_levels"
         asset_dir.mkdir(parents=True, exist_ok=True)
         
+        # Check if file for this date already exists
+        file_path = asset_dir / filename
+        if file_path.exists():
+            print(f"⚠️ File {filename} already exists for date {date} - skipping save")
+            return
+            
+        self._write_daily_levels_file(asset, date, levels, file_path)
+    
+    def _write_daily_levels_file(self, asset: str, date: date, levels: Dict[str, Dict[str, Any]], file_path: Path):
+        """Scrive file livelli giornalieri"""
         # Prepare save data
         save_data = {
             'asset': asset,
@@ -335,11 +362,10 @@ class PivotPointsClassic:
         }
         
         # Save to file
-        file_path = asset_dir / filename
         with open(file_path, 'w') as f:
             json.dump(save_data, f, indent=2)
             
-        print(f"💾 Saved daily levels: {filename} - {len(levels)} levels")
+        print(f"💾 Saved daily levels: {file_path.name} - {len(levels)} levels for {date}")
     
     # ========================================
     # FASE 2: EVALUATION - Test sui 100K ticks futuri
@@ -386,13 +412,15 @@ class PivotPointsClassic:
                 level_type = level_data['type']
                 original_confidence = level_data['confidence']
                 
-                # Calculate hit rate for this specific level
-                hit_rate = self._calculate_level_hit_rate(level_value, level_type, future_ticks)
+                # Calculate hit rate for this specific level (now returns hit_rate, tests, hits)
+                hit_rate, tests, hits = self._calculate_level_hit_rate(level_value, level_type, future_ticks)
                 
                 # Update confidence based on performance
                 new_confidence = self._calculate_new_confidence(original_confidence, hit_rate)
                 level_data['confidence'] = new_confidence
                 level_data['hit_rate'] = hit_rate
+                level_data['tests'] = tests  # Save actual test count
+                level_data['hits'] = hits    # Save actual hit count
                 level_data['evaluation_completed'] = True
                 level_data['evaluation_timestamp'] = datetime.now().isoformat()
                 
@@ -400,7 +428,7 @@ class PivotPointsClassic:
                 if new_confidence > original_confidence:
                     total_levels_improved += 1
                     
-                print(f"     {level_name}: {level_value:.5f} | Hit Rate: {hit_rate:.2%} | Confidence: {original_confidence:.2f} → {new_confidence:.2f}")
+                print(f"     {level_name}: {level_value:.5f} | Tests: {tests} | Hits: {hits} | Hit Rate: {hit_rate:.2%} | Confidence: {original_confidence:.2f} → {new_confidence:.2f}")
                 
             # Save updated levels back to file
             self._update_daily_level_file(asset, filename, daily_data)
@@ -443,14 +471,14 @@ class PivotPointsClassic:
     
     def _load_daily_level_files(self, asset: str) -> Dict[str, Dict[str, Any]]:
         """Carica tutti i file di livelli giornalieri"""
-        asset_dir = self.data_path / asset / "pivot_levels"
+        asset_dir = self.data_path / asset / "models" / "support_resistance" / "pivotpoints_classic" / "pivot_levels"
         if not asset_dir.exists():
             raise FileNotFoundError(f"FAIL FAST: Asset directory not found: {asset_dir}")
             
         daily_files = {}
         
-        # Load all day_*.json files
-        for file_path in asset_dir.glob("day_*_pivot.json"):
+        # Load all date-based pivot files (both old day_* format and new date format)
+        for file_path in sorted(list(asset_dir.glob("*_pivot.json"))):
             try:
                 with open(file_path, 'r') as f:
                     data = json.load(f)
@@ -460,10 +488,11 @@ class PivotPointsClassic:
                 
         return daily_files
     
-    def _calculate_level_hit_rate(self, level_value: float, level_type: str, future_ticks: List[Dict[str, Any]]) -> float:
+    def _calculate_level_hit_rate(self, level_value: float, level_type: str, future_ticks: List[Dict[str, Any]]) -> tuple[float, int, int]:
         """
         Calcola hit rate per un singolo livello sui ticks futuri
         
+        Returns: (hit_rate, tests, hits)
         Hit Rate = numero di volte che il livello viene rispettato / numero di volte che viene testato
         """
         hits = 0
@@ -492,30 +521,28 @@ class PivotPointsClassic:
                 # Support test: price approaches from above
                 if previous_price > level_value and abs(current_price - level_value) <= tolerance:
                     level_tested = True
-                    # Check if support held (price bounced back up)
-                    if i + self.LOOKAHEAD_TICKS < len(prices):  # Look ahead ticks
-                        future_prices = prices[i:i+self.LOOKAHEAD_TICKS]
-                        if max(future_prices) > level_value * (1.0 + self.BOUNCE_THRESHOLD_PERCENT):
-                            hits += 1
+                    # Check if support held (price bounced back up by at least 20 points)
+                    future_prices = prices[i+1:]  # All remaining ticks in 100K batch
+                    if future_prices and max(future_prices) > level_value + self.BOUNCE_THRESHOLD_POINTS:
+                        hits += 1
                             
             elif level_type == 'resistance':
                 # Resistance test: price approaches from below  
                 if previous_price < level_value and abs(current_price - level_value) <= tolerance:
                     level_tested = True
-                    # Check if resistance held (price bounced back down)
-                    if i + self.LOOKAHEAD_TICKS < len(prices):  # Look ahead ticks
-                        future_prices = prices[i:i+self.LOOKAHEAD_TICKS]
-                        if min(future_prices) < level_value * (1.0 - self.BOUNCE_THRESHOLD_PERCENT):
-                            hits += 1
+                    # Check if resistance held (price bounced back down by at least 20 points)
+                    future_prices = prices[i+1:]  # All remaining ticks in 100K batch
+                    if future_prices and min(future_prices) < level_value - self.BOUNCE_THRESHOLD_POINTS:
+                        hits += 1
                             
             if level_tested:
                 tests += 1
                 
         # Calculate hit rate
         if tests == 0:
-            return 0.0  # Level never tested
+            return 0.0, tests, hits  # Level never tested
         
-        return hits / tests
+        return hits / tests, tests, hits
     
     def _calculate_new_confidence(self, original_confidence: float, hit_rate: float) -> float:
         """Calcola nuova confidence basata su hit rate"""
@@ -527,7 +554,7 @@ class PivotPointsClassic:
     
     def _update_daily_level_file(self, asset: str, filename: str, updated_data: Dict[str, Any]):
         """Aggiorna file giornaliero con confidence aggiornate"""
-        asset_dir = self.data_path / asset / "pivot_levels"
+        asset_dir = self.data_path / asset / "models" / "support_resistance" / "pivotpoints_classic" / "pivot_levels"
         file_path = asset_dir / filename
         
         # Add evaluation metadata
