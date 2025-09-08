@@ -5,6 +5,7 @@ Backtest Restauro - Sistema Completo per Nuovo Architettura Modulare
 
 Test del sistema di apprendimento ML con il nuovo sistema ScalpingBOT_Restauro.
 REGOLE CLAUDE_RESTAURO.md APPLICATE:n
+
 - ✅ Zero fallback/defaults
 - ✅ Fail fast error handling  
 - ✅ No debug prints/spam

@@ -330,7 +330,7 @@ class PivotPointsClassic:
         return levels
     
     def _save_daily_levels(self, asset: str, date: date, levels: Dict[str, Dict[str, Any]], filename: str):
-        """Salva livelli giornalieri su file"""
+        """Salva o aggiunge livelli giornalieri su file"""
         # Create asset directory following models structure
         asset_dir = self.data_path / asset / "models" / "support_resistance" / "pivotpoints_classic" / "pivot_levels"
         asset_dir.mkdir(parents=True, exist_ok=True)
@@ -338,10 +338,27 @@ class PivotPointsClassic:
         # Check if file for this date already exists
         file_path = asset_dir / filename
         if file_path.exists():
-            print(f"⚠️ File {filename} already exists for date {date} - skipping save")
-            return
+            # Load existing file and add new levels
+            with open(file_path, 'r') as f:
+                existing_data = json.load(f)
             
-        self._write_daily_levels_file(asset, date, levels, file_path)
+            # Add new levels with unique keys (e.g., P_2, S1_2, etc.)
+            batch_num = len([k for k in existing_data['levels'] if k.startswith('P')]) + 1
+            for key, level_data in levels.items():
+                new_key = f"{key}_{batch_num}" if batch_num > 1 else key
+                existing_data['levels'][new_key] = level_data
+            
+            # Update summary
+            existing_data['summary']['total_levels'] = len(existing_data['levels'])
+            existing_data['summary']['support_count'] = len([l for l in existing_data['levels'].values() if l['type'] == 'support'])
+            existing_data['summary']['resistance_count'] = len([l for l in existing_data['levels'].values() if l['type'] == 'resistance'])
+            
+            # Save updated file
+            with open(file_path, 'w') as f:
+                json.dump(existing_data, f, indent=2)
+            print(f"📝 Updated {filename} - Added {len(levels)} levels (batch {batch_num})")
+        else:
+            self._write_daily_levels_file(asset, date, levels, file_path)
     
     def _write_daily_levels_file(self, asset: str, date: date, levels: Dict[str, Dict[str, Any]], file_path: Path):
         """Scrive file livelli giornalieri"""
@@ -371,24 +388,24 @@ class PivotPointsClassic:
     # FASE 2: EVALUATION - Test sui 100K ticks futuri
     # ========================================
     
-    def evaluation_phase(self, future_ticks: List[Dict[str, Any]], asset: str) -> Dict[str, Any]:
+    def evaluation_phase(self, all_training_ticks: List[Dict[str, Any]], asset: str) -> Dict[str, Any]:
         """
-        FASE 2 - EVALUATION: Testa ogni livello sui 100K ticks futuri
+        FASE 2 - EVALUATION: Testa ogni livello su TUTTI i 30 giorni di training
         
         Args:
-            future_ticks: 100K ticks successivi al training
+            all_training_ticks: TUTTI i tick dei primi 30 giorni
             asset: Nome asset
             
         Returns:
             Risultato evaluation con confidence aggiornate
         """
-        if not isinstance(future_ticks, list) or len(future_ticks) < self.MIN_EVALUATION_TICKS:
-            raise ValueError(f"FAIL FAST: Need at least {self.MIN_EVALUATION_TICKS} future ticks, got {len(future_ticks) if isinstance(future_ticks, list) else 'invalid'}")
+        if not isinstance(all_training_ticks, list) or len(all_training_ticks) < self.MIN_EVALUATION_TICKS:
+            raise ValueError(f"FAIL FAST: Need at least {self.MIN_EVALUATION_TICKS} ticks, got {len(all_training_ticks) if isinstance(all_training_ticks, list) else 'invalid'}")
         if not isinstance(asset, str) or not asset.strip():
             raise ValueError("FAIL FAST: asset must be non-empty string")
             
         self.current_phase = 'evaluation'
-        print(f"📊 Starting EVALUATION phase for {asset} - Testing levels on first 30 days of data ({len(future_ticks):,} total ticks)")
+        print(f"📊 Starting EVALUATION phase for {asset} - Testing ALL levels on COMPLETE 30 days ({len(all_training_ticks):,} total ticks)")
         
         # Load all daily level files
         daily_files = self._load_daily_level_files(asset)
@@ -406,10 +423,8 @@ class PivotPointsClassic:
             levels = daily_data['levels']
             original_date = daily_data['date']
             
-            # Use ALL future ticks for testing every level
-            # This means first day levels get tested on entire 30 days
-            # Last day levels also get tested on entire 30 days
-            ticks_for_testing = future_ticks
+            # Test each level on ALL 30 days of data
+            ticks_for_testing = all_training_ticks
             
             print(f"   🎯 Testing levels from {original_date} on {len(ticks_for_testing):,} future ticks")
             
@@ -754,6 +769,67 @@ class PivotPointsClassic:
                 'avg_confidence': np.mean([l['confidence'] for l in self.active_levels.values()])
             } if self.current_phase == 'validation' else {}
         }
+    
+    def save_validation_results(self, asset: str) -> Dict[str, Any]:
+        """
+        Salva i risultati finali della validation (livelli con confidence >= 0.5)
+        
+        Args:
+            asset: Nome asset
+            
+        Returns:
+            Summary dei risultati salvati
+        """
+        if self.current_phase != 'validation':
+            raise RuntimeError("FAIL FAST: Must be in validation phase to save results")
+            
+        # Filter levels with confidence >= 0.5
+        final_levels = {}
+        for level_key, level_data in self.active_levels.items():
+            # Recalculate confidence based on validation performance
+            if level_data['validation_tests'] > 0:
+                validation_hit_rate = level_data['validation_hits'] / level_data['validation_tests']
+                # Update confidence with validation results
+                new_confidence = self._calculate_new_confidence(level_data['confidence'], validation_hit_rate)
+                level_data['final_confidence'] = new_confidence
+                
+                if new_confidence >= self.CONFIDENCE_THRESHOLD:
+                    final_levels[level_key] = {
+                        **level_data,
+                        'validation_hit_rate': validation_hit_rate,
+                        'final_confidence': new_confidence
+                    }
+        
+        # Prepare save data
+        save_data = {
+            'asset': asset,
+            'algorithm': self.algorithm_name,
+            'validation_completed': datetime.now().isoformat(),
+            'confidence_threshold': self.CONFIDENCE_THRESHOLD,
+            'total_levels_tested': len(self.active_levels),
+            'levels_passed': len(final_levels),
+            'levels': final_levels,
+            'summary': {
+                'support_levels': len([l for l in final_levels.values() if l['type'] == 'support']),
+                'resistance_levels': len([l for l in final_levels.values() if l['type'] == 'resistance']),
+                'pivot_levels': len([l for l in final_levels.values() if l['type'] == 'pivot']),
+                'avg_final_confidence': np.mean([l['final_confidence'] for l in final_levels.values()]) if final_levels else 0
+            }
+        }
+        
+        # Save to file
+        result_dir = self.data_path / asset / "models" / "support_resistance" / "pivotpoints_classic"
+        result_dir.mkdir(parents=True, exist_ok=True)
+        result_file = result_dir / "risultato_validazione.json"
+        
+        with open(result_file, 'w') as f:
+            json.dump(save_data, f, indent=2)
+            
+        print(f"💾 Saved validation results to {result_file.name}")
+        print(f"   Total levels tested: {len(self.active_levels)}")
+        print(f"   Levels passed (confidence >= 0.5): {len(final_levels)}")
+        
+        return save_data
     
     def reset_algorithm(self):
         """Reset completo dell'algoritmo"""

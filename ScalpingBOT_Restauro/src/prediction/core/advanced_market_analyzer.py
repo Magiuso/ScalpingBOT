@@ -189,6 +189,10 @@ class AdvancedMarketAnalyzer:
             self.asset_analyzers[asset] = asset_analyzer
             self.active_assets.add(asset)
             
+            # Initialize batch_sequence_state for this asset
+            if asset not in self.batch_sequence_state:
+                self.batch_sequence_state[asset] = {}
+            
             # Update global stats
             with self.stats_lock:
                 self.global_stats['active_assets_count'] = len(self.active_assets)
@@ -434,90 +438,115 @@ class AdvancedMarketAnalyzer:
             self.batch_sequence_state[asset] = {}
         if algorithm_name not in self.batch_sequence_state[asset]:
             self.batch_sequence_state[asset][algorithm_name] = {
-                'day_count': 0,
+                'processed_dates': set(),
+                'batch_count': 0,
                 'previous_batch_data': None,
                 'evaluation_history': [],
                 'total_hit_rate': 0,
-                'total_evaluations': 0
+                'total_evaluations': 0,
+                'all_training_ticks': [],  # Accumulate ALL ticks from days 1-30
+                'evaluation_completed': False  # Start fresh for new sessions
             }
+        
+        # Extract actual date from tick timestamps
+        if not asset_ticks or 'timestamp' not in asset_ticks[0]:
+            raise ValueError("FAIL FAST: Ticks must contain timestamp field")
+        
+        # Get the date from the first tick in this batch
+        batch_timestamp = asset_ticks[0]['timestamp']
+        if isinstance(batch_timestamp, str):
+            # BIBBIA COMPLIANT: Only MT5 format supported - FAIL FAST on wrong format
+            batch_date = datetime.strptime(batch_timestamp, "%Y.%m.%d %H:%M:%S").date()
+        else:
+            raise ValueError(f"FAIL FAST: Timestamp must be string in MT5 format, got {type(batch_timestamp)}")
         
         # Get current state
         state = self.batch_sequence_state[asset][algorithm_name]
-        state['day_count'] += 1
-        current_day = state['day_count']
+        state['batch_count'] += 1
         
-        print(f"📅 Processing Day {current_day} batch for {algorithm_name}")
+        # Add this date to processed dates and track start date
+        state['processed_dates'].add(batch_date)
+        if 'start_date' not in state:
+            state['start_date'] = batch_date
+        
+        current_day = len(state['processed_dates'])
+        days_since_start = (batch_date - state['start_date']).days
+        
+        print(f"📅 Processing batch #{state['batch_count']} for date {batch_date} (Day {current_day}) - {algorithm_name}")
+        print(f"   Calendar days since start: {days_since_start} | Unique trading days: {len(state['processed_dates'])}")
         print(f"   Current batch: {len(asset_ticks):,} ticks")
         
-        # TRAINING: Only during first 30 days
-        if current_day <= 30:
+        # TRAINING: Only during first 30 calendar days
+        if days_since_start < 30:
+            # Accumulate ticks for final evaluation
+            state['all_training_ticks'].extend(asset_ticks)
+            
             training_data = self._prepare_market_data_for_algorithm(asset_ticks, asset)
             training_data['training_mode'] = True
             training_result = self.algorithm_bridge.execute_algorithm(ModelType.SUPPORT_RESISTANCE, algorithm_name, training_data)
             
+            days_until_evaluation = 30 - days_since_start - 1
             print(f"     ✅ Day {current_day} Training completed - {training_result.get('total_levels', 0)} levels calculated")
+            print(f"     📊 Accumulated ticks: {len(state['all_training_ticks']):,}")
+            print(f"     ⏳ {days_until_evaluation} calendar days until evaluation phase")
         
-        # VALIDATION: Days 31-60
-        elif current_day > 30:
-            print(f"     🎯 Day {current_day} - VALIDATION phase (real-time trading simulation)")
-            validation_data = self._prepare_market_data_for_algorithm(asset_ticks, asset)
-            validation_data['validation_mode'] = True
-            validation_result = self.algorithm_bridge.execute_algorithm(ModelType.SUPPORT_RESISTANCE, algorithm_name, validation_data)
-            print(f"     ✅ Validation tick processing completed")
-        
-        # EVALUATION: Test previous day's levels on current day's ticks (only in first 30 days)
-        if current_day > 1 and current_day <= 30 and state['previous_batch_data'] is not None:
-            print(f"     📊 Running Evaluation: Testing Day {current_day-1} levels on Day {current_day} ticks")
+        # COMPLETE EVALUATION: Only ONCE when 30 CALENDAR days have passed with ALL accumulated ticks  
+        if days_since_start >= 30 and not state.get('evaluation_completed', False):
+            print(f"     📊 Calendar day {days_since_start + 1} reached - Running COMPLETE EVALUATION on ALL {len(state['all_training_ticks']):,} ticks")
             
-            # Use previous day's data for evaluation context
-            evaluation_data = self._prepare_market_data_for_algorithm(state['previous_batch_data'], asset)
+            # Run evaluation on ALL accumulated training ticks
+            evaluation_data = self._prepare_market_data_for_algorithm(state['all_training_ticks'], asset)
             evaluation_data['evaluation_mode'] = True
-            evaluation_data['future_ticks'] = asset_ticks  # Current day ticks as future ticks
+            evaluation_data['future_ticks'] = state['all_training_ticks']  # For evaluation, test on training data
             
             try:
                 evaluation_result = self.algorithm_bridge.execute_algorithm(ModelType.SUPPORT_RESISTANCE, algorithm_name, evaluation_data)
                 
                 if evaluation_result and 'confidence' in evaluation_result:
-                    day_hit_rate = evaluation_result['confidence']
-                    state['total_hit_rate'] += day_hit_rate
-                    state['total_evaluations'] += 1
-                    state['evaluation_history'].append({
-                        'day': current_day,
-                        'hit_rate': day_hit_rate,
-                        'levels_tested': evaluation_result.get('total_levels_tested', 0)
-                    })
-                    print(f"       ✅ Evaluation completed - Hit Rate: {day_hit_rate:.2%}")
+                    final_confidence = evaluation_result['confidence']
+                    print(f"       ✅ EVALUATION COMPLETE - Final Confidence: {final_confidence:.2%}")
+                    print(f"       📊 Levels tested: {evaluation_result.get('total_levels_tested', 0)}")
+                    print(f"       📊 Levels improved: {evaluation_result.get('levels_improved', 0)}")
+                    
+                    # Set flag ONLY after successful evaluation
+                    state['evaluation_completed'] = True
+                    
+                    # Initialize validation phase
+                    print(f"     🎯 Initializing Validation phase for days 31-60")
+                    validation_data = {
+                        'validation_init': True,
+                        'asset': asset
+                    }
+                    validation_result = self.algorithm_bridge.execute_algorithm(ModelType.SUPPORT_RESISTANCE, algorithm_name, validation_data)
+                    print(f"     ✅ Validation initialized - Ready for testing on days 31-60")
                 else:
                     print(f"       ⚠️ Evaluation completed but no confidence returned")
             except Exception as e:
                 print(f"       ❌ Evaluation failed: {e}")
-        elif current_day == 1:
-            print(f"     ⏭️ Day 1 - No evaluation possible (no previous day)")
         
-        # VALIDATION INIT: Only after 30 days of training/evaluation
-        if current_day == 30:
-            print(f"     🎯 Day 30 reached - Initializing Validation phase")
-            validation_data = {
-                'validation_init': True,
-                'asset': asset
-            }
+        # VALIDATION: Days 30-60 (after evaluation completed)
+        elif days_since_start >= 30:
+            days_until_completion = 60 - days_since_start
+            print(f"     🎯 Day {current_day} - VALIDATION phase (real-time trading simulation)")
+            print(f"     📊 Calendar day {days_since_start + 1} of validation phase")
+            # Process each tick in validation mode
+            validation_data = self._prepare_market_data_for_algorithm(asset_ticks, asset)
+            # For validation, we need to pass current_tick for testing
+            if asset_ticks:
+                validation_data['current_tick'] = asset_ticks[-1]  # Use last tick as current
             validation_result = self.algorithm_bridge.execute_algorithm(ModelType.SUPPORT_RESISTANCE, algorithm_name, validation_data)
-            print(f"     ✅ Validation initialized after 30 days - Ready for real-time trading")
+            print(f"     ✅ Validation tick processing completed")
         
         # Store current batch data for next evaluation
         state['previous_batch_data'] = asset_ticks.copy()
         
         # Calculate overall performance so far
         if current_day <= 30:
-            if state['total_evaluations'] == 0:
-                # Only training completed so far
-                overall_hit_rate = 0.5  # Default confidence for training-only
-                print(f"     📊 Progress: Day {current_day}/30 (Training+Evaluation) - Only training completed so far")
-            else:
-                overall_hit_rate = state['total_hit_rate'] / state['total_evaluations']
-                print(f"     📊 Progress: Day {current_day}/30 (Training+Evaluation) - {state['total_evaluations']} evaluations - Avg Hit Rate: {overall_hit_rate:.2%}")
+            overall_hit_rate = 0.5  # Default confidence during training phase
+            print(f"     📊 Progress: Day {current_day}/30 (Training) - Evaluation will run at day 30")
         else:
             # Validation phase
+            overall_hit_rate = 0.5  # Will be updated based on validation results
             print(f"     📊 Progress: Day {current_day}/60 (Validation) - Testing trained models in real-time")
         
         return {

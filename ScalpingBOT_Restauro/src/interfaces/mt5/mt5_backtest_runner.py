@@ -567,6 +567,9 @@ class MT5BacktestRunner:
         if self.is_running:
             raise RuntimeError("Backtest already running")
         
+        # Store analyzer reference for phase determination
+        self.analyzer_system = analyzer_system
+        
         if analyzer_system is None:
             raise ValueError("analyzer_system cannot be None")
         
@@ -823,7 +826,7 @@ class MT5BacktestRunner:
                     print(f"✅ Read complete: {len(current_batch):,} ticks in {batch_read_time:.2f}s")
                     
                     # Determine batch phase (training or validation)
-                    batch_phase = self._determine_batch_phase(current_batch, validation_start_date)
+                    batch_phase = self._get_current_phase_from_analyzer(self.config.symbol, analyzer_system)
                     
                     # Calculate temporal progress (BIBBIA COMPLIANT - no fallbacks)
                     progress_info = self._calculate_temporal_progress(current_batch, validation_start_date, batch_phase)
@@ -880,19 +883,46 @@ class MT5BacktestRunner:
             raise RuntimeError(f"Batch processing failed: {e}")
     
     
-    def _determine_batch_phase(self, batch: List[Dict], validation_start_date) -> str:
-        """Determine if batch is training or validation phase"""
-        if not batch or validation_start_date is None:
+    def _get_current_phase_from_analyzer(self, asset: str, analyzer_system) -> str:
+        """Get current phase directly from AdvancedMarketAnalyzer state"""
+        if analyzer_system is None:
+            raise RuntimeError("FAIL FAST: AdvancedMarketAnalyzer not provided")
+        
+        # Access AdvancedMarketAnalyzer's batch_sequence_state through UnifiedAnalyzerSystem
+        if not hasattr(analyzer_system, 'market_analyzer'):
+            raise RuntimeError("FAIL FAST: UnifiedAnalyzerSystem missing market_analyzer attribute")
+        
+        market_analyzer = analyzer_system.market_analyzer
+        if asset not in market_analyzer.batch_sequence_state:
+            raise RuntimeError(f"FAIL FAST: Asset {asset} not found in batch_sequence_state")
+        
+        asset_state = market_analyzer.batch_sequence_state[asset]
+        
+        # Check PivotPoints_Classic state for phase determination
+        pivot_algorithm_found = False
+        for algorithm_name, state in asset_state.items():
+            if 'PivotPoints' in algorithm_name:
+                pivot_algorithm_found = True
+                # Get unique trading days count
+                unique_days = len(state.get('processed_dates', set()))
+                evaluation_completed = state.get('evaluation_completed', False)
+                
+                # Check if we're in evaluation phase (after 30 training days, before evaluation completed)
+                if unique_days >= 30 and not evaluation_completed:
+                    return "evaluation"
+                # Check if we're in validation phase (evaluation completed)
+                elif evaluation_completed:
+                    return "validation"
+                # Otherwise training phase (less than 30 days)
+                else:
+                    return "training"
+        
+        # If no PivotPoints algorithm found yet, we're in early training
+        if not pivot_algorithm_found:
             return "training"
         
-        # Check timestamp of middle tick in batch
-        middle_tick = batch[len(batch) // 2]
-        timestamp_str = middle_tick.get('timestamp')
-        if timestamp_str:
-            tick_time = parse_mt5_timestamp(timestamp_str)
-            return "training" if tick_time < validation_start_date else "validation"
-        
-        return "training"
+        # This should never be reached
+        raise RuntimeError(f"FAIL FAST: Unexpected state in phase determination for asset {asset}")
     
     def _calculate_temporal_progress(self, batch: List[Dict], validation_start_date, batch_phase: str) -> Optional[str]:
         """Calculate temporal progress for training/validation phases - BIBBIA COMPLIANT"""
@@ -1197,15 +1227,15 @@ class MT5BacktestRunner:
                 else:
                     ask_val = bid_val * 1.0001  # Add small spread
                 
-                # Volume defaults to 1 if not available
+                # Volume is required - FAIL FAST if not available
                 if 'volume' in cols:
                     volume_raw = df.at[idx, cols['volume']]
                     if pd.notna(volume_raw):
                         volume_val = int(float(volume_raw))
                     else:
-                        volume_val = 1
+                        raise RuntimeError(f"FAIL FAST: Volume value is NaN at index {idx}")
                 else:
-                    volume_val = 1
+                    raise RuntimeError(f"FAIL FAST: Volume column not found in CSV")
                 
                 # Create tick dict matching expected format
                 # Ensure timestamp is a datetime object before formatting
