@@ -418,8 +418,10 @@ class PivotPointsClassic:
         
         # Test each day's levels on ALL future ticks (entire dataset)
         sorted_files = sorted(daily_files.items())
+        print(f"   📁 Found {len(sorted_files)} daily level files to evaluate")
         
         for day_index, (filename, daily_data) in enumerate(sorted_files):
+            print(f"   📊 Processing file {day_index+1}/{len(sorted_files)}: {filename}")
             levels = daily_data['levels']
             original_date = daily_data['date']
             
@@ -429,10 +431,13 @@ class PivotPointsClassic:
             print(f"   🎯 Testing levels from {original_date} on {len(ticks_for_testing):,} future ticks")
             
             # Test each level on ALL remaining future ticks
-            for level_name, level_data in levels.items():
+            print(f"     Testing {len(levels)} levels from {original_date}")
+            for level_index, (level_name, level_data) in enumerate(levels.items(), 1):
                 level_value = level_data['value']
                 level_type = level_data['type']
                 original_confidence = level_data['confidence']
+                
+                print(f"       Level {level_index}/{len(levels)}: {level_name} = {level_value:.5f} ({level_type})")
                 
                 # Calculate hit rate for this specific level on all remaining ticks
                 hit_rate, tests, hits = self._calculate_level_hit_rate(level_value, level_type, ticks_for_testing)
@@ -494,17 +499,23 @@ class PivotPointsClassic:
     def _load_daily_level_files(self, asset: str) -> Dict[str, Dict[str, Any]]:
         """Carica tutti i file di livelli giornalieri"""
         asset_dir = self.data_path / asset / "models" / "support_resistance" / "pivotpoints_classic" / "pivot_levels"
+        print(f"   📂 Loading level files from: {asset_dir}")
+        
         if not asset_dir.exists():
             raise FileNotFoundError(f"FAIL FAST: Asset directory not found: {asset_dir}")
             
         daily_files = {}
         
         # Load all date-based pivot files (both old day_* format and new date format)
-        for file_path in sorted(list(asset_dir.glob("*_pivot.json"))):
+        all_files = list(asset_dir.glob("*_pivot.json"))
+        print(f"   📁 Found {len(all_files)} pivot files to load")
+        
+        for file_path in sorted(all_files):
             try:
                 with open(file_path, 'r') as f:
                     data = json.load(f)
                 daily_files[file_path.name] = data
+                print(f"     ✅ Loaded: {file_path.name}")
             except (json.JSONDecodeError, IOError) as e:
                 raise RuntimeError(f"FAIL FAST: Failed to load {file_path.name}: {e}")
                 
