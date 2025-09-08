@@ -449,15 +449,24 @@ class AdvancedMarketAnalyzer:
         print(f"📅 Processing Day {current_day} batch for {algorithm_name}")
         print(f"   Current batch: {len(asset_ticks):,} ticks")
         
-        # TRAINING: Always do training for current day
-        training_data = self._prepare_market_data_for_algorithm(asset_ticks, asset)
-        training_data['training_mode'] = True
-        training_result = self.algorithm_bridge.execute_algorithm(ModelType.SUPPORT_RESISTANCE, algorithm_name, training_data)
+        # TRAINING: Only during first 30 days
+        if current_day <= 30:
+            training_data = self._prepare_market_data_for_algorithm(asset_ticks, asset)
+            training_data['training_mode'] = True
+            training_result = self.algorithm_bridge.execute_algorithm(ModelType.SUPPORT_RESISTANCE, algorithm_name, training_data)
+            
+            print(f"     ✅ Day {current_day} Training completed - {training_result.get('total_levels', 0)} levels calculated")
         
-        print(f"     ✅ Day {current_day} Training completed - {training_result.get('total_levels', 0)} levels calculated")
+        # VALIDATION: Days 31-60
+        elif current_day > 30:
+            print(f"     🎯 Day {current_day} - VALIDATION phase (real-time trading simulation)")
+            validation_data = self._prepare_market_data_for_algorithm(asset_ticks, asset)
+            validation_data['validation_mode'] = True
+            validation_result = self.algorithm_bridge.execute_algorithm(ModelType.SUPPORT_RESISTANCE, algorithm_name, validation_data)
+            print(f"     ✅ Validation tick processing completed")
         
-        # EVALUATION: Test previous day's levels on current day's ticks (if not first day)
-        if current_day > 1 and state['previous_batch_data'] is not None:
+        # EVALUATION: Test previous day's levels on current day's ticks (only in first 30 days)
+        if current_day > 1 and current_day <= 30 and state['previous_batch_data'] is not None:
             print(f"     📊 Running Evaluation: Testing Day {current_day-1} levels on Day {current_day} ticks")
             
             # Use previous day's data for evaluation context
@@ -499,13 +508,17 @@ class AdvancedMarketAnalyzer:
         state['previous_batch_data'] = asset_ticks.copy()
         
         # Calculate overall performance so far
-        if state['total_evaluations'] == 0:
-            # Only training completed so far
-            overall_hit_rate = 0.5  # Default confidence for training-only
-            print(f"     📊 Progress: Day {current_day}/30 - Only training completed so far")
+        if current_day <= 30:
+            if state['total_evaluations'] == 0:
+                # Only training completed so far
+                overall_hit_rate = 0.5  # Default confidence for training-only
+                print(f"     📊 Progress: Day {current_day}/30 (Training+Evaluation) - Only training completed so far")
+            else:
+                overall_hit_rate = state['total_hit_rate'] / state['total_evaluations']
+                print(f"     📊 Progress: Day {current_day}/30 (Training+Evaluation) - {state['total_evaluations']} evaluations - Avg Hit Rate: {overall_hit_rate:.2%}")
         else:
-            overall_hit_rate = state['total_hit_rate'] / state['total_evaluations']
-            print(f"     📊 Progress: Day {current_day}/30 - {state['total_evaluations']} evaluations - Avg Hit Rate: {overall_hit_rate:.2%}")
+            # Validation phase
+            print(f"     📊 Progress: Day {current_day}/60 (Validation) - Testing trained models in real-time")
         
         return {
             'algorithm': algorithm_name,

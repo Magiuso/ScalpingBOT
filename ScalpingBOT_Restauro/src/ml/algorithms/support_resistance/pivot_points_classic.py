@@ -388,7 +388,7 @@ class PivotPointsClassic:
             raise ValueError("FAIL FAST: asset must be non-empty string")
             
         self.current_phase = 'evaluation'
-        print(f"📊 Starting EVALUATION phase for {asset} - Testing on {len(future_ticks):,} future ticks")
+        print(f"📊 Starting EVALUATION phase for {asset} - Testing levels on first 30 days of data ({len(future_ticks):,} total ticks)")
         
         # Load all daily level files
         daily_files = self._load_daily_level_files(asset)
@@ -399,21 +399,28 @@ class PivotPointsClassic:
         total_levels_tested = 0
         total_levels_improved = 0
         
-        # Test each day's levels
-        for filename, daily_data in daily_files.items():
+        # Test each day's levels on ALL future ticks (entire dataset)
+        sorted_files = sorted(daily_files.items())
+        
+        for day_index, (filename, daily_data) in enumerate(sorted_files):
             levels = daily_data['levels']
             original_date = daily_data['date']
             
-            print(f"   🎯 Testing levels from {original_date} ({filename})")
+            # Use ALL future ticks for testing every level
+            # This means first day levels get tested on entire 30 days
+            # Last day levels also get tested on entire 30 days
+            ticks_for_testing = future_ticks
             
-            # Test each level on future ticks
+            print(f"   🎯 Testing levels from {original_date} on {len(ticks_for_testing):,} future ticks")
+            
+            # Test each level on ALL remaining future ticks
             for level_name, level_data in levels.items():
                 level_value = level_data['value']
                 level_type = level_data['type']
                 original_confidence = level_data['confidence']
                 
-                # Calculate hit rate for this specific level (now returns hit_rate, tests, hits)
-                hit_rate, tests, hits = self._calculate_level_hit_rate(level_value, level_type, future_ticks)
+                # Calculate hit rate for this specific level on all remaining ticks
+                hit_rate, tests, hits = self._calculate_level_hit_rate(level_value, level_type, ticks_for_testing)
                 
                 # Update confidence based on performance
                 new_confidence = self._calculate_new_confidence(original_confidence, hit_rate)
