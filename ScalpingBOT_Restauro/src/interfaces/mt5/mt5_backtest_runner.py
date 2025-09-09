@@ -32,6 +32,9 @@ from ScalpingBOT_Restauro.src.monitoring.events.event_collector import EventColl
 from .mt5_adapter import MT5Adapter, MT5Tick
 from .mt5_utils import calculate_price_from_bid_ask, parse_mt5_timestamp
 
+# Import for algorithm types
+from ScalpingBOT_Restauro.src.shared.enums import ModelType
+
 
 @dataclass
 class BacktestConfig:
@@ -513,12 +516,12 @@ class MT5BacktestRunner:
                     try:
                         # Try ISO format first
                         dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                    except:
+                    except ValueError as e1:
                         try:
                             # Try MT5 format: "2024.01.01 00:00:01"
                             dt = datetime.strptime(timestamp_str, '%Y.%m.%d %H:%M:%S')
-                        except:
-                            continue
+                        except ValueError as e2:
+                            raise RuntimeError(f"FAIL FAST: Cannot parse timestamp '{timestamp_str}'. Tried ISO: {e1}, MT5: {e2}")
                     timestamps.append(dt)
             
             if not timestamps:
@@ -767,6 +770,29 @@ class MT5BacktestRunner:
                     current_batch = []
                     lines_read_in_batch = 0
                     
+                    # Check current phase before processing batch
+                    current_phase = self._get_current_phase_from_analyzer(self.config.symbol, analyzer_system)
+                    
+                    if current_phase == "validation":
+                        print(f"\n🔄 VALIDATION PHASE: Processing remaining ticks individually...")
+                        # Process all remaining ticks for validation phase
+                        remaining_ticks = []
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    tick_data = json.loads(line)
+                                    remaining_ticks.append(tick_data)
+                                except json.JSONDecodeError as e:
+                                    raise RuntimeError(f"FAIL FAST: Invalid JSON in validation tick data: {e}")
+                        
+                        if remaining_ticks:
+                            # Process all remaining ticks at once for validation
+                            self._process_validation_ticks(remaining_ticks, analyzer_system)
+                        
+                        print("✅ Validation phase completed")
+                        break
+                    
                     print(f"\n🔍 BATCH #{batch_number}: Reading next {BATCH_SIZE:,} ticks...")
                     batch_read_start = time.time()
                     
@@ -792,10 +818,16 @@ class MT5BacktestRunner:
                         
                         # Process header
                         if tick_data.get('type') == 'backtest_start':
-                            # BIBBIA COMPLIANT: FAIL FAST - no fallback to 'unknown'
-                            start_time = tick_data.get('start_time') or 'START_TIME_MISSING'
-                            end_time = tick_data.get('end_time') or 'END_TIME_MISSING'
-                            total_ticks = tick_data.get('total_ticks') or 'TOTAL_TICKS_MISSING'
+                            # BIBBIA COMPLIANT: FAIL FAST - no fallback
+                            if 'start_time' not in tick_data:
+                                raise KeyError("FAIL FAST: Missing start_time in backtest header")
+                            if 'end_time' not in tick_data:
+                                raise KeyError("FAIL FAST: Missing end_time in backtest header")
+                            start_time = tick_data['start_time'] 
+                            end_time = tick_data['end_time']
+                            if 'total_ticks' not in tick_data:
+                                raise KeyError("FAIL FAST: Missing total_ticks in backtest header")
+                            total_ticks = tick_data['total_ticks']
                             print(f"📊 Backtest data: {start_time} to {end_time} ({total_ticks} ticks)")
                             continue
                         
@@ -924,6 +956,50 @@ class MT5BacktestRunner:
         # This should never be reached
         raise RuntimeError(f"FAIL FAST: Unexpected state in phase determination for asset {asset}")
     
+    def _process_validation_ticks(self, remaining_ticks: List[Dict], analyzer_system) -> None:
+        """Process all remaining ticks for validation phase - tick by tick testing"""
+        print(f"📊 Processing {len(remaining_ticks):,} ticks for validation phase...")
+        
+        # Initialize validation phase
+        validation_init_data = {
+            'validation_init': True,
+            'asset': self.config.symbol
+        }
+        analyzer_system.market_analyzer.algorithm_bridge.execute_algorithm(
+            ModelType.SUPPORT_RESISTANCE, 'PivotPoints_Classic', validation_init_data
+        )
+        
+        # Process each tick individually
+        processed_count = 0
+        significant_events = 0
+        
+        for tick in remaining_ticks:
+            try:
+                # Test this tick against active levels
+                tick_test_data = {
+                    'current_tick': tick,
+                    'asset': self.config.symbol
+                }
+                
+                result = analyzer_system.market_analyzer.algorithm_bridge.execute_algorithm(
+                    ModelType.SUPPORT_RESISTANCE, 'PivotPoints_Classic', tick_test_data
+                )
+                
+                processed_count += 1
+                
+                # Count significant events (level tests/breaks)
+                if result and result.get('significant_events'):
+                    significant_events += len(result['significant_events'])
+                
+                # Progress every 100K ticks
+                if processed_count % 100000 == 0:
+                    print(f"   ✅ Processed {processed_count:,} ticks ({significant_events} significant events)")
+                    
+            except Exception as e:
+                raise RuntimeError(f"FAIL FAST: Error processing validation tick {processed_count}: {e}")
+        
+        print(f"✅ Validation completed: {processed_count:,} ticks processed, {significant_events} events detected")
+    
     def _calculate_temporal_progress(self, batch: List[Dict], validation_start_date, batch_phase: str) -> Optional[str]:
         """Calculate temporal progress for training/validation phases - BIBBIA COMPLIANT"""
         
@@ -1012,13 +1088,12 @@ class MT5BacktestRunner:
             # Calculate price from bid/ask for CFD data (when last=0)
             try:
                 price = calculate_price_from_bid_ask(tick_last, bid, ask)
-            except ValueError:
-                # Skip ticks with invalid price data
-                continue
+            except ValueError as e:
+                raise RuntimeError(f"FAIL FAST: Invalid price data in tick: {e}")
             
-            # Skip invalid ticks
+            # FAIL FAST on invalid ticks
             if not timestamp_str:
-                continue
+                raise RuntimeError("FAIL FAST: Tick missing timestamp field")
             
             # BIBBIA COMPLIANT: Keep original MT5 format - NO DUPLICATIONS!
             converted_tick = {
@@ -1071,7 +1146,7 @@ class MT5BacktestRunner:
                 context_ticks = ticks[window_start:tick_index + 1]
                 
                 if len(context_ticks) < 20:  # Need minimum context for PivotPoints and other algorithms
-                    continue  # Skip early ticks without sufficient context
+                    raise RuntimeError(f"FAIL FAST: Insufficient context for tick {tick_index}: {len(context_ticks)} < 20 required")
                 
                 # Convert to format expected by analyzer
                 tick_data = self._convert_single_tick_for_prediction(current_tick, context_ticks)

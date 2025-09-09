@@ -542,34 +542,67 @@ class PivotPointsClassic:
             else:
                 raise KeyError("FAIL FAST: Tick missing both 'last' and 'close' fields")
                 
-        # Test level interactions
+        # Track if we're currently in a test zone
+        in_test_zone = False
+        test_start_index = -1
+        
+        # Test level interactions - count EVENTS not individual ticks
         for i in range(1, len(prices)):
             current_price = prices[i]
             previous_price = prices[i-1]
             
-            # Check if price tested the level
-            level_tested = False
+            # Check if we're near the level
+            near_level = abs(current_price - level_value) <= tolerance
             
             if level_type in ['support', 'pivot']:
                 # Support test: price approaches from above
-                if previous_price > level_value and abs(current_price - level_value) <= tolerance:
-                    level_tested = True
-                    # Check if support held (price bounced back up by at least 20 points)
-                    future_prices = prices[i+1:]  # All remaining ticks in 100K batch
-                    if future_prices and max(future_prices) > level_value + self.BOUNCE_THRESHOLD_POINTS:
+                entering_from_above = previous_price > level_value + tolerance and near_level
+                
+                if entering_from_above and not in_test_zone:
+                    # New test event started
+                    in_test_zone = True
+                    test_start_index = i
+                    
+                elif in_test_zone and current_price > level_value + tolerance * 2:
+                    # Exited test zone upward - support held
+                    tests += 1
+                    in_test_zone = False
+                    
+                    # Check for significant bounce (at least 20 points)
+                    future_window = prices[i:i+200] if i < len(prices) else []
+                    if future_window and max(future_window) > level_value + self.BOUNCE_THRESHOLD_POINTS:
                         hits += 1
+                        
+                elif in_test_zone and current_price < level_value - tolerance * 2:
+                    # Exited test zone downward - support broken
+                    tests += 1
+                    in_test_zone = False
+                    # No hit counted (support failed)
                             
             elif level_type == 'resistance':
                 # Resistance test: price approaches from below  
-                if previous_price < level_value and abs(current_price - level_value) <= tolerance:
-                    level_tested = True
-                    # Check if resistance held (price bounced back down by at least 20 points)
-                    future_prices = prices[i+1:]  # All remaining ticks in 100K batch
-                    if future_prices and min(future_prices) < level_value - self.BOUNCE_THRESHOLD_POINTS:
+                entering_from_below = previous_price < level_value - tolerance and near_level
+                
+                if entering_from_below and not in_test_zone:
+                    # New test event started
+                    in_test_zone = True
+                    test_start_index = i
+                    
+                elif in_test_zone and current_price < level_value - tolerance * 2:
+                    # Exited test zone downward - resistance held
+                    tests += 1
+                    in_test_zone = False
+                    
+                    # Check for significant bounce (at least 20 points)
+                    future_window = prices[i:i+200] if i < len(prices) else []
+                    if future_window and min(future_window) < level_value - self.BOUNCE_THRESHOLD_POINTS:
                         hits += 1
-                            
-            if level_tested:
-                tests += 1
+                        
+                elif in_test_zone and current_price > level_value + tolerance * 2:
+                    # Exited test zone upward - resistance broken
+                    tests += 1
+                    in_test_zone = False
+                    # No hit counted (resistance failed)
                 
         # Calculate hit rate
         if tests == 0:
